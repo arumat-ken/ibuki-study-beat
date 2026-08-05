@@ -221,6 +221,33 @@
     };
   }
 
+  /* 連携できるAIアプリ。iOSではユニバーサルリンクで、インストール済みなら
+   * アプリが、無ければブラウザ版が開く。prefill=trueはURLに質問を載せられるもの。 */
+  var AI_APPS = [
+    { id: 'chatgpt', name: 'ChatGPT', url: 'https://chatgpt.com/?q=', prefill: true },
+    { id: 'claude', name: 'Claude', url: 'https://claude.ai/new?q=', prefill: true },
+    { id: 'gemini', name: 'Gemini', url: 'https://gemini.google.com/app', prefill: false },
+    { id: 'copilot', name: 'Copilot', url: 'https://copilot.microsoft.com/?q=', prefill: true },
+    { id: 'perplexity', name: 'Perplexity', url: 'https://www.perplexity.ai/search?q=', prefill: true },
+    { id: 'clipboard', name: 'コピーだけする(Gemmaなど)', url: '', prefill: false },
+    { id: 'custom', name: 'その他(URLを自分で設定)', url: '', prefill: false }
+  ];
+
+  function defaultAI() {
+    return {
+      appId: 'chatgpt',
+      customUrl: '',
+      sendStats: true   // 今の学習状況をプロンプトに添えるか
+    };
+  }
+
+  function aiAppById(id) {
+    for (var i = 0; i < AI_APPS.length; i++) {
+      if (AI_APPS[i].id === id) return AI_APPS[i];
+    }
+    return AI_APPS[0];
+  }
+
   function defaultState(todayStr_) {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -231,6 +258,7 @@
         slogans: ['一日一歩、未来の自分へ'],
         dailyGoalMin: 180,
         examDate: null,
+        ai: defaultAI(),
         axis: defaultAxis(),
         subjects: DEFAULT_SUBJECTS.map(function (s) { return { id: s.id, name: s.name, color: s.color, visible: s.visible }; })
       },
@@ -264,6 +292,14 @@
     }
     if (isIntInRange(s.dailyGoalMin, 10, 1440)) out.settings.dailyGoalMin = s.dailyGoalMin;
     if (isDateStr(s.examDate)) out.settings.examDate = s.examDate;
+    var ai = s.ai || {};
+    if (typeof ai.appId === 'string' && AI_APPS.some(function (a) { return a.id === ai.appId; })) {
+      out.settings.ai.appId = ai.appId;
+    }
+    if (typeof ai.customUrl === 'string' && /^https?:\/\//.test(ai.customUrl)) {
+      out.settings.ai.customUrl = ai.customUrl.slice(0, 500);
+    }
+    if (typeof ai.sendStats === 'boolean') out.settings.ai.sendStats = ai.sendStats;
     var ax = s.axis || {};
     if (ax.placement === 'left' || ax.placement === 'split') out.settings.axis.placement = ax.placement;
     if (ax.unit === 'minutes' || ax.unit === 'hours') out.settings.axis.unit = ax.unit;
@@ -381,6 +417,8 @@
     MAX_MIN_PER_RECORD: MAX_MIN_PER_RECORD,
     DEFAULT_SUBJECTS: DEFAULT_SUBJECTS,
     STUDY_KINDS: STUDY_KINDS,
+    AI_APPS: AI_APPS,
+    aiAppById: aiAppById,
     pad2: pad2,
     toDateStr: toDateStr,
     isDateStr: isDateStr,

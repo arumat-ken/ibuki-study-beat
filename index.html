@@ -188,7 +188,9 @@
         <input type="text" id="chat-input" placeholder="今日のこと、話してみよう" maxlength="200">
         <button class="btn primary" id="chat-send">送信</button>
       </div>
-      <p class="muted small" style="margin-top:8px">※ 返答はアプリ内蔵の定型ロジックです(外部AIには接続していません)</p>
+      <button class="btn block" id="chat-ask-ai" style="margin-top:8px">🤖 <span id="chat-ai-name">AI</span>に聞く</button>
+      <div class="quick-chips" id="chat-quick"></div>
+      <p class="muted small" style="margin-top:8px">※「送信」の返答はアプリ内蔵の定型ロジックです。もっと自由に相談したいときは「🤖 AIに聞く」から、iPhoneに入れているAIアプリで話せます(使うアプリは 設定 → AI連携設定 で選べます)。</p>
     </div>
   </section>
 
@@ -202,6 +204,7 @@
       <button class="settings-item" data-panel="goal"><span class="ico">🎯</span>目標・スローガン<span class="chev">›</span></button>
       <button class="settings-item" data-panel="exam"><span class="ico">🏫</span>受験情報<span class="chev">›</span></button>
       <button class="settings-item" data-panel="subjects"><span class="ico">📚</span>科目設定<span class="chev">›</span></button>
+      <button class="settings-item" data-panel="ai"><span class="ico">🤖</span>AI連携設定<span class="chev">›</span></button>
       <button class="settings-item" data-panel="axis"><span class="ico">📈</span>グラフ・Y軸設定<span class="chev">›</span></button>
       <button class="settings-item" data-panel="data"><span class="ico">💾</span>データ管理<span class="chev">›</span></button>
       <button class="settings-item" data-panel="about"><span class="ico">❓</span>サポート・ヘルプ<span class="chev">›</span></button>
@@ -258,6 +261,7 @@
 </div>
 
 <script src="js/calc.js"></script>
+<script src="js/manual.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

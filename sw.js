@@ -1,10 +1,11 @@
 /* IBUKI STUDY BEAT — Service Worker (オフライン対応) */
-var CACHE = 'isb-v3.2.0';
+var CACHE = 'isb-v3.3.0';
 var ASSETS = [
   './',
   './index.html',
   './css/app.css',
   './js/calc.js',
+  './js/manual.js',
   './js/app.js',
   './manifest.webmanifest',
   './icons/icon-192.png',

@@ -5,7 +5,7 @@
 
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
-  var APP_VERSION = '3.2.0';
+  var APP_VERSION = '3.3.0';
 
   /* ================= ストレージ ================= */
   var KEY = 'ibukiStudyBeat.v3';
@@ -1309,6 +1309,8 @@
     $('pose-panel').style.display = 'none';
     if (p.style.display !== 'none') {
       renderChatLog();
+      renderQuickAsks();
+      $('chat-ai-name').textContent = aiTargetUrl().name;
       var log = $('chat-log');
       log.scrollTop = log.scrollHeight;
     }
@@ -1351,6 +1353,154 @@
     return '聞かせてくれてありがとう！まずは30分、一緒にビートを刻もう！';
   }
 
+  /* ---------- AIアプリ連携 ----------
+   * Webアプリから他アプリのAIを直接呼ぶ手段はiOSに無いため、
+   * 「プロンプトをクリップボードにコピー → AIアプリを開く」方式で橋渡しする。
+   * URLに質問を載せられるアプリでは自動入力も試みる。 */
+
+  function aiTargetUrl() {
+    var ai = state.settings.ai;
+    var app = C.aiAppById(ai.appId);
+    if (ai.appId === 'custom') return { url: ai.customUrl, prefill: false, name: 'AIアプリ' };
+    return { url: app.url, prefill: app.prefill, name: app.name };
+  }
+
+  function studyStatsText() {
+    var today = 0;
+    todayRecords().forEach(function (r) { today += r.actualMin; });
+    var all = 0, subjTotals = {};
+    C.activeRecords(state.records).forEach(function (r) {
+      all += r.actualMin;
+      if (r.actualMin > 0) subjTotals[r.subjectId] = (subjTotals[r.subjectId] || 0) + r.actualMin;
+    });
+    var lines = [
+      '・今日の学習: ' + C.fmtDuration(today) + '(1日の目標 ' + C.fmtDuration(state.settings.dailyGoalMin) + ')',
+      '・連続記録: ' + C.streakDays(state.records, todayStr()) + '日',
+      '・累計学習時間: ' + C.fmtDuration(all)
+    ];
+    var subjLine = Object.keys(subjTotals).map(function (id) {
+      return subjectById(id).name + ' ' + C.fmtDuration(subjTotals[id]);
+    }).join('、');
+    if (subjLine) lines.push('・科目別の累計: ' + subjLine);
+    if (state.settings.examDate) {
+      var dd = C.diffDays(todayStr(), state.settings.examDate);
+      if (dd >= 0) lines.push('・受験日まで: あと' + dd + '日');
+    }
+    var nextEv = state.events.filter(function (e) { return e.date >= todayStr(); })
+      .sort(function (a, b) { return a.date < b.date ? -1 : 1; })[0];
+    if (nextEv) lines.push('・次の受験イベント: ' + nextEv.title + '(' + nextEv.date + ')');
+    return lines.join('\n');
+  }
+
+  function buildAIPrompt(question, withManual) {
+    var name = state.settings.userName || '伊吹';
+    var parts = [
+      'あなたは大学受験生「' + name + '」の学習コーチです。' +
+      'やさしく、短く、具体的に、日本語で答えてください。',
+      '',
+      '【質問】',
+      question
+    ];
+    if (withManual) {
+      parts.push('', '【参考: 使っている学習記録アプリの説明】', window.ISBManual.MANUAL);
+    }
+    if (state.settings.ai.sendStats) {
+      parts.push('', '【' + name + 'さんの今の学習状況】', studyStatsText());
+    }
+    return parts.join('\n');
+  }
+
+  function copyToClipboard(text) {
+    // iOS Safariではユーザー操作の直後でないと失敗するため、同期的な方法も用意する
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(function () { return true; },
+        function () { return legacyCopy(text); });
+    }
+    return Promise.resolve(legacyCopy(text));
+  }
+
+  function legacyCopy(text) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '0';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      var ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function askAI(question, withManual) {
+    var target = aiTargetUrl();
+    if (!target.url) {
+      if (state.settings.ai.appId === 'custom') {
+        toast('先に「設定 → AI連携設定」でURLを入れてね', true);
+        return;
+      }
+    }
+    var prompt = buildAIPrompt(question, withManual);
+    // 会話ログにも残す(あとで見返せるように)
+    state.coach.messages.push({ id: nextId('m'), role: 'ibuki', text: question, ts: Date.now() });
+    state.coach.messages.push({
+      id: nextId('m'), role: 'beat',
+      text: '「' + (target.name || 'AIアプリ') + '」に聞いてみよう！質問をコピーしたよ。',
+      ts: Date.now()
+    });
+    state.coach.messages = state.coach.messages.slice(-200);
+    save();
+    renderChatLog();
+
+    copyToClipboard(prompt).then(function (copied) {
+      if (!target.url) {
+        openAIResultModal(prompt, copied, null);
+        return;
+      }
+      var url = target.url;
+      if (target.prefill) {
+        var withQ = url + encodeURIComponent(prompt);
+        // URLが長すぎると開けないため、収まらない場合は質問だけを載せる
+        if (withQ.length > 1800) {
+          var shortQ = url + encodeURIComponent(question);
+          url = shortQ.length <= 1800 ? shortQ : url;
+        } else {
+          url = withQ;
+        }
+      }
+      openAIResultModal(prompt, copied, url);
+    });
+  }
+
+  function openAIResultModal(prompt, copied, url) {
+    var target = aiTargetUrl();
+    openModal(
+      '<h3>🤖 ' + esc(target.name) + 'に聞く<button class="icon-btn" id="m-close">✕</button></h3>' +
+      (copied
+        ? '<p class="small" style="margin-bottom:10px">質問をコピーしたよ！下のボタンでアプリを開いて、入力欄を<b>長押し→ペースト</b>して送ってね。</p>'
+        : '<p class="small" style="margin-bottom:10px">下の文章を選んでコピーし、AIアプリに貼り付けて送ってね。</p>') +
+      '<textarea id="m-prompt" readonly style="min-height:120px;font-size:0.8rem">' + esc(prompt) + '</textarea>' +
+      '<div class="btn-row" style="margin-top:10px">' +
+      '<button class="btn" id="m-copy">📋 もう一度コピー</button>' +
+      (url ? '<a class="btn primary" style="text-decoration:none" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer" id="m-open">' + esc(target.name) + 'を開く ▶</a>' : '') +
+      '</div>' +
+      '<p class="muted small" style="margin-top:10px">使うAIアプリは「設定 → AI連携設定」で変えられます。</p>'
+    );
+    $('m-close').onclick = closeModal;
+    $('m-copy').onclick = function () {
+      copyToClipboard(prompt).then(function (ok) {
+        toast(ok ? 'コピーしたよ！' : 'コピーできませんでした。文章を選んでコピーしてね', !ok);
+      });
+    };
+    if (url) $('m-open').onclick = function () { setTimeout(closeModal, 300); };
+  }
+
   function sendChat() {
     var input = $('chat-input');
     var text = input.value.trim();
@@ -1370,6 +1520,35 @@
     if (e.key === 'Enter' && !imeSafe(e)) { e.preventDefault(); sendChat(); }
   });
 
+  $('chat-ask-ai').addEventListener('click', function () {
+    var input = $('chat-input');
+    var text = input.value.trim();
+    if (!text) { toast('聞きたいことを入力してね', true); return; }
+    input.value = '';
+    // 使い方の質問かどうかを判定し、そうならアプリの説明も一緒に渡す
+    var howTo = /使い方|操作|やり方|どうやって|どこ|方法|できない|わからない|分からない|グラフ|記録|設定|バックアップ|ポーズ/.test(text);
+    askAI(text, howTo);
+  });
+
+  var QUICK_ASKS = [
+    { label: '使い方を教えて', q: 'このアプリの使い方を、最初にやることから順に教えて。', manual: true },
+    { label: 'グラフの見方', q: 'このアプリのグラフ画面の見方を教えて。計画と実績の棒や、累積の線が何を表しているのか知りたい。', manual: true },
+    { label: '記録の直し方', q: '間違えて登録した学習記録を直したり消したりする方法を教えて。', manual: true },
+    { label: '勉強の相談', q: '受験勉強のことで相談したいことがあります。今の学習状況を見て、アドバイスをください。', manual: false }
+  ];
+
+  function renderQuickAsks() {
+    $('chat-quick').innerHTML = QUICK_ASKS.map(function (q, i) {
+      return '<button class="quick-chip" data-i="' + i + '">' + esc(q.label) + '</button>';
+    }).join('');
+    document.querySelectorAll('#chat-quick .quick-chip').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var q = QUICK_ASKS[+b.dataset.i];
+        askAI(q.q, q.manual);
+      });
+    });
+  }
+
   /* ================= 設定画面 ================= */
   document.querySelectorAll('.settings-item').forEach(function (item) {
     item.addEventListener('click', function () { openSettingsPanel(item.dataset.panel); });
@@ -1380,6 +1559,7 @@
     if (panel === 'goal') return openGoalPanel();
     if (panel === 'exam') return openExamPanel();
     if (panel === 'subjects') return openSubjectsPanel();
+    if (panel === 'ai') return openAIPanel();
     if (panel === 'axis') return openAxisModal();
     if (panel === 'data') return openDataPanel();
     if (panel === 'about') return openAboutPanel();
@@ -1619,6 +1799,45 @@
         save(); closeModal(); renderAll();
         toast('すべてのデータを消去しました');
       };
+    };
+  }
+
+  function openAIPanel() {
+    var ai = state.settings.ai;
+    var opts = C.AI_APPS.map(function (a) {
+      return '<option value="' + a.id + '"' + (a.id === ai.appId ? ' selected' : '') + '>' + esc(a.name) + '</option>';
+    }).join('');
+    openModal(
+      '<h3>AI連携設定<button class="icon-btn" id="m-close">✕</button></h3>' +
+      '<p class="small muted" style="margin-bottom:12px">コーチ画面の「🤖 AIに聞く」で使うAIアプリを選べます。質問は自動でコピーされ、選んだアプリが開きます(インストール済みならアプリが、無ければブラウザ版が開きます)。</p>' +
+      '<div class="field"><label>使うAIアプリ</label><select id="m-aiapp">' + opts + '</select></div>' +
+      '<div class="field" id="m-custom-row" style="display:' + (ai.appId === 'custom' ? '' : 'none') + '">' +
+      '<label>アプリを開くURL(https://...)</label>' +
+      '<input type="url" id="m-aiurl" maxlength="500" placeholder="https://..." value="' + esc(ai.customUrl) + '"></div>' +
+      '<div class="field" style="display:flex;justify-content:space-between;align-items:center">' +
+      '<label style="margin:0">学習データも一緒に送る<br><span class="muted" style="font-size:0.7rem">今日の時間・連続日数・累計・受験日など</span></label>' +
+      '<button class="toggle' + (ai.sendStats ? ' on' : '') + '" id="m-aistats" aria-label="学習データを送る"></button></div>' +
+      '<button class="btn primary block" id="m-save" style="margin-top:6px">保存する</button>' +
+      '<p class="muted small" style="margin-top:12px">※ アプリが自動でAIと通信することはありません。質問を送るかどうかは、AIアプリの画面で自分で決められます。</p>'
+    );
+    $('m-close').onclick = closeModal;
+    $('m-aiapp').onchange = function () {
+      $('m-custom-row').style.display = this.value === 'custom' ? '' : 'none';
+    };
+    $('m-aistats').onclick = function () { this.classList.toggle('on'); };
+    $('m-save').onclick = function () {
+      var appId = $('m-aiapp').value;
+      var customUrl = $('m-aiurl') ? $('m-aiurl').value.trim() : '';
+      if (appId === 'custom' && !/^https?:\/\//.test(customUrl)) {
+        toast('URLはhttps://から入力してね', true);
+        return;
+      }
+      ai.appId = appId;
+      ai.customUrl = customUrl;
+      ai.sendStats = $('m-aistats').classList.contains('on');
+      save(); closeModal();
+      if (currentScreen === 'coach') $('chat-ai-name').textContent = aiTargetUrl().name;
+      toast('AIアプリを「' + aiTargetUrl().name + '」にしたよ！');
     };
   }
 

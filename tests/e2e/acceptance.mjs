@@ -494,6 +494,123 @@ async function test9_versionAndUpdate() {
   ok('SWは自動では切り替わらない(利用者の操作待ち)', installBlock.length > 0 && !installBlock.includes('skipWaiting()'));
 }
 
+async function openChatPanel() {
+  await nav('coach');
+  if (!(await page.isVisible('#chat-panel'))) await page.click('#btn-chat');
+  await page.waitForSelector('#chat-input', { state: 'visible' });
+}
+
+async function test10_aiIntegration() {
+  console.log('\n■ 試験10: AIアプリ連携(選択・プロンプト生成・操作方法の質問)');
+  await freshPage(true);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: '英単語 20語', plan: 30, actual: 25 });
+
+  // 設定からAIアプリを選ぶ
+  await nav('settings');
+  await page.click('.settings-item[data-panel="ai"]');
+  await page.waitForSelector('#m-aiapp');
+  const appCount = await page.evaluate(() => document.querySelectorAll('#m-aiapp option').length);
+  ok('AIアプリの選択肢が複数ある(ChatGPT/Claude/Gemini/Copilot等)', appCount >= 6, `options=${appCount}`);
+  const labels = await page.evaluate(() => [...document.querySelectorAll('#m-aiapp option')].map(o => o.textContent));
+  ok('主要AIアプリが選択肢に含まれる',
+    ['ChatGPT', 'Claude', 'Gemini', 'Copilot'].every(n => labels.some(l => l.includes(n))), labels.join('/'));
+  await shot('30-ai-settings');
+  await page.selectOption('#m-aiapp', 'claude');
+  await page.click('#m-save');
+  await page.waitForTimeout(250);
+  let st = await getState();
+  ok('選んだAIアプリが保存される', st.settings.ai.appId === 'claude', `appId=${st.settings.ai.appId}`);
+
+  // コーチ画面でボタン名が変わる
+  await openChatPanel();
+  const btnTxt = await page.textContent('#chat-ask-ai');
+  ok('コーチ画面のボタンに選んだAI名が出る', btnTxt.includes('Claude'), btnTxt.trim());
+  const chipCount = await page.evaluate(() => document.querySelectorAll('#chat-quick .quick-chip').length);
+  ok('使い方を聞くクイックボタンがある', chipCount >= 3, `chips=${chipCount}`);
+  await shot('31-coach-ai-buttons');
+
+  // 「使い方を教えて」→ 操作マニュアル入りのプロンプトが生成される
+  await page.click('#chat-quick .quick-chip');
+  await page.waitForSelector('#m-prompt');
+  const prompt = await page.inputValue('#m-prompt');
+  ok('プロンプトに操作マニュアルが含まれる(操作方法を答えられる)',
+    prompt.includes('IBUKI STUDY BEATの使い方') && prompt.includes('グラフ画面'), `len=${prompt.length}`);
+  ok('プロンプトに学習状況が含まれる', prompt.includes('今日の学習') && prompt.includes('連続記録'));
+  const openHref = await page.getAttribute('#m-open', 'href');
+  ok('選んだAIアプリのURLで開くリンクがある', openHref && openHref.startsWith('https://claude.ai/'), (openHref || '').slice(0, 40));
+  ok('URLが長すぎず開ける長さに収まっている', openHref.length <= 1800, `len=${openHref.length}`);
+  const clip = await page.evaluate(() => navigator.clipboard.readText().catch(() => ''));
+  ok('質問がクリップボードにコピーされる', clip.includes('IBUKI STUDY BEATの使い方'), `clip=${clip.length}文字`);
+  await shot('32-ai-prompt-modal');
+  await page.click('#m-close');
+  await page.waitForTimeout(200);
+
+  // 会話ログにも残る
+  const logTxt = await page.textContent('#chat-log');
+  ok('AIに聞いた内容が会話ログに残る', logTxt.includes('使い方') && logTxt.includes('Claude'));
+
+  // 自由な質問(マニュアルなし)
+  await page.fill('#chat-input', '数学の勉強のコツを教えて');
+  await page.click('#chat-ask-ai');
+  await page.waitForSelector('#m-prompt');
+  const freePrompt = await page.inputValue('#m-prompt');
+  ok('自由な質問もAIに送れる', freePrompt.includes('数学の勉強のコツ'));
+  ok('学習と無関係な質問にはマニュアルを付けない', !freePrompt.includes('## グラフ画面'));
+  await page.click('#m-close');
+
+  // 学習データを送らない設定
+  await nav('settings');
+  await page.click('.settings-item[data-panel="ai"]');
+  await page.waitForSelector('#m-aistats');
+  await page.click('#m-aistats');
+  await page.click('#m-save');
+  await page.waitForTimeout(250);
+  await openChatPanel();
+  await page.fill('#chat-input', 'こんにちは');
+  await page.click('#chat-ask-ai');
+  await page.waitForSelector('#m-prompt');
+  const noStats = await page.inputValue('#m-prompt');
+  ok('学習データOFFにすると学習状況を送らない', !noStats.includes('連続記録'));
+  await page.click('#m-close');
+
+  // コピーのみモード(Gemmaなどローカルアプリ用)
+  await nav('settings');
+  await page.click('.settings-item[data-panel="ai"]');
+  await page.waitForSelector('#m-aiapp');
+  await page.selectOption('#m-aiapp', 'clipboard');
+  await page.click('#m-save');
+  await page.waitForTimeout(250);
+  await openChatPanel();
+  await page.fill('#chat-input', 'テスト');
+  await page.click('#chat-ask-ai');
+  await page.waitForSelector('#m-prompt');
+  ok('コピーのみモードではアプリを開くボタンを出さない', !(await page.isVisible('#m-open')));
+  await page.click('#m-close');
+
+  // カスタムURLの検証
+  await nav('settings');
+  await page.click('.settings-item[data-panel="ai"]');
+  await page.waitForSelector('#m-aiapp');
+  await page.selectOption('#m-aiapp', 'custom');
+  await page.waitForTimeout(150);
+  await page.fill('#m-aiurl', 'notaurl');
+  await page.click('#m-save');
+  await page.waitForTimeout(250);
+  st = await getState();
+  ok('不正なカスタムURLは保存を拒否', st.settings.ai.appId !== 'custom' || st.settings.ai.customUrl !== 'notaurl');
+  await page.fill('#m-aiurl', 'https://example.com/?q=');
+  await page.click('#m-save');
+  await page.waitForTimeout(250);
+  st = await getState();
+  ok('正しいカスタムURLは保存できる', st.settings.ai.customUrl === 'https://example.com/?q=');
+
+  // 設定はリロード後も保持
+  await reload();
+  st = await getState();
+  ok('AI連携設定はリロード後も保持', st.settings.ai.appId === 'custom' && st.settings.ai.sendStats === false);
+}
+
 async function extra_screens() {
   console.log('\n■ 追加: 全画面スクリーンショットとコーチ・320px幅・横向き');
   await freshPage(true);
@@ -563,6 +680,7 @@ try {
   await test7_touchAndAxis();
   await test8_dataProtection();
   await test9_versionAndUpdate();
+  await test10_aiIntegration();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

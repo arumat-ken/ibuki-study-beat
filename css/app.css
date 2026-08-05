@@ -304,6 +304,15 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 .chat-input-row { display: flex; gap: 8px; margin-top: 10px; }
 .chat-input-row input { flex: 1; }
 .chat-input-row .btn { flex-shrink: 0; }
+.quick-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.quick-chip {
+  min-height: 44px; padding: 8px 14px;
+  border-radius: 22px; border: 1px solid var(--gold-dim);
+  background: rgba(217, 178, 74, 0.08); color: var(--gold-bright);
+  font-size: 0.78rem; font-weight: 600; cursor: pointer;
+}
+.quick-chip:active { transform: scale(0.97); }
+
 .pose-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .pose-cell {
   background: var(--card-2); border: 1px solid var(--line); border-radius: 12px;
