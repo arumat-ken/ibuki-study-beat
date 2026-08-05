@@ -67,6 +67,11 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
   background: linear-gradient(180deg, var(--bg) 82%, transparent);
 }
 .screen-head h1 { font-size: 1.05rem; letter-spacing: 0.06em; font-weight: 800; }
+.brand-wrap { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.version-badge {
+  font-size: 0.6rem; letter-spacing: 0.1em; color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
 .screen-head .brand {
   font-size: 1.15rem; font-weight: 900; letter-spacing: 0.04em;
   background: linear-gradient(120deg, var(--gold-bright), #fff2c9 40%, var(--gold));
@@ -368,6 +373,39 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
 .toast.warn { border-color: rgba(224, 86, 79, 0.5); }
 .toast button { background: none; border: none; color: var(--gold-bright); font-weight: 800; font-size: 0.85rem; cursor: pointer; min-height: 32px; }
+
+/* 画面中央メッセージ(起動時のあいさつ・アップデート通知) */
+.center-msg {
+  position: fixed; inset: 0; z-index: 400;
+  background: rgba(6, 6, 10, 0.86);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  display: none; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.center-msg.open { display: flex; }
+.cm-card {
+  width: 100%; max-width: 340px; text-align: center;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(217, 178, 74, 0.20) 0%, transparent 70%),
+    var(--surface);
+  border: 1px solid var(--gold-dim);
+  border-radius: 20px; padding: 22px 18px 16px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
+}
+.cm-visual { width: 132px; margin: 0 auto 12px; }
+.cm-visual:empty { display: none; }
+.cm-title {
+  font-size: 1.2rem; font-weight: 900; color: var(--gold-bright);
+  letter-spacing: 0.03em; line-height: 1.35;
+}
+.cm-body { font-size: 0.88rem; line-height: 1.6; color: var(--text); margin-top: 8px; }
+.cm-body .cm-sub { display: block; color: var(--dim); font-size: 0.78rem; margin-top: 6px; }
+.cm-card .btn { margin-top: 16px; }
+.cm-version { font-size: 0.62rem; color: var(--dim); letter-spacing: 0.1em; margin-top: 10px; }
+@media (prefers-reduced-motion: no-preference) {
+  .center-msg.open .cm-card { animation: cmIn 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+  @keyframes cmIn { 0% { transform: scale(0.86) translateY(12px); opacity: 0; } 100% { transform: scale(1) translateY(0); opacity: 1; } }
+}
 
 /* お祝い演出 */
 .celebrate {

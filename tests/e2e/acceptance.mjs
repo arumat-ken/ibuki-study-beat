@@ -27,6 +27,14 @@ async function shot(name, keepToast) {
   if (!keepToast) await page.evaluate(() => { document.getElementById('toast').style.display = ''; });
 }
 
+/** 起動時の中央メッセージ(あいさつ)を閉じる */
+async function dismissCenter() {
+  if (await page.isVisible('#center-msg.open')) {
+    await page.click('#cm-btn');
+    await page.waitForTimeout(120);
+  }
+}
+
 async function freshPage(clearStorage = false) {
   if (context) await context.close();
   context = await browser.newContext({ ...devices['iPhone 13'], locale: 'ja-JP' });
@@ -39,11 +47,13 @@ async function freshPage(clearStorage = false) {
     await page.reload();
   }
   await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
 }
 
 async function reload() {
   await page.reload();
   await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
 }
 
 async function nav(screen) {
@@ -426,6 +436,64 @@ async function test8_dataProtection() {
   await shot('19-after-wipe');
 }
 
+async function test9_versionAndUpdate() {
+  console.log('\n■ 試験9: バージョン表示と起動時・更新時の中央メッセージ');
+  await freshPage(true);
+  const ver = await page.textContent('#app-version');
+  ok('画面上にソフトバージョンを表示', /^ver\. \d+\.\d+\.\d+$/.test(ver.trim()), ver);
+  const version = ver.trim().replace('ver. ', '');
+
+  // 起動時のあいさつ(画面中央)
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  ok('アプリを開くと画面中央にメッセージを表示', await page.isVisible('#center-msg.open'));
+  await page.waitForTimeout(450); // 表示アニメーションの完了を待ってから位置を測る
+  const centered = await page.evaluate(() => {
+    const c = document.querySelector('#center-msg .cm-card').getBoundingClientRect();
+    const dx = Math.abs((c.left + c.right) / 2 - window.innerWidth / 2);
+    const dy = Math.abs((c.top + c.bottom) / 2 - window.innerHeight / 2);
+    return { dx, dy };
+  });
+  ok('メッセージが画面中央に配置される', centered.dx < 4 && centered.dy < 4, `dx=${centered.dx.toFixed(1)}, dy=${centered.dy.toFixed(1)}`);
+  const cmVer = await page.textContent('#cm-version');
+  ok('中央メッセージにもバージョンを表示', cmVer.includes(version), cmVer);
+  await shot('30-welcome-message', true);
+  await page.click('#cm-btn');
+  await page.waitForTimeout(200);
+  ok('ボタンでメッセージを閉じられる', !(await page.isVisible('#center-msg.open')));
+
+  // あいさつは一定時間で自動的に閉じる
+  await page.reload();
+  await page.waitForSelector('#center-msg.open');
+  await page.waitForTimeout(4600);
+  ok('あいさつは自動で閉じる', !(await page.isVisible('#center-msg.open')));
+
+  // 更新後の初回起動: 前回バージョンと異なる場合のお知らせ
+  await page.evaluate(() => localStorage.setItem('ibukiStudyBeat.lastSeenVersion', '3.0.0'));
+  await page.reload();
+  await page.waitForSelector('#center-msg.open');
+  const body = await page.textContent('#center-msg');
+  ok('更新後の初回起動で「新しくなった」と中央に表示', body.includes('新しくなった') && body.includes('3.0.0') && body.includes(version), body.replace(/\s+/g, ' ').slice(0, 90));
+  ok('更新メッセージで記録が残ることを明記', body.includes('記録') && body.includes('残っている'));
+  await shot('31-updated-message', true);
+  await page.click('#cm-btn');
+  await page.waitForTimeout(200);
+
+  // 記録が消えていないこと
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: '更新テスト', plan: 30, actual: 30 });
+  const before = (await getState()).records.length;
+  await page.evaluate(() => localStorage.setItem('ibukiStudyBeat.lastSeenVersion', '3.0.0'));
+  await reload();
+  const after = (await getState()).records.length;
+  ok('バージョン更新をまたいでも記録は保持される', after === before && after > 0, `${before} → ${after}`);
+
+  // Service Workerは更新待機用のメッセージ受信口を持つ
+  const swSrc = await page.evaluate(async () => (await fetch('sw.js')).text());
+  ok('SWが「SKIP_WAITING」受信で更新へ切り替わる', swSrc.includes("'SKIP_WAITING'") && swSrc.includes('skipWaiting'));
+  const installBlock = swSrc.slice(swSrc.indexOf("addEventListener('install'"), swSrc.indexOf("addEventListener('message'"));
+  ok('SWは自動では切り替わらない(利用者の操作待ち)', installBlock.length > 0 && !installBlock.includes('skipWaiting()'));
+}
+
 async function extra_screens() {
   console.log('\n■ 追加: 全画面スクリーンショットとコーチ・320px幅・横向き');
   await freshPage(true);
@@ -494,6 +562,7 @@ try {
   await test6_events();
   await test7_touchAndAxis();
   await test8_dataProtection();
+  await test9_versionAndUpdate();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

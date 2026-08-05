@@ -19,7 +19,10 @@
   <!-- ①今日 -->
   <section class="screen active" id="screen-today" aria-label="今日">
     <div class="screen-head">
-      <span class="brand">IBUKI STUDY BEAT</span>
+      <span class="brand-wrap">
+        <span class="brand">IBUKI STUDY BEAT</span>
+        <span class="version-badge" id="app-version">ver. -</span>
+      </span>
       <button class="head-btn" id="btn-rename-char" aria-label="キャラクター名を変更">✏️</button>
     </div>
     <div id="today-banner"></div>
@@ -234,6 +237,17 @@
 
 <!-- トースト -->
 <div class="toast" id="toast"><span id="toast-text"></span><button id="toast-action" style="display:none"></button></div>
+
+<!-- 画面中央メッセージ(起動時のあいさつ・アップデート通知) -->
+<div class="center-msg" id="center-msg" role="dialog" aria-modal="true">
+  <div class="cm-card">
+    <div class="cm-visual" id="cm-visual"></div>
+    <div class="cm-title" id="cm-title"></div>
+    <div class="cm-body" id="cm-body"></div>
+    <button class="btn primary big block" id="cm-btn">閉じる</button>
+    <div class="cm-version" id="cm-version"></div>
+  </div>
+</div>
 
 <!-- お祝い演出 -->
 <div class="celebrate" id="celebrate">

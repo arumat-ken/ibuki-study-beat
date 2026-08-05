@@ -3,6 +3,10 @@
   'use strict';
   var C = window.ISBCalc;
 
+  /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
+   * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
+  var APP_VERSION = '3.2.0';
+
   /* ================= ストレージ ================= */
   var KEY = 'ibukiStudyBeat.v3';
   var BACKUP_KEY = 'ibukiStudyBeat.v3.backup';
@@ -106,6 +110,39 @@
     toastTimer = setTimeout(hideToast, actionLabel ? 6000 : 3000);
   }
   function hideToast() { $('toast').classList.remove('show'); }
+
+  /* --- 画面中央メッセージ --- */
+  var centerTimer = null;
+  /**
+   * 画面中央にメッセージを表示する。
+   * opts: { title, body, sub, img, buttonLabel, autoCloseMs, onConfirm }
+   */
+  function showCenterMessage(opts) {
+    clearTimeout(centerTimer);
+    var el = $('center-msg');
+    $('cm-visual').innerHTML = opts.img ? charImg(opts.img, opts.title) : '';
+    $('cm-title').textContent = opts.title;
+    $('cm-body').innerHTML = esc(opts.body) + (opts.sub ? '<span class="cm-sub">' + esc(opts.sub) + '</span>' : '');
+    $('cm-version').textContent = 'ver. ' + APP_VERSION;
+    var btn = $('cm-btn');
+    btn.textContent = opts.buttonLabel || '閉じる';
+    btn.onclick = function () {
+      hideCenterMessage();
+      if (opts.onConfirm) opts.onConfirm();
+    };
+    el.classList.add('open');
+    if (opts.autoCloseMs) {
+      // あいさつは自動で閉じる。画面のどこをタップしてもすぐ閉じられる。
+      centerTimer = setTimeout(hideCenterMessage, opts.autoCloseMs);
+      el.onclick = function (e) { if (e.target === el) hideCenterMessage(); };
+    } else {
+      el.onclick = null;
+    }
+  }
+  function hideCenterMessage() {
+    clearTimeout(centerTimer);
+    $('center-msg').classList.remove('open');
+  }
 
   function openModal(html) {
     $('modal-body').innerHTML = html;
@@ -1589,7 +1626,7 @@
     openModal(
       '<h3>サポート・ヘルプ<button class="icon-btn" id="m-close">✕</button></h3>' +
       '<div class="small" style="line-height:1.9">' +
-      '<b>IBUKI STUDY BEAT</b> v3.0<br>' +
+      '<b>IBUKI STUDY BEAT</b> ver. ' + APP_VERSION + '<br>' +
       '一歩一歩が、未来のステージをつくる。<br><br>' +
       '・「今日」で予定を立てて学習開始 → 終了で自動記録<br>' +
       '・「記録」で後から追加・編集・削除(ごみ箱つき)<br>' +
@@ -1610,19 +1647,109 @@
     if (currentScreen === 'coach') renderCoach();
   }
 
+  /* --- 起動時のあいさつ(画面中央) --- */
+  var LAST_SEEN_VERSION_KEY = 'ibukiStudyBeat.lastSeenVersion';
+
+  function showWelcomeMessage() {
+    var lastSeen = null;
+    try { lastSeen = localStorage.getItem(LAST_SEEN_VERSION_KEY); } catch (e) {}
+    try { localStorage.setItem(LAST_SEEN_VERSION_KEY, APP_VERSION); } catch (e) {}
+
+    // 前回と違うバージョンで開いた = 更新後の初回起動
+    if (lastSeen && lastSeen !== APP_VERSION) {
+      showCenterMessage({
+        img: 'cele_nicebeat.png',
+        title: 'アプリが新しくなったよ！',
+        body: 'ver. ' + lastSeen + ' → ' + APP_VERSION + ' に更新できたよ。',
+        sub: '記録はぜんぶそのまま残っているから安心してね。',
+        buttonLabel: '今日も始める ▶',
+        onConfirm: function () { showScreen('today'); }
+      });
+      return;
+    }
+
+    var recs = todayRecords();
+    var total = 0;
+    recs.forEach(function (r) { total += r.actualMin; });
+    var streak = C.streakDays(state.records, todayStr());
+    var name = state.settings.userName || '伊吹';
+    var sub = '';
+    if (state.settings.examDate) {
+      var dd = C.diffDays(todayStr(), state.settings.examDate);
+      if (dd > 0) sub = '受験まであと ' + dd + '日';
+      else if (dd === 0) sub = 'いよいよ今日が本番！';
+    }
+    if (!sub && streak > 0) sub = streak + '日連続で積み上げ中！';
+    if (total > 0) sub = '今日はここまで ' + C.fmtDuration(total) + '。' + (sub ? ' / ' + sub : '');
+
+    showCenterMessage({
+      img: 'coach_stage.png',
+      title: (lastSeen ? 'おかえり、' : 'ようこそ、') + name + '！',
+      body: greeting(),
+      sub: sub,
+      buttonLabel: '今日も始める ▶',
+      autoCloseMs: 4000
+    });
+  }
+
+  /* --- アップデート検知(Service Worker) --- */
+  function setupServiceWorker() {
+    if (!('serviceWorker' in navigator) || location.protocol !== 'https:') return;
+
+    // 新しい版が有効になったら画面を読み込み直す(データはそのまま)
+    var reloading = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (reloading) return;
+      reloading = true;
+      location.reload();
+    });
+
+    navigator.serviceWorker.register('sw.js').then(function (reg) {
+      function offerUpdate(worker) {
+        if (!worker) return;
+        showCenterMessage({
+          img: 'cele_streak7.png',
+          title: '新しいバージョンがあるよ！',
+          body: 'アップデートを入れると、追加された機能が使えるようになるよ。',
+          sub: '学習の記録は消えないから大丈夫！',
+          buttonLabel: '🔄 いますぐ更新する',
+          onConfirm: function () {
+            toast('更新中…少し待ってね');
+            worker.postMessage({ type: 'SKIP_WAITING' });
+          }
+        });
+      }
+      // すでに新しい版が待機している場合
+      if (reg.waiting && navigator.serviceWorker.controller) offerUpdate(reg.waiting);
+      // 新しい版が届いた場合
+      reg.addEventListener('updatefound', function () {
+        var nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', function () {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) offerUpdate(nw);
+        });
+      });
+      // アプリを開いたとき・前面に戻したとき、および定期的に新版を確認
+      function checkUpdate() { try { reg.update(); } catch (e) {} }
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) checkUpdate();
+      });
+      setInterval(checkUpdate, 30 * 60 * 1000);
+    }).catch(function () {});
+  }
+
   function init() {
     state = loadState();
     save();
     checkPoseUnlocks();
+    $('app-version').textContent = 'ver. ' + APP_VERSION;
     $('rf-date').value = todayStr();
     $('rf-kind').innerHTML = kindOptions('暗記');
     $('rf-subject').innerHTML = subjectOptions();
     renderToday();
+    showWelcomeMessage();
     if (storageWarning) toast(storageWarning, true);
-    // Service Worker (PWA)
-    if ('serviceWorker' in navigator && location.protocol === 'https:') {
-      navigator.serviceWorker.register('sw.js').catch(function () {});
-    }
+    setupServiceWorker();
   }
 
   init();

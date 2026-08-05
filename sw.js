@@ -1,5 +1,5 @@
 /* IBUKI STUDY BEAT — Service Worker (オフライン対応) */
-var CACHE = 'isb-v3.1.0';
+var CACHE = 'isb-v3.2.0';
 var ASSETS = [
   './',
   './index.html',
@@ -29,11 +29,15 @@ var ASSETS = [
 ];
 
 self.addEventListener('install', function (e) {
+  // ここでは skipWaiting しない。
+  // 画面中央の「いますぐ更新する」を押してもらってから切り替える。
   e.waitUntil(
-    caches.open(CACHE).then(function (c) { return c.addAll(ASSETS); }).then(function () {
-      return self.skipWaiting();
-    })
+    caches.open(CACHE).then(function (c) { return c.addAll(ASSETS); })
   );
+});
+
+self.addEventListener('message', function (e) {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', function (e) {
