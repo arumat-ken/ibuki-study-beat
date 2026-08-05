@@ -131,45 +131,10 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 .nav-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .nav-btn.active { color: var(--gold-bright); }
 
-/* ---------- キャラクター(BEATスター) ---------- */
-.beatstar { display: block; }
-.beatstar .limb, .beatstar .part { transform-box: fill-box; }
-.beatstar .arm-l, .beatstar .arm-r { transform-origin: 50% 12%; transition: transform 0.4s ease; }
-.beatstar .leg-l, .beatstar .leg-r { transform-origin: 50% 8%; transition: transform 0.4s ease; }
-.beatstar .body-g { transform-origin: 50% 80%; transition: transform 0.4s ease; }
-.beatstar .head-g { transform-origin: 50% 90%; transition: transform 0.4s ease; }
-/* ポーズ */
-.pose-idle .arm-r { transform: rotate(-118deg); }
-.pose-idle .arm-l { transform: rotate(8deg); }
-.pose-start .arm-r { transform: rotate(-165deg); }
-.pose-start .arm-l { transform: rotate(12deg); }
-.pose-start .body-g { transform: rotate(-3deg); }
-.pose-study .arm-r { transform: rotate(-55deg); }
-.pose-study .arm-l { transform: rotate(55deg); }
-.pose-study .head-g { transform: rotate(4deg); }
-.pose-done .arm-r { transform: rotate(-160deg); }
-.pose-done .arm-l { transform: rotate(160deg); }
-.pose-done .head-g { transform: rotate(-3deg); }
-.pose-lean .body-g { transform: rotate(-14deg); }
-.pose-lean .arm-r { transform: rotate(-95deg); }
-.pose-lean .arm-l { transform: rotate(-20deg); }
-.pose-lean .head-g { transform: rotate(6deg); }
-.pose-moonwalk .body-g { transform: rotate(6deg); }
-.pose-moonwalk .leg-l { transform: rotate(-28deg); }
-.pose-moonwalk .leg-r { transform: rotate(14deg); }
-.pose-moonwalk .arm-r { transform: rotate(28deg); }
-.pose-moonwalk .arm-l { transform: rotate(-40deg); }
-.pose-spin .body-g { transform: rotate(-6deg); }
-.pose-spin .arm-r { transform: rotate(-140deg); }
-.pose-spin .arm-l { transform: rotate(140deg); }
-.pose-spin .leg-l { transform: rotate(-18deg); }
-.pose-heel .leg-r { transform: rotate(-30deg); }
-.pose-heel .arm-r { transform: rotate(-70deg); }
-.pose-heel .arm-l { transform: rotate(30deg); }
-.pose-heel .body-g { transform: rotate(-4deg); }
-@media (prefers-reduced-motion: no-preference) {
-  .beatstar.groove { animation: groove 1.6s ease-in-out infinite; }
-  @keyframes groove { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+/* ---------- キャラクター(BEATスター) — 確定デザインの画像 ---------- */
+.char-img {
+  display: block; width: 100%; height: auto;
+  border-radius: 14px; object-fit: cover;
 }
 
 /* 今日画面のヒーローカード */
@@ -180,7 +145,7 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
     var(--card);
   border: 1px solid var(--gold-dim);
 }
-.hero .beat-wrap { flex-shrink: 0; width: 92px; }
+.hero .beat-wrap { flex-shrink: 0; width: 104px; }
 .bubble {
   position: relative; flex: 1;
   background: var(--card-2); border: 1px solid var(--line);
@@ -320,7 +285,7 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
   clip-path: polygon(42% 0, 58% 0, 100% 100%, 0 100%);
   pointer-events: none;
 }
-.stage .beat-wrap { width: 130px; margin: 0 auto; position: relative; }
+.stage .beat-wrap { width: 168px; margin: 0 auto; position: relative; }
 .stage .coach-name { font-weight: 800; letter-spacing: 0.08em; margin-top: 4px; }
 .stage .pose-name { font-size: 0.7rem; color: var(--gold-bright); margin-top: 2px; }
 .coach-actions { display: flex; gap: 8px; margin-bottom: 12px; }
@@ -337,8 +302,9 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 .pose-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .pose-cell {
   background: var(--card-2); border: 1px solid var(--line); border-radius: 12px;
-  padding: 8px 4px; text-align: center; cursor: pointer; min-height: 44px;
+  padding: 6px; text-align: center; cursor: pointer; min-height: 44px;
 }
+.pose-cell .char-img { border-radius: 8px; }
 .pose-cell.active { border-color: var(--gold); background: rgba(217, 178, 74, 0.12); }
 .pose-cell .nm { font-size: 0.68rem; color: var(--dim); margin-top: 2px; display: block; }
 .pose-cell.active .nm { color: var(--gold-bright); }
@@ -413,7 +379,7 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 .celebrate.open { display: flex; }
 .celebrate .c-msg { font-size: 1.5rem; font-weight: 900; color: var(--gold-bright); margin-top: 12px; }
 .celebrate .c-sub { color: var(--dim); margin-top: 8px; font-size: 0.9rem; }
-.celebrate .beat-wrap { width: 150px; }
+.celebrate .beat-wrap { width: 230px; max-width: 70vw; }
 @media (prefers-reduced-motion: no-preference) {
   .celebrate.open .beat-wrap { animation: pop 0.5s ease; }
   @keyframes pop { 0% { transform: scale(0.6); } 70% { transform: scale(1.08); } 100% { transform: scale(1); } }

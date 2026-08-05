@@ -130,57 +130,23 @@
     if (t && t.tagName === 'INPUT') e.preventDefault(); // フォームはボタンでのみ送信
   }, true);
 
-  /* ================= キャラクター(BEATスター) ================= */
-  function beatstarSVG(poseClass, opts) {
-    opts = opts || {};
-    var glow = opts.glow ? '<ellipse cx="60" cy="146" rx="34" ry="7" fill="rgba(217,178,74,0.35)"/>' : '<ellipse cx="60" cy="146" rx="30" ry="6" fill="rgba(0,0,0,0.35)"/>';
-    return '' +
-      '<svg class="beatstar ' + poseClass + (opts.groove ? ' groove' : '') + '" viewBox="0 0 120 152" role="img" aria-label="BEATスター">' +
-      glow +
-      // 脚
-      '<g class="limb leg-l"><rect x="47" y="106" width="12" height="32" rx="4" fill="#141418"/><rect x="45" y="132" width="16" height="8" rx="3" fill="#0c0c0f"/></g>' +
-      '<g class="limb leg-r"><rect x="61" y="106" width="12" height="32" rx="4" fill="#141418"/><rect x="59" y="132" width="16" height="8" rx="3" fill="#0c0c0f"/></g>' +
-      '<g class="part body-g">' +
-      // 腰
-      '<rect x="45" y="98" width="30" height="12" rx="3" fill="#101014"/>' +
-      // 胴体(黒ジャケット+白シャツ+金ライン)
-      '<path d="M44 62 L76 62 L79 100 L41 100 Z" fill="#17171d" stroke="#26262e" stroke-width="1"/>' +
-      '<path d="M56 62 L64 62 L62 88 L58 88 Z" fill="#f5f2ea"/>' +
-      '<path d="M52 62 L58 62 L56 84 Z" fill="#101014"/>' +
-      '<path d="M68 62 L62 62 L64 84 Z" fill="#101014"/>' +
-      '<circle cx="60" cy="90" r="1.6" fill="#d9b24a"/>' +
-      '<path d="M45 64 L48 96" stroke="#d9b24a" stroke-width="0.8" opacity="0.7"/>' +
-      '<path d="M75 64 L72 96" stroke="#d9b24a" stroke-width="0.8" opacity="0.7"/>' +
-      // 腕
-      '<g class="limb arm-l"><rect x="38" y="63" width="10" height="30" rx="5" fill="#17171d"/><circle cx="43" cy="95" r="5" fill="#f0c75e"/><rect x="38" y="84" width="10" height="4" fill="#f5f2ea"/></g>' +
-      '<g class="limb arm-r"><rect x="72" y="63" width="10" height="30" rx="5" fill="#17171d"/><circle cx="77" cy="95" r="5" fill="#f0c75e"/><rect x="72" y="84" width="10" height="4" fill="#f5f2ea"/></g>' +
-      '</g>' +
-      // 頭
-      '<g class="part head-g">' +
-      '<rect x="56" y="54" width="8" height="8" fill="#f0c75e"/>' +
-      '<rect x="46" y="26" width="28" height="30" rx="9" fill="#f7d269"/>' +
-      // 顔
-      '<circle cx="54" cy="41" r="2.2" fill="#1a1a1e"/>' +
-      '<circle cx="66" cy="41" r="2.2" fill="#1a1a1e"/>' +
-      '<path d="M54 48 Q60 52 66 48" stroke="#1a1a1e" stroke-width="1.8" fill="none" stroke-linecap="round"/>' +
-      // カーリーヘア
-      '<g fill="#15151a">' +
-      '<circle cx="48" cy="27" r="6"/><circle cx="55" cy="23" r="6.5"/><circle cx="62" cy="22" r="6.5"/><circle cx="69" cy="24" r="6"/>' +
-      '<circle cx="73" cy="30" r="5"/><circle cx="45" cy="33" r="5"/><circle cx="74" cy="37" r="4"/><circle cx="45" cy="39" r="3.5"/>' +
-      '</g>' +
-      '</g>' +
-      (opts.star ? '<path d="M97 22 l3.2 6.6 7.2 1-5.2 5 1.2 7.2-6.4-3.4-6.4 3.4 1.2-7.2-5.2-5 7.2-1z" fill="#f0c75e"/>' : '') +
-      '</svg>';
+  /* ================= キャラクター(BEATスター) =================
+   * 確定デザイン(LEGOミニフィグ風マイケル)のポスターから切り出した画像を使用。
+   * assets/char/ 以下に固定部品として管理する。 */
+  function charImg(file, alt) {
+    return '<img class="char-img" src="assets/char/' + file + '" alt="' + esc(alt || 'BEATスター') + '">';
   }
 
   var POSES = [
-    { id: 'smooth', name: 'スムーズ', cls: 'pose-idle', cond: null },
-    { id: 'start', name: 'スタート', cls: 'pose-start', cond: null },
-    { id: 'guts', name: 'ガッツポーズ', cls: 'pose-done', cond: null },
-    { id: 'moonwalk', name: 'ムーンウォーク', cls: 'pose-moonwalk', cond: '7日連続記録で解放' },
-    { id: 'zerogravity', name: 'ゼロ・グラビティ', cls: 'pose-lean', cond: '累計20時間で解放' },
-    { id: 'spin', name: 'スピンターン', cls: 'pose-spin', cond: 'テストを記録して解放' },
-    { id: 'heel', name: 'ヒール・トゥ', cls: 'pose-heel', cond: '受験イベント登録で解放' }
+    { id: 'smooth', name: 'スムーズクリミナル', img: 'pose_smooth_criminal.png', cond: null },
+    { id: 'thriller', name: 'スリラー', img: 'pose_thriller.png', cond: null },
+    { id: 'billie', name: 'ビリー・ジーン', img: 'pose_billie_jean.png', cond: null },
+    { id: 'moonwalk', name: 'ムーンウォーク', img: 'pose_moonwalk.png', cond: '7日連続記録で解放' },
+    { id: 'heel', name: 'ヒール・トゥ', img: 'pose_heel_toe.png', cond: '受験イベント登録で解放' },
+    { id: 'zerogravity', name: 'ゼロ・グラビティ・リーブ', img: 'pose_zero_gravity.png', cond: '累計20時間で解放' },
+    { id: 'spin', name: 'スピンターン', img: 'pose_spin_turn.png', cond: 'テストを記録して解放' },
+    { id: 'windmill', name: 'ウィンドミル', img: 'pose_windmill.png', cond: '累計50時間で解放' },
+    { id: 'end', name: 'エンドポーズ', img: 'pose_end_pose.png', cond: '累計100時間で解放' }
   ];
   var currentPose = 'smooth';
 
@@ -195,6 +161,8 @@
     var total = 0;
     recs.forEach(function (r) { total += r.actualMin; });
     if (total >= 20 * 60) unlocked.push('zerogravity');
+    if (total >= 50 * 60) unlocked.push('windmill');
+    if (total >= 100 * 60) unlocked.push('end');
     if (recs.some(function (r) { return r.kind === 'テスト' && r.actualMin > 0; })) unlocked.push('spin');
     if (state.events.length > 0) unlocked.push('heel');
     var added = [];
@@ -257,7 +225,7 @@
   function renderToday() {
     $('today-char-name').textContent = state.settings.characterName;
     $('today-greeting').textContent = greeting();
-    $('today-beat').innerHTML = beatstarSVG(state.activeSession ? 'pose-study' : 'pose-idle', { groove: !state.activeSession });
+    $('today-beat').innerHTML = charImg(state.activeSession ? 'pose_billie_jean.png' : 'coach_stage.png');
 
     var slogans = state.settings.slogans;
     $('slogan-text').textContent = slogans[sloganIndex % slogans.length] || '一日一歩、未来の自分へ';
@@ -526,15 +494,19 @@
     var all = 0;
     C.activeRecords(state.records).forEach(function (r) { all += r.actualMin; });
     var streak = C.streakDays(state.records, todayStr());
-    var msg = 'ナイスビート！', sub = C.fmtDuration(rec.actualMin) + ' 積み上げたよ', pose = 'pose-done';
-    if (all >= 20 * 60 && all - rec.actualMin < 20 * 60) {
-      msg = '累計20時間達成！'; sub = '積み重ねが力になってるよ！'; pose = 'pose-lean';
+    var msg = 'ナイスビート！', sub = C.fmtDuration(rec.actualMin) + ' 積み上げたよ', img = 'cele_nicebeat.png';
+    if (all >= 100 * 60 && all - rec.actualMin < 100 * 60) {
+      msg = '累計100時間達成！'; sub = 'ここまで来た君は本物だ！'; img = 'cele_gokaku.png';
+    } else if (all >= 20 * 60 && all - rec.actualMin < 20 * 60) {
+      msg = '累計20時間達成！'; sub = '積み重ねが力になってるよ！'; img = 'cele_hours20.png';
     } else if (streak === 7) {
-      msg = '7日連続達成！'; sub = 'すごい！その調子！'; pose = 'pose-moonwalk';
+      msg = '7日連続達成！'; sub = 'すごい！その調子！'; img = 'cele_streak7.png';
     } else if (total >= state.settings.dailyGoalMin && total - rec.actualMin < state.settings.dailyGoalMin) {
-      msg = '今日の目標達成！'; sub = '君がチャンピオンだ！'; pose = 'pose-done';
+      msg = '今日の目標達成！'; sub = '君がチャンピオンだ！'; img = 'cele_goal.png';
+    } else if (rec.kind === 'テスト') {
+      msg = '模試おつかれさま！'; sub = 'よく頑張ったね！'; img = 'cele_exam_done.png';
     }
-    $('celebrate-beat').innerHTML = beatstarSVG(pose, { glow: true, star: true });
+    $('celebrate-beat').innerHTML = charImg(img, msg);
     $('celebrate-msg').textContent = msg;
     $('celebrate-sub').textContent = sub;
     $('celebrate').classList.add('open');
@@ -1249,7 +1221,7 @@
   /* ================= コーチ画面 ================= */
   function renderCoach() {
     var pose = poseById(currentPose);
-    $('coach-beat').innerHTML = beatstarSVG(pose.cls, { glow: true, groove: true });
+    $('coach-beat').innerHTML = charImg(pose.img, pose.name);
     $('coach-name').textContent = state.settings.characterName;
     $('coach-bubble-name').textContent = state.settings.characterName;
     $('coach-pose-name').textContent = pose.name;
@@ -1276,7 +1248,7 @@
     POSES.forEach(function (p) {
       var unlocked = poseUnlocked(p);
       html += '<button class="pose-cell' + (currentPose === p.id ? ' active' : '') + '" data-pose="' + p.id + '"' + (unlocked ? '' : ' disabled style="opacity:0.45"') + '>' +
-        '<div style="width:52px;margin:0 auto">' + beatstarSVG(p.cls) + '</div>' +
+        charImg(p.img, p.name) +
         '<span class="nm">' + (unlocked ? p.name : '🔒 ' + p.cond) + '</span></button>';
     });
     $('pose-grid').innerHTML = html;

@@ -22,8 +22,9 @@ function ok(name, cond, detail) {
 }
 
 async function shot(name, keepToast) {
-  if (!keepToast) await page.evaluate(() => document.getElementById('toast').classList.remove('show'));
+  if (!keepToast) await page.evaluate(() => { const t = document.getElementById('toast'); t.classList.remove('show'); t.style.display = 'none'; });
   await page.screenshot({ path: SHOT_DIR + name + '.png', fullPage: false });
+  if (!keepToast) await page.evaluate(() => { document.getElementById('toast').style.display = ''; });
 }
 
 async function freshPage(clearStorage = false) {
