@@ -196,7 +196,7 @@
   function fmtMin(min, unit) {
     if (unit === 'hours') {
       var h = min / 60;
-      return (Math.round(h * 10) / 10) + '';
+      return (Math.round(h * 100) / 100) + '';
     }
     return min + '';
   }
