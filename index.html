@@ -2,248 +2,248 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>IBUKI STUDY BEAT 🎧</title>
-<style>
-  :root {
-    --bg: #0f0f1a;
-    --surface: #1a1a2e;
-    --card: #16213e;
-    --accent1: #e94560;
-    --accent2: #0f3460;
-    --accent3: #533483;
-    --text: #eaeaea;
-    --text-dim: #8888aa;
-    --success: #4ecca3;
-    --warning: #f5a623;
-    --border: rgba(233, 69, 96, 0.3);
-    --shadow: 0 8px 32px rgba(0,0,0,0.5);
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif;
-    min-height: 100vh;
-    overflow-x: hidden;
-  }
-  body::before {
-    content: '';
-    position: fixed;
-    top: -50%; left: -50%;
-    width: 200%; height: 200%;
-    background: radial-gradient(ellipse at 30% 20%, rgba(83,52,131,0.15) 0%, transparent 50%),
-                radial-gradient(ellipse at 70% 80%, rgba(233,69,96,0.1) 0%, transparent 50%);
-    animation: bgPulse 8s ease-in-out infinite alternate;
-    pointer-events: none;
-    z-index: 0;
-  }
-  @keyframes bgPulse { 0% { transform: scale(1); } 100% { transform: scale(1.05); } }
-  .container { max-width: 480px; margin: 0 auto; padding: 16px; position: relative; z-index: 1; }
-  .header { text-align: center; padding: 20px 0 16px; }
-  .header h1 {
-    font-size: 1.6rem; font-weight: 900; letter-spacing: 0.05em;
-    background: linear-gradient(135deg, var(--accent1), #ff8c69, var(--accent3));
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
-  }
-  .header .subtitle { font-size: 0.8rem; color: var(--text-dim); margin-top: 4px; letter-spacing: 0.15em; }
-  .beat-bars { display: flex; justify-content: center; gap: 3px; margin: 8px 0 0; }
-  .beat-bar { width: 3px; background: var(--accent1); border-radius: 2px; animation: beatAnim 1.2s ease-in-out infinite; }
-  .beat-bar:nth-child(1) { height: 8px; animation-delay: 0s; }
-  .beat-bar:nth-child(2) { height: 16px; animation-delay: 0.1s; }
-  .beat-bar:nth-child(3) { height: 24px; animation-delay: 0.2s; }
-  .beat-bar:nth-child(4) { height: 16px; animation-delay: 0.3s; }
-  .beat-bar:nth-child(5) { height: 8px; animation-delay: 0.4s; }
-  .beat-bar:nth-child(6) { height: 20px; animation-delay: 0.2s; }
-  .beat-bar:nth-child(7) { height: 12px; animation-delay: 0.15s; }
-  @keyframes beatAnim { 0%, 100% { transform: scaleY(0.5); opacity: 0.5; } 50% { transform: scaleY(1); opacity: 1; } }
-  .beat-bars.paused .beat-bar { animation-play-state: paused; }
-  .stats-bar { display: flex; justify-content: space-around; background: var(--surface); border-radius: 12px; padding: 12px; margin-bottom: 16px; border: 1px solid var(--border); }
-  .stat-item { text-align: center; }
-  .stat-num { font-size: 1.4rem; font-weight: 900; color: var(--success); }
-  .stat-label { font-size: 0.65rem; color: var(--text-dim); margin-top: 2px; }
-  .section-title { font-size: 0.75rem; color: var(--text-dim); letter-spacing: 0.15em; margin-bottom: 8px; text-transform: uppercase; }
-  .subjects { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
-  .subject-btn { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 6px; cursor: pointer; text-align: center; transition: all 0.2s; color: var(--text); }
-  .subject-btn .icon { font-size: 1.2rem; display: block; }
-  .subject-btn .name { font-size: 0.7rem; margin-top: 3px; }
-  .subject-btn.active { background: var(--accent1); border-color: var(--accent1); transform: scale(1.05); box-shadow: 0 4px 15px rgba(233,69,96,0.4); }
-  .subject-btn:not(.active):active { transform: scale(0.95); }
-  .timer-card { background: var(--card); border-radius: 20px; padding: 24px; text-align: center; margin-bottom: 16px; border: 1px solid var(--border); box-shadow: var(--shadow); position: relative; overflow: hidden; }
-  .timer-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; background: linear-gradient(90deg, transparent, var(--accent1), transparent); }
-  .timer-ring-wrap { position: relative; width: 180px; height: 180px; margin: 0 auto 16px; }
-  .timer-ring-svg { transform: rotate(-90deg); }
-  .timer-ring-bg { fill: none; stroke: var(--surface); stroke-width: 8; }
-  .timer-ring-fg { fill: none; stroke: var(--accent1); stroke-width: 8; stroke-linecap: round; stroke-dasharray: 502; stroke-dashoffset: 0; transition: stroke-dashoffset 1s linear, stroke 0.3s; }
-  .timer-ring-fg.break-mode { stroke: var(--success); }
-  .timer-display { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; }
-  .timer-time { font-size: 2.8rem; font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: 0.02em; line-height: 1; }
-  .timer-mode-label { font-size: 0.7rem; color: var(--text-dim); margin-top: 4px; }
-  .timer-mode-label.break { color: var(--success); }
-  .mode-tabs { display: flex; gap: 8px; margin-bottom: 12px; justify-content: center; }
-  .mode-tab { padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border); background: transparent; color: var(--text-dim); font-size: 0.75rem; cursor: pointer; transition: all 0.2s; }
-  .mode-tab.active { background: var(--accent2); border-color: var(--accent2); color: var(--text); }
-  .controls { display: flex; gap: 12px; justify-content: center; margin-top: 8px; }
-  .btn-main { background: linear-gradient(135deg, var(--accent1), #c0392b); border: none; border-radius: 50%; width: 64px; height: 64px; font-size: 1.6rem; cursor: pointer; box-shadow: 0 4px 20px rgba(233,69,96,0.5); transition: transform 0.15s, box-shadow 0.15s; display: flex; align-items: center; justify-content: center; }
-  .btn-main:active { transform: scale(0.92); box-shadow: 0 2px 10px rgba(233,69,96,0.4); }
-  .btn-sub { background: var(--surface); border: 1px solid var(--border); border-radius: 50%; width: 48px; height: 48px; font-size: 1.2rem; cursor: pointer; align-self: center; transition: transform 0.15s; display: flex; align-items: center; justify-content: center; }
-  .btn-sub:active { transform: scale(0.92); }
-  .log-card { background: var(--surface); border-radius: 16px; padding: 16px; margin-bottom: 16px; border: 1px solid var(--border); }
-  .log-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-  .clear-btn { font-size: 0.7rem; color: var(--text-dim); background: none; border: none; cursor: pointer; padding: 2px 8px; border-radius: 4px; transition: color 0.2s; }
-  .clear-btn:hover { color: var(--accent1); }
-  .log-list { display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow-y: auto; }
-  .log-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--card); border-radius: 8px; font-size: 0.8rem; }
-  .log-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .log-dot.study { background: var(--accent1); }
-  .log-dot.break { background: var(--success); }
-  .log-subj { color: var(--text-dim); font-size: 0.7rem; margin-left: auto; }
-  .log-dur { font-weight: bold; color: var(--warning); }
-  .log-empty { color: var(--text-dim); font-size: 0.8rem; text-align: center; padding: 16px; }
-  .motivation-card { background: linear-gradient(135deg, rgba(83,52,131,0.3), rgba(15,52,96,0.3)); border: 1px solid rgba(83,52,131,0.4); border-radius: 16px; padding: 16px; margin-bottom: 16px; text-align: center; cursor: pointer; transition: transform 0.2s; }
-  .motivation-card:active { transform: scale(0.98); }
-  .motivation-text { font-size: 0.95rem; line-height: 1.6; color: var(--text); }
-  .motivation-hint { font-size: 0.65rem; color: var(--text-dim); margin-top: 6px; }
-  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--surface); border: 1px solid var(--accent1); border-radius: 20px; padding: 10px 20px; font-size: 0.85rem; transition: transform 0.3s cubic-bezier(0.34,1.56,0.64,1); z-index: 100; white-space: nowrap; }
-  .toast.show { transform: translateX(-50%) translateY(0); }
-  .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
-  .summary-item { background: var(--card); border-radius: 12px; padding: 12px 8px; text-align: center; border: 1px solid var(--border); }
-  .summary-icon { font-size: 1.2rem; }
-  .summary-val { font-size: 1rem; font-weight: 700; color: var(--success); margin-top: 2px; }
-  .summary-label { font-size: 0.65rem; color: var(--text-dim); }
-  ::-webkit-scrollbar { width: 4px; }
-  ::-webkit-scrollbar-track { background: var(--surface); }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="STUDY BEAT">
+<title>IBUKI STUDY BEAT</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="stylesheet" href="css/app.css">
 </head>
 <body>
-<div class="container">
-  <div class="header">
-    <h1>🎧 IBUKI STUDY BEAT</h1>
-    <div class="subtitle">今日も一緒に、リズムで乗り越えよう</div>
-    <div class="beat-bars" id="beatBars">
-      <div class="beat-bar"></div><div class="beat-bar"></div><div class="beat-bar"></div>
-      <div class="beat-bar"></div><div class="beat-bar"></div><div class="beat-bar"></div><div class="beat-bar"></div>
+<div class="app" id="app">
+
+  <!-- ①今日 -->
+  <section class="screen active" id="screen-today" aria-label="今日">
+    <div class="screen-head">
+      <span class="brand">IBUKI STUDY BEAT</span>
+      <button class="head-btn" id="btn-rename-char" aria-label="キャラクター名を変更">✏️</button>
     </div>
-  </div>
-  <div class="stats-bar">
-    <div class="stat-item"><div class="stat-num" id="statSessions">0</div><div class="stat-label">セッション</div></div>
-    <div class="stat-item"><div class="stat-num" id="statMinutes">0</div><div class="stat-label">分 勉強</div></div>
-    <div class="stat-item"><div class="stat-num" id="statStreak">0</div><div class="stat-label">日 連続</div></div>
-  </div>
-  <div class="section-title">📚 今日の科目</div>
-  <div class="subjects" id="subjects">
-    <button class="subject-btn active" data-subject="英語" onclick="selectSubject(this)"><span class="icon">🇬🇧</span><span class="name">英語</span></button>
-    <button class="subject-btn" data-subject="数学" onclick="selectSubject(this)"><span class="icon">📐</span><span class="name">数学</span></button>
-    <button class="subject-btn" data-subject="国語" onclick="selectSubject(this)"><span class="icon">📖</span><span class="name">国語</span></button>
-    <button class="subject-btn" data-subject="理科" onclick="selectSubject(this)"><span class="icon">🔬</span><span class="name">理科</span></button>
-    <button class="subject-btn" data-subject="社会" onclick="selectSubject(this)"><span class="icon">🌏</span><span class="name">社会</span></button>
-    <button class="subject-btn" data-subject="その他" onclick="selectSubject(this)"><span class="icon">✏️</span><span class="name">その他</span></button>
-  </div>
-  <div class="timer-card">
-    <div class="mode-tabs">
-      <button class="mode-tab active" onclick="setMode(25, this)">25分</button>
-      <button class="mode-tab" onclick="setMode(50, this)">50分</button>
-      <button class="mode-tab" onclick="setMode(90, this)">90分</button>
-    </div>
-    <div class="timer-ring-wrap">
-      <svg class="timer-ring-svg" width="180" height="180" viewBox="0 0 180 180">
-        <circle class="timer-ring-bg" cx="90" cy="90" r="80"/>
-        <circle class="timer-ring-fg" id="timerRing" cx="90" cy="90" r="80"/>
-      </svg>
-      <div class="timer-display">
-        <div class="timer-time" id="timerDisplay">25:00</div>
-        <div class="timer-mode-label" id="timerModeLabel">集中モード 🔥</div>
+    <div id="today-banner"></div>
+    <div class="card hero">
+      <div class="beat-wrap" id="today-beat"></div>
+      <div class="bubble">
+        <span class="who" id="today-char-name">ビート</span>
+        <span id="today-greeting">よし、今日も一緒にビートを刻もう！</span>
       </div>
     </div>
-    <div class="controls">
-      <button class="btn-sub" onclick="resetTimer()" title="リセット">↺</button>
-      <button class="btn-main" id="mainBtn" onclick="toggleTimer()">▶</button>
-      <button class="btn-sub" onclick="skipPhase()" title="スキップ">⏭</button>
+    <div class="card slogan-card" id="slogan-card">
+      <div class="label">今日のスローガン</div>
+      <div class="slogan" id="slogan-text">一日一歩、未来の自分へ</div>
     </div>
-  </div>
-  <div class="section-title">📊 今日の記録</div>
-  <div class="summary-grid" id="summaryGrid">
-    <div class="summary-item"><div class="summary-icon">📊</div><div class="summary-val" id="summaryTotal">0分</div><div class="summary-label">合計</div></div>
-    <div class="summary-item"><div class="summary-icon">🏆</div><div class="summary-val" id="summaryBest">-</div><div class="summary-label">最多科目</div></div>
-    <div class="summary-item"><div class="summary-icon">⭐</div><div class="summary-val" id="summaryGoal">0%</div><div class="summary-label">目標達成</div></div>
-  </div>
-  <div class="log-card">
-    <div class="log-header">
-      <div class="section-title" style="margin:0">⏱ セッション履歴</div>
-      <button class="clear-btn" onclick="clearLog()">クリア</button>
+
+    <div class="card timer-card" id="timer-card" style="display:none"></div>
+
+    <div class="card">
+      <h2>今日の予定</h2>
+      <div class="plan-list" id="today-plans"></div>
+      <div style="margin-top:10px" class="btn-row">
+        <button class="btn" id="btn-add-plan">＋ 予定を追加</button>
+      </div>
+      <button class="btn primary big block" id="btn-start-study" style="margin-top:10px">学習を開始する ▶</button>
     </div>
-    <div class="log-list" id="logList">
-      <div class="log-empty">まだセッションがありません。<br>さあ、始めよう！🎧</div>
+
+    <div class="card">
+      <h2>今日の積み上げ</h2>
+      <div class="progress-wrap">
+        <div class="progress-nums">
+          <span class="now" id="today-total">0分</span>
+          <span class="muted" id="today-goal">目標 3時間</span>
+        </div>
+        <div class="progress-bar"><div id="today-progress" style="width:0%"></div></div>
+        <div class="streak-row">
+          <span>連続 <b id="today-streak">0</b>日</span>
+          <span>今週 <b id="today-week">0分</b></span>
+          <span id="today-exam-count"></span>
+        </div>
+      </div>
     </div>
-  </div>
-  <div class="motivation-card" onclick="refreshMotivation()">
-    <div class="motivation-text" id="motivationText">読み込み中...</div>
-    <div class="motivation-hint">タップで切り替え ✨</div>
-  </div>
+  </section>
+
+  <!-- ②学習記録 -->
+  <section class="screen" id="screen-record" aria-label="学習記録">
+    <div class="screen-head">
+      <h1>学習を記録する</h1>
+      <button class="head-btn" id="btn-open-trash" aria-label="ごみ箱">🗑</button>
+    </div>
+    <div class="card">
+      <h2>記録を追加(後からでもOK)</h2>
+      <form id="record-form" autocomplete="off">
+        <div class="field-row">
+          <div class="field">
+            <label for="rf-date">日付</label>
+            <input type="date" id="rf-date" required>
+          </div>
+          <div class="field">
+            <label for="rf-subject">科目</label>
+            <select id="rf-subject"></select>
+          </div>
+        </div>
+        <div class="field">
+          <label for="rf-content">内容</label>
+          <input type="text" id="rf-content" placeholder="例: 英単語 20語" maxlength="100">
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="rf-kind">学習種別</label>
+            <select id="rf-kind"></select>
+          </div>
+          <div class="field">
+            <label for="rf-plan">計画(分)</label>
+            <input type="number" id="rf-plan" min="0" max="720" inputmode="numeric" placeholder="30">
+          </div>
+          <div class="field">
+            <label for="rf-actual">実績(分)</label>
+            <input type="number" id="rf-actual" min="0" max="720" inputmode="numeric" placeholder="30">
+          </div>
+        </div>
+        <div class="field-row" id="rf-score-row" style="display:none">
+          <div class="field">
+            <label for="rf-score">得点</label>
+            <input type="number" id="rf-score" min="0" inputmode="numeric" placeholder="80">
+          </div>
+          <div class="field">
+            <label for="rf-maxscore">満点</label>
+            <input type="number" id="rf-maxscore" min="1" inputmode="numeric" placeholder="100">
+          </div>
+        </div>
+        <div class="field">
+          <label for="rf-reflection">振り返り</label>
+          <textarea id="rf-reflection" placeholder="覚えた！例文とセットで覚えるといい。" maxlength="300"></textarea>
+        </div>
+        <button type="submit" class="btn primary big block" id="rf-save">記録を保存する ✓</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>これまでの記録</h2>
+      <div id="record-list"></div>
+    </div>
+  </section>
+
+  <!-- ③グラフ(タイムライン) -->
+  <section class="screen" id="screen-graph" aria-label="学習タイムライン">
+    <div class="screen-head">
+      <h1>学習タイムライン</h1>
+      <button class="head-btn" id="btn-axis-setting" aria-label="軸設定">⚙️</button>
+    </div>
+    <div class="range-tabs" role="tablist">
+      <button class="range-tab" data-range="day" role="tab">日</button>
+      <button class="range-tab active" data-range="week" role="tab">週</button>
+      <button class="range-tab" data-range="month" role="tab">月</button>
+      <button class="range-tab" data-range="all" role="tab">全体</button>
+    </div>
+    <div class="stats-row" id="graph-stats"></div>
+    <div class="chart-panel" id="chart-panel">
+      <div class="chart-legend" id="chart-legend"></div>
+      <div id="chart-svg-wrap"></div>
+    </div>
+    <div class="chart-toolbar">
+      <button class="btn" id="btn-goto-today" style="display:none">📍 今日へ戻る</button>
+      <span class="chart-hint" style="flex:1">左右スワイプで移動 / ピンチで拡大・縮小 / 棒をタップで詳細</span>
+    </div>
+    <div class="card day-detail" id="day-detail" style="display:none"></div>
+    <div class="card">
+      <h2>今後のイベント</h2>
+      <div id="event-list"></div>
+      <button class="btn block" id="btn-add-event" style="margin-top:8px">＋ イベントを追加</button>
+    </div>
+  </section>
+
+  <!-- ④コーチ -->
+  <section class="screen" id="screen-coach" aria-label="コーチ">
+    <div class="screen-head">
+      <h1>BEATスター</h1>
+      <span class="muted small">端末内コーチ</span>
+    </div>
+    <div class="stage">
+      <div class="beat-wrap" id="coach-beat"></div>
+      <div class="coach-name" id="coach-name">ビート</div>
+      <div class="pose-name" id="coach-pose-name">スムーズ</div>
+    </div>
+    <div class="card">
+      <div class="bubble" style="margin-bottom:0">
+        <span class="who" id="coach-bubble-name">ビート</span>
+        <span id="coach-bubble-text">いいビートだったね！積み重ねが未来を変えるよ！</span>
+      </div>
+    </div>
+    <div class="coach-actions">
+      <button class="btn" id="btn-pose"><span class="ico">🕺</span>ポーズ変更</button>
+      <button class="btn" id="btn-chat"><span class="ico">💬</span>メッセージ</button>
+      <button class="btn" id="btn-coach-rename"><span class="ico">✏️</span>名前変更</button>
+    </div>
+    <div class="card" id="pose-panel" style="display:none">
+      <h2>ポーズコレクション</h2>
+      <div class="pose-grid" id="pose-grid"></div>
+    </div>
+    <div class="card" id="chat-panel" style="display:none">
+      <h2>メッセージ</h2>
+      <div class="chat-log" id="chat-log"></div>
+      <div class="chat-input-row">
+        <input type="text" id="chat-input" placeholder="今日のこと、話してみよう" maxlength="200">
+        <button class="btn primary" id="chat-send">送信</button>
+      </div>
+      <p class="muted small" style="margin-top:8px">※ 返答はアプリ内蔵の定型ロジックです(外部AIには接続していません)</p>
+    </div>
+  </section>
+
+  <!-- ⑤設定 -->
+  <section class="screen" id="screen-settings" aria-label="設定">
+    <div class="screen-head">
+      <h1>設定</h1>
+    </div>
+    <div class="settings-list">
+      <button class="settings-item" data-panel="profile"><span class="ico">👤</span>プロフィール<span class="chev">›</span></button>
+      <button class="settings-item" data-panel="goal"><span class="ico">🎯</span>目標・スローガン<span class="chev">›</span></button>
+      <button class="settings-item" data-panel="exam"><span class="ico">🏫</span>受験情報<span class="chev">›</span></button>
+      <button class="settings-item" data-panel="subjects"><span class="ico">📚</span>科目設定<span class="chev">›</span></button>
+      <button class="settings-item" data-panel="axis"><span class="ico">📈</span>グラフ・Y軸設定<span class="chev">›</span></button>
+      <button class="settings-item" data-panel="data"><span class="ico">💾</span>データ管理<span class="chev">›</span></button>
+      <button class="settings-item" data-panel="about"><span class="ico">❓</span>サポート・ヘルプ<span class="chev">›</span></button>
+    </div>
+  </section>
 </div>
-<div class="toast" id="toast"></div>
-<script>
-const STUDY_MINS = [25, 50, 90];
-const BREAK_RATIO = 5;
-const MOTIVATIONS = [
-  "受験は長距離走。今日の一歩が合格への道🏃",
-  "25分の集中が、未来の自分を作る⚡",
-  "英語も数学も、積み重ねだけが答え📚",
-  "眠い夜も、諦めない心が最強の武器🌙",
-  "失敗は成長のBEAT。刻んでいこう🎵",
-  "今やってることは、絶対に裏切らない💪",
-  "休憩も勉強のうち。戻ってきた自分を褒めよう🌟",
-  "志望校の景色を想像して、また始めよう🎯",
-  "1セッションずつ。それだけでいい🔥",
-  "あなたのBEATが続く限り、夢は動いてる🎧",
-  "今日の集中が、未来の伊吹を救う✨",
-  "「できない」じゃなく「まだできてない」だよ💫",
-  "疲れたら休む。それも戦略のうち😊",
-  "コツコツやった人が、最後に笑う📈",
-  "わからなくても前に進む。それが受験💡",
-];
-let state = {
-  currentSubject: '英語', studyMins: 25, isStudyPhase: true, isRunning: false,
-  totalSecs: 25 * 60, remainSecs: 25 * 60, intervalId: null, sessionLog: [],
-  todayStats: { sessions: 0, studyMins: 0, subjectMins: {} }, streak: 0,
-  dailyGoalMins: 120, motivIdx: 0, lastDate: '',
-};
-window.onload = () => { loadFromStorage(); checkDayReset(); renderLog(); renderStats(); renderSummary(); refreshMotivation(true); };
-function saveToStorage() {
-  try { localStorage.setItem('ibuki_beat_state', JSON.stringify({ todayStats: state.todayStats, streak: state.streak, sessionLog: state.sessionLog.slice(-30), lastDate: state.lastDate, dailyGoalMins: state.dailyGoalMins })); } catch(e) {}
-}
-function loadFromStorage() {
-  try { const raw = localStorage.getItem('ibuki_beat_state'); if (raw) { const saved = JSON.parse(raw); state.todayStats = saved.todayStats || state.todayStats; state.streak = saved.streak || 0; state.sessionLog = saved.sessionLog || []; state.lastDate = saved.lastDate || ''; state.dailyGoalMins = saved.dailyGoalMins || 120; } } catch(e) {}
-}
-function checkDayReset() {
-  const today = new Date().toLocaleDateString('ja-JP');
-  if (state.lastDate && state.lastDate !== today) { if (state.todayStats.sessions > 0) { state.streak++; } else { state.streak = 0; } state.todayStats = { sessions: 0, studyMins: 0, subjectMins: {} }; state.sessionLog = state.sessionLog.filter(l => l.date === today); }
-  state.lastDate = today; saveToStorage();
-}
-function selectSubject(btn) { document.querySelectorAll('.subject-btn').forEach(b => b.classList.remove('active')); btn.classList.add('active'); state.currentSubject = btn.dataset.subject; }
-function setMode(mins, btn) { if (state.isRunning) return; document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active')); btn.classList.add('active'); state.studyMins = mins; state.isStudyPhase = true; state.totalSecs = mins * 60; state.remainSecs = mins * 60; updateRing(); updateDisplay(); document.getElementById('timerModeLabel').className = 'timer-mode-label'; document.getElementById('timerModeLabel').textContent = '集中モード 🔥'; }
-function toggleTimer() { if (state.isRunning) { pauseTimer(); } else { startTimer(); } }
-function startTimer() { state.isRunning = true; document.getElementById('mainBtn').textContent = '⏸'; document.getElementById('beatBars').classList.remove('paused'); state.intervalId = setInterval(tick, 1000); }
-function pauseTimer() { state.isRunning = false; document.getElementById('mainBtn').textContent = '▶'; document.getElementById('beatBars').classList.add('paused'); clearInterval(state.intervalId); }
-function resetTimer() { pauseTimer(); state.isStudyPhase = true; state.totalSecs = state.studyMins * 60; state.remainSecs = state.studyMins * 60; updateRing(); updateDisplay(); const label = document.getElementById('timerModeLabel'); label.className = 'timer-mode-label'; label.textContent = '集中モード 🔥'; document.getElementById('timerRing').classList.remove('break-mode'); }
-function skipPhase() { if (state.isStudyPhase && state.isRunning) { const studiedMins = Math.round((state.totalSecs - state.remainSecs) / 60); if (studiedMins > 0) completeStudyPhase(studiedMins); } switchPhase(); }
-function tick() { state.remainSecs--; updateDisplay(); updateRing(); if (state.remainSecs <= 0) { phaseComplete(); } }
-function phaseComplete() { clearInterval(state.intervalId); state.isRunning = false; document.getElementById('mainBtn').textContent = '▶'; if (state.isStudyPhase) { completeStudyPhase(state.studyMins); showToast('🎉 集中セッション完了！休憩しよう'); switchToBreak(); } else { showToast('🔥 休憩終了！次のセッションへ'); resetToStudy(); } }
-function completeStudyPhase(mins) { const entry = { type: 'study', subject: state.currentSubject, mins: mins, time: new Date().toLocaleTimeString('ja-JP', {hour:'2-digit', minute:'2-digit'}), date: new Date().toLocaleDateString('ja-JP'), }; state.sessionLog.unshift(entry); state.todayStats.sessions++; state.todayStats.studyMins += mins; state.todayStats.subjectMins[state.currentSubject] = (state.todayStats.subjectMins[state.currentSubject] || 0) + mins; renderLog(); renderStats(); renderSummary(); saveToStorage(); }
-function switchToBreak() { state.isStudyPhase = false; const breakSecs = Math.max(5 * 60, Math.floor(state.studyMins * 60 / BREAK_RATIO)); state.totalSecs = breakSecs; state.remainSecs = breakSecs; updateRing(); updateDisplay(); const label = document.getElementById('timerModeLabel'); label.className = 'timer-mode-label break'; label.textContent = '休憩タイム ☕'; document.getElementById('timerRing').classList.add('break-mode'); document.getElementById('beatBars').classList.add('paused'); }
-function switchPhase() { if (state.isStudyPhase) { switchToBreak(); } else { resetToStudy(); } }
-function resetToStudy() { state.isStudyPhase = true; state.totalSecs = state.studyMins * 60; state.remainSecs = state.studyMins * 60; updateRing(); updateDisplay(); const label = document.getElementById('timerModeLabel'); label.className = 'timer-mode-label'; label.textContent = '集中モード 🔥'; document.getElementById('timerRing').classList.remove('break-mode'); }
-function updateDisplay() { const m = String(Math.floor(state.remainSecs / 60)).padStart(2, '0'); const s = String(state.remainSecs % 60).padStart(2, '0'); document.getElementById('timerDisplay').textContent = m + ':' + s; }
-function updateRing() { const pct = state.remainSecs / state.totalSecs; const circumference = 2 * Math.PI * 80; const offset = circumference * (1 - pct); document.getElementById('timerRing').style.strokeDasharray = circumference; document.getElementById('timerRing').style.strokeDashoffset = offset; }
-function renderStats() { document.getElementById('statSessions').textContent = state.todayStats.sessions; document.getElementById('statMinutes').textContent = state.todayStats.studyMins; document.getElementById('statStreak').textContent = state.streak; }
-function renderSummary() { const total = state.todayStats.studyMins; document.getElementById('summaryTotal').textContent = total + '分'; const subj = state.todayStats.subjectMins; const best = Object.entries(subj).sort((a,b) => b[1]-a[1])[0]; document.getElementById('summaryBest').textContent = best ? best[0] : '-'; const pct = Math.min(100, Math.round(total / state.dailyGoalMins * 100)); document.getElementById('summaryGoal').textContent = pct + '%'; }
-function renderLog() { const list = document.getElementById('logList'); if (state.sessionLog.length === 0) { list.innerHTML = '<div class="log-empty">まだセッションがありません。<br>さあ、始めよう！🎧</div>'; return; } const today = new Date().toLocaleDateString('ja-JP'); const todayLogs = state.sessionLog.filter(l => l.date === today); list.innerHTML = todayLogs.slice(0, 10).map(l => '<div class="log-item"><div class="log-dot ' + l.type + '"></div><span>' + l.time + '</span><span class="log-dur">' + l.mins + '分</span><span class="log-subj">' + l.subject + '</span></div>').join('') || '<div class="log-empty">今日のセッションはまだ<br>ありません🌅</div>'; }
-function clearLog() { if (confirm('今日の履歴をリセットしますか？')) { state.sessionLog = []; state.todayStats = { sessions: 0, studyMins: 0, subjectMins: {} }; renderLog(); renderStats(); renderSummary(); saveToStorage(); showToast('リセットしました'); } }
-function refreshMotivation(init) { if (!init) { state.motivIdx = (state.motivIdx + 1) % MOTIVATIONS.length; } else { state.motivIdx = Math.floor(Math.random() * MOTIVATIONS.length); } document.getElementById('motivationText').textContent = MOTIVATIONS[state.motivIdx]; }
-function showToast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2800); }
-document.addEventListener('keydown', e => { if (e.code === 'Space' && e.target.tagName !== 'BUTTON') { e.preventDefault(); toggleTimer(); } });
-updateRing();
-</script>
+
+<!-- 下部ナビ -->
+<nav class="nav" aria-label="メインナビゲーション">
+  <div class="nav-inner">
+    <button class="nav-btn active" data-screen="today">
+      <svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>今日
+    </button>
+    <button class="nav-btn" data-screen="record">
+      <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>記録
+    </button>
+    <button class="nav-btn" data-screen="graph">
+      <svg viewBox="0 0 24 24"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>グラフ
+    </button>
+    <button class="nav-btn" data-screen="coach">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M4 21v-2a6 6 0 016-6h4a6 6 0 016 6v2"/></svg>コーチ
+    </button>
+    <button class="nav-btn" data-screen="settings">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34h0a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55h0a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87v0a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z"/></svg>設定
+    </button>
+  </div>
+</nav>
+
+<!-- 汎用モーダル -->
+<div class="modal-back" id="modal-back">
+  <div class="modal" id="modal-body" role="dialog" aria-modal="true"></div>
+</div>
+
+<!-- トースト -->
+<div class="toast" id="toast"><span id="toast-text"></span><button id="toast-action" style="display:none"></button></div>
+
+<!-- お祝い演出 -->
+<div class="celebrate" id="celebrate">
+  <div class="beat-wrap" id="celebrate-beat"></div>
+  <div class="c-msg" id="celebrate-msg">ナイスビート！</div>
+  <div class="c-sub" id="celebrate-sub"></div>
+  <button class="btn primary" id="celebrate-close" style="margin-top:18px">閉じる</button>
+</div>
+
+<script src="js/calc.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>

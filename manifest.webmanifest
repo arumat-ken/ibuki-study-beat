@@ -1,0 +1,17 @@
+{
+  "name": "IBUKI STUDY BEAT",
+  "short_name": "STUDY BEAT",
+  "description": "一歩一歩が、未来のステージをつくる。大学受験の学習計画・実績・振り返りアプリ",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0b10",
+  "theme_color": "#0b0b10",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
