@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>IBUKI STUDY BEAT — モックアップ用スターター</title>
+<!--
+  ============================================================
+  モックアップ用スターターHTML
+  ============================================================
+  IBUKI STUDY BEAT ver.4 の画面設計モックを作るための土台です。
+  実アプリの css/app.css からデザイントークンと主要コンポーネントを
+  抜き出してあります。この上に画面を作ってください。
+
+  ルール:
+   - 外部CDN・外部画像を読み込まない（インラインCSS/SVGのみ）
+   - 320px幅で崩れないこと
+   - タップ領域は44×44px以上
+   - キャラ画像の位置は <div class="char-ph"></div> を置く
+   - 情報の階層化は「カード + ボトムシート型モーダル」で
+  ============================================================
+-->
+<style>
+:root {
+  /* ---- デザイントークン（実アプリと同一。変更しないこと） ---- */
+  --bg: #0b0b10;
+  --surface: #14141c;
+  --card: #1a1a24;
+  --card-2: #20202c;
+  --gold: #d9b24a;
+  --gold-bright: #f0c75e;
+  --gold-dim: rgba(217, 178, 74, 0.35);
+  --text: #f2efe6;
+  --dim: #9c99a6;
+  --line: rgba(255, 255, 255, 0.09);
+  --panel: #f5f2ea;
+  --panel-text: #23221e;
+  --panel-dim: #6d6a60;
+  --danger: #e0564f;
+  --ok: #58b368;
+  --plan-line: #3baa5c;
+  --actual-line: #3b82f6;
+  --nav-h: 58px;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  /* 科目色 */
+  --s-eng: #4A90D9; --s-math: #58B368; --s-jpn: #F5A623;
+  --s-sci: #9B59B6; --s-soc: #E8604C; --s-other: #9AA0A6;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif;
+  min-height: 100dvh; overscroll-behavior-y: none;
+}
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(ellipse 60% 40% at 80% -5%, rgba(217,178,74,0.13) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 30% at 10% 105%, rgba(217,178,74,0.06) 0%, transparent 60%);
+}
+button { font-family: inherit; color: inherit; }
+input, select, textarea {
+  font-family: inherit; font-size: 16px; /* iOSズーム防止・変更不可 */
+  color: var(--text); background: var(--card-2);
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; width: 100%; min-height: 44px;
+}
+.app { max-width: 520px; margin: 0 auto; position: relative; z-index: 1;
+       padding-bottom: calc(var(--nav-h) + var(--safe-b) + 12px); }
+
+/* ---- 画面 ---- */
+.screen { display: none; padding: 0 14px 8px; }
+.screen.active { display: block; }
+.screen-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 2px 10px; position: sticky; top: 0; z-index: 20;
+  background: linear-gradient(180deg, var(--bg) 82%, transparent);
+}
+.screen-head h1 { font-size: 1.05rem; letter-spacing: 0.06em; font-weight: 800; }
+.brand-wrap { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.version-badge { font-size: 0.6rem; letter-spacing: 0.1em; color: var(--dim); }
+.brand {
+  font-size: 1.15rem; font-weight: 900; letter-spacing: 0.04em;
+  background: linear-gradient(120deg, var(--gold-bright), #fff2c9 40%, var(--gold));
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.head-btn {
+  min-width: 44px; min-height: 44px; border-radius: 12px;
+  background: var(--card); border: 1px solid var(--line);
+  font-size: 1.1rem; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* ---- カード ---- */
+.card { background: var(--card); border: 1px solid var(--line);
+        border-radius: 16px; padding: 14px; margin-bottom: 12px; }
+.card h2 { font-size: 0.8rem; color: var(--gold); letter-spacing: 0.12em;
+           margin-bottom: 10px; font-weight: 700; }
+.card.gold { border-color: var(--gold-dim);
+  background: radial-gradient(ellipse 80% 90% at 85% 10%, rgba(217,178,74,0.18) 0%, transparent 65%), var(--card); }
+.muted { color: var(--dim); font-size: 0.78rem; }
+.small { font-size: 0.78rem; }
+
+/* ---- ボタン ---- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 44px; padding: 10px 16px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--card-2); color: var(--text);
+  font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: transform 0.12s;
+}
+.btn:active { transform: scale(0.97); }
+.btn.primary {
+  background: linear-gradient(135deg, var(--gold-bright), var(--gold));
+  color: #17130a; border: none; font-weight: 800;
+  box-shadow: 0 4px 18px rgba(217,178,74,0.35);
+}
+.btn.danger { color: var(--danger); border-color: rgba(224,86,79,0.4); }
+.btn.block { display: flex; width: 100%; }
+.btn.big { min-height: 54px; font-size: 1.05rem; border-radius: 14px; }
+.btn.ghost { background: transparent; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn-row > .btn { flex: 1; }
+
+/* ---- フォーム ---- */
+.field { margin-bottom: 10px; }
+.field label { display: block; font-size: 0.75rem; color: var(--dim); margin-bottom: 4px; }
+.field-row { display: flex; gap: 8px; }
+.field-row > .field { flex: 1; }
+
+/* ---- チップ ---- */
+.quick-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.quick-chip {
+  min-height: 44px; padding: 8px 14px; border-radius: 22px;
+  border: 1px solid var(--gold-dim); background: rgba(217,178,74,0.08);
+  color: var(--gold-bright); font-size: 0.78rem; font-weight: 600; cursor: pointer;
+}
+.stat-chip { flex-shrink: 0; border-radius: 10px; padding: 7px 12px;
+             font-size: 0.68rem; color: rgba(255,255,255,0.85); min-width: 84px; }
+.stat-chip b { display: block; font-size: 0.95rem; color: #fff; margin-top: 1px; }
+.stats-row { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 8px; }
+
+/* ---- トグル ---- */
+.toggle { position: relative; width: 46px; height: 28px; flex-shrink: 0;
+  border-radius: 14px; background: var(--card); border: 1px solid var(--line); cursor: pointer; }
+.toggle::after { content: ''; position: absolute; top: 3px; left: 3px;
+  width: 20px; height: 20px; border-radius: 50%; background: var(--dim); transition: transform .2s, background .2s; }
+.toggle.on { background: var(--gold); border-color: var(--gold); }
+.toggle.on::after { transform: translateX(18px); background: #17130a; }
+
+/* ---- 進捗バー ---- */
+.progress-bar { height: 10px; background: var(--card-2); border-radius: 6px; overflow: hidden; }
+.progress-bar > div { height: 100%; border-radius: 6px;
+  background: linear-gradient(90deg, var(--gold), var(--gold-bright)); }
+
+/* ---- 吹き出し ---- */
+.bubble { position: relative; flex: 1; background: var(--card-2);
+  border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+  font-size: 0.85rem; line-height: 1.5; }
+.bubble::before { content: ''; position: absolute; left: -6px; top: 18px;
+  width: 10px; height: 10px; background: var(--card-2);
+  border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); transform: rotate(45deg); }
+.bubble .who { color: var(--gold-bright); font-size: 0.7rem; font-weight: 700;
+  display: block; margin-bottom: 2px; }
+
+/* ---- キャラ画像プレースホルダ（実画像は実装時に差し込む） ---- */
+.char-ph {
+  background: linear-gradient(160deg, #1d1d28, #12121a);
+  border: 1px dashed var(--gold-dim); border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--dim); font-size: 0.62rem; text-align: center;
+  aspect-ratio: 160 / 233; width: 100%;
+}
+.char-ph::after { content: 'BEATスター\A（実画像）'; white-space: pre; }
+.stage {
+  position: relative; text-align: center; overflow: hidden;
+  background:
+    radial-gradient(ellipse 55% 62% at 50% 88%, rgba(217,178,74,0.30) 0%, rgba(217,178,74,0.10) 55%, transparent 75%),
+    linear-gradient(180deg, #101018, #171720);
+  border: 1px solid var(--gold-dim); border-radius: 18px; padding: 18px 12px 14px; margin-bottom: 12px;
+}
+
+/* ---- 下部ナビ（最大6タブ。320pxでも収まること） ---- */
+.nav { position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+  background: rgba(13,13,18,0.96); backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line); padding-bottom: var(--safe-b); }
+.nav-inner { max-width: 520px; margin: 0 auto; display: flex; }
+.nav-btn { flex: 1; min-height: var(--nav-h); background: none; border: none; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  color: var(--dim); font-size: 0.62rem; }
+.nav-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.nav-btn.active { color: var(--gold-bright); }
+
+/* ---- ボトムシート型モーダル ---- */
+.modal-back { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.65);
+  display: none; align-items: flex-end; justify-content: center; }
+.modal-back.open { display: flex; }
+.modal { background: var(--surface); border: 1px solid var(--line);
+  border-radius: 18px 18px 0 0; width: 100%; max-width: 520px;
+  max-height: 88dvh; overflow-y: auto; padding: 16px 16px calc(16px + var(--safe-b)); }
+.modal h3 { font-size: 0.95rem; margin-bottom: 12px; color: var(--gold-bright);
+  display: flex; justify-content: space-between; align-items: center; }
+
+/* ---- 中央メッセージ / お祝い演出 ---- */
+.center-msg { position: fixed; inset: 0; z-index: 150; background: rgba(5,5,8,0.72);
+  display: none; align-items: center; justify-content: center; padding: 24px; }
+.center-msg.open { display: flex; }
+.center-msg .box { background: var(--surface); border: 1px solid var(--gold-dim);
+  border-radius: 18px; padding: 22px 20px; text-align: center; max-width: 340px; width: 100%; }
+.celebrate { position: fixed; inset: 0; z-index: 300; background: rgba(5,5,8,0.88);
+  display: none; align-items: center; justify-content: center; flex-direction: column;
+  text-align: center; padding: 20px; }
+.celebrate.open { display: flex; }
+
+/* ---- トースト ---- */
+.toast { position: fixed; left: 50%; bottom: calc(var(--nav-h) + var(--safe-b) + 16px);
+  transform: translateX(-50%); background: #2a2a36; color: var(--text);
+  border: 1px solid var(--line); border-radius: 12px; padding: 10px 16px;
+  font-size: 0.85rem; display: none; gap: 12px; z-index: 200; max-width: 92vw; }
+.toast.show { display: flex; }
+
+@media (max-width: 340px) {
+  .screen { padding: 0 8px 8px; }
+  .nav-btn { font-size: 0.56rem; }
+  .nav-btn svg { width: 20px; height: 20px; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============ ここに画面を作る ============ -->
+  <section class="screen active" id="screen-sample">
+    <div class="screen-head">
+      <span class="brand-wrap">
+        <span class="brand">IBUKI STUDY BEAT</span>
+        <span class="version-badge">ver. 4.0.0</span>
+      </span>
+      <button class="head-btn">✏️</button>
+    </div>
+
+    <div class="card gold" style="display:flex;gap:12px;align-items:center">
+      <div style="flex-shrink:0;width:104px"><div class="char-ph"></div></div>
+      <div class="bubble">
+        <span class="who">ビート</span>
+        よし、今日も一緒にビートを刻もう！
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>使えるコンポーネント見本</h2>
+      <div class="btn-row" style="margin-bottom:10px">
+        <button class="btn">標準</button>
+        <button class="btn primary">主要</button>
+        <button class="btn danger">危険</button>
+      </div>
+      <button class="btn primary big block" style="margin-bottom:10px">学習を開始する ▶</button>
+      <div class="progress-bar" style="margin-bottom:10px"><div style="width:62%"></div></div>
+      <div class="quick-chips">
+        <button class="quick-chip">チップA</button>
+        <button class="quick-chip">チップB</button>
+      </div>
+      <div class="stats-row" style="margin-top:10px">
+        <div class="stat-chip" style="background:#2c5f8a">計画合計<b>15.3時間</b></div>
+        <div class="stat-chip" style="background:#2c6ab0">実績合計<b>12時間</b></div>
+        <div class="stat-chip" style="background:#3a3a46">達成率<b>78.7%</b></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+        <span class="small">トグルの例</span>
+        <button class="toggle on"></button>
+      </div>
+    </div>
+  </section>
+  <!-- ============ ここまで ============ -->
+
+</div>
+
+<!-- 下部ナビ（最大6タブ。SVGアイコンはインラインで） -->
+<nav class="nav">
+  <div class="nav-inner">
+    <button class="nav-btn active">
+      <svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>今日
+    </button>
+    <button class="nav-btn">
+      <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>記録
+    </button>
+    <button class="nav-btn">
+      <svg viewBox="0 0 24 24"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>グラフ
+    </button>
+    <button class="nav-btn">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 010 18a15 15 0 010-18"/></svg>世界
+    </button>
+    <button class="nav-btn">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M4 21v-2a6 6 0 016-6h4a6 6 0 016 6v2"/></svg>コーチ
+    </button>
+    <button class="nav-btn">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34h0a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55h0a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87v0a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z"/></svg>設定
+    </button>
+  </div>
+</nav>
+
+<!-- モーダル（ボトムシート型）の雛形 -->
+<div class="modal-back" id="modal-back">
+  <div class="modal">
+    <h3>モーダルのタイトル<button class="head-btn" style="min-width:36px;min-height:36px">✕</button></h3>
+    <p class="small muted">ここに内容。情報が多い画面は、カードをタップしてこのモーダルで詳細を見せる。</p>
+  </div>
+</div>
+
+<!-- 中央メッセージの雛形 -->
+<div class="center-msg" id="center-msg">
+  <div class="box">
+    <div style="font-size:1.1rem;font-weight:800;color:var(--gold-bright);margin-bottom:8px">お知らせのタイトル</div>
+    <div class="small muted" style="margin-bottom:16px">本文</div>
+    <button class="btn primary block">OK</button>
+  </div>
+</div>
+
+<script>
+/* モックの画面切替用。設計モックなので最小限のスクリプトのみ。
+   本番の実装ロジックはここには書かないこと。 */
+document.querySelectorAll('.nav-btn').forEach(function (b, i) {
+  b.addEventListener('click', function () {
+    document.querySelectorAll('.nav-btn').forEach(function (x) { x.classList.remove('active'); });
+    b.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>
