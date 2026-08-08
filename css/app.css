@@ -121,7 +121,7 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 .btn.block { display: flex; width: 100%; }
 .btn.big { min-height: 54px; font-size: 1.05rem; border-radius: 14px; }
 .btn.ghost { background: transparent; }
-.btn.small { min-height: 44px; padding: 6px 12px; font-size: 0.78rem; border-radius: 10px; }
+.btn.compact { min-height: 44px; padding: 6px 12px; font-size: 0.78rem; border-radius: 10px; }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn-row > .btn { flex: 1; }
 

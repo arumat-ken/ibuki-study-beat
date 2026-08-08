@@ -1754,14 +1754,14 @@
       if (category === 'consumable') {
         var avail = C.consumableAvailable(shop, item.id);
         owned = (shop.owned.consumable[item.id] || 0) > 0;
-        statusHtml = '<button class="btn small" data-buy="' + item.id + '">購入する</button>' +
-          (avail > 0 ? '<button class="btn small primary" data-use="' + item.id + '">使う(残' + avail + ')</button>' : '');
+        statusHtml = '<button class="btn compact" data-buy="' + item.id + '">購入する</button>' +
+          (avail > 0 ? '<button class="btn compact primary" data-use="' + item.id + '">使う(残' + avail + ')</button>' : '');
       } else {
         owned = shop.owned[category].indexOf(item.id) !== -1;
         var equipped = shop.equipped[category] === item.id;
         if (equipped) statusHtml = '<span class="chip on">装備中</span>';
-        else if (owned) statusHtml = '<button class="btn small" data-equip="' + item.id + '" data-cat="' + category + '">装備する</button>';
-        else statusHtml = '<button class="btn small" data-buy="' + item.id + '">購入する</button>';
+        else if (owned) statusHtml = '<button class="btn compact" data-equip="' + item.id + '" data-cat="' + category + '">装備する</button>';
+        else statusHtml = '<button class="btn compact" data-buy="' + item.id + '">購入する</button>';
       }
       html += '<div class="shop-item' + (owned ? ' owned' : '') + '">' +
         '<div class="si-main"><div class="si-name">' + esc(item.name) + '</div>' +
