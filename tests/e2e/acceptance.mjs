@@ -6,7 +6,27 @@
 import { createRequire } from 'node:module';
 import { mkdirSync, writeFileSync } from 'node:fs';
 const require = createRequire(import.meta.url);
-const { chromium, devices } = require('/opt/node22/lib/node_modules/playwright');
+
+/* playwright の場所は環境によって違う。通常の解決を先に試し、
+ * 見つからなければ既知のグローバルパスを順に探す。
+ * (PLAYWRIGHT_PATH 環境変数で明示指定もできる) */
+function loadPlaywright() {
+  var candidates = [
+    process.env.PLAYWRIGHT_PATH,
+    'playwright',
+    '/opt/node22/lib/node_modules/playwright',
+    '/usr/lib/node_modules/playwright',
+    '/usr/local/lib/node_modules/playwright'
+  ].filter(Boolean);
+  for (var i = 0; i < candidates.length; i++) {
+    try { return require(candidates[i]); } catch (e) { /* 次を試す */ }
+  }
+  throw new Error(
+    'playwright が見つかりません。`npm i -g playwright` でインストールするか、\n' +
+    'PLAYWRIGHT_PATH 環境変数でパスを指定してください。'
+  );
+}
+const { chromium, devices } = loadPlaywright();
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8787';
 const SHOT_DIR = new URL('../../docs/screenshots/', import.meta.url).pathname;

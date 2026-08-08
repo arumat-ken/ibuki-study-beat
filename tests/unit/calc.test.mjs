@@ -152,3 +152,159 @@ test('旧パイロット版からの移行', () => {
   assert.equal(recs[1].subjectId, 'other', '未知の科目はその他へ');
   assert.equal(C.migrateOldPilot(null, SUBJECTS).length, 0);
 });
+
+test('52倍速金利: アプリ1週で現実の年利1年分を付利する', () => {
+  const oneWeek = C.accrueWeeklyInterest(5000, 0.2, 1, 0);
+  assert.equal(oneWeek.interest, 10);
+  assert.equal(oneWeek.balance, 5010);
+  assert.equal(oneWeek.speedMultiplier, 52);
+
+  const twoWeeks = C.accrueWeeklyInterest(5000, 0.2, 2, 0);
+  assert.equal(twoWeeks.interest, 20, '週ごとに残高へ付利して複利にする');
+  assert.equal(twoWeeks.balance, 5020);
+});
+
+test('52倍速金利: 定期預金は満期前の途中解約なら利息なし', () => {
+  assert.equal(C.DEPOSIT_LOCK_WEEKS.fixed1Month, 4);
+  assert.equal(C.DEPOSIT_LOCK_WEEKS.fixed3Months, 12);
+  const early = C.calculateDeposit({
+    principal: 10000,
+    annualRatePct: 0.35,
+    elapsedWeeks: 3,
+    lockWeeks: 4,
+    currencyDigits: 0
+  });
+  assert.equal(early.matured, false);
+  assert.equal(early.earlyCancellation, true);
+  assert.equal(early.interest, 0);
+  assert.equal(early.balance, 10000);
+
+  const matured = C.calculateDeposit({
+    principal: 10000,
+    annualRatePct: 0.35,
+    elapsedWeeks: 4,
+    lockWeeks: 4,
+    currencyDigits: 0
+  });
+  assert.equal(matured.matured, true);
+  assert.equal(matured.earlyCancellation, false);
+  assert.equal(matured.interest, 140);
+  assert.equal(matured.balance, 10140);
+
+  const threeMonthEarly = C.calculateDeposit({
+    principal: 10000,
+    annualRatePct: 0.5,
+    elapsedWeeks: 11,
+    lockWeeks: C.DEPOSIT_LOCK_WEEKS.fixed3Months,
+    currencyDigits: 0
+  });
+  assert.equal(threeMonthEarly.matured, false);
+  assert.equal(threeMonthEarly.remainingWeeks, 1);
+  assert.equal(threeMonthEarly.interest, 0);
+});
+
+test('外貨預金: 利息・為替差損益・合計を分解する', () => {
+  const result = C.calculateFxDeposit({
+    principalBP: 10000,
+    entryRateBPPerBD: 150,
+    exitRateBPPerBD: 140,
+    annualRatePct: 4.5,
+    elapsedWeeks: 1
+  });
+  assert.equal(result.initialBD, 66.7);
+  assert.equal(result.interestBD, 3);
+  assert.equal(result.finalBD, 69.7);
+  assert.equal(result.finalBP, 9758);
+  assert.equal(result.interestGainBP, 450);
+  assert.equal(result.fxGainLossBP, -692);
+  assert.equal(result.netGainLossBP, -242);
+  assert.equal(result.interestGainBP + result.fxGainLossBP, result.netGainLossBP);
+  assert.equal(result.outcome, 'loss');
+});
+
+test('外貨預金: 円安では為替差益、円高では為替差損になる', () => {
+  const weakYen = C.calculateFxDeposit({
+    principalBP: 10000,
+    entryRateBPPerBD: 150,
+    exitRateBPPerBD: 165,
+    annualRatePct: 0,
+    elapsedWeeks: 1
+  });
+  const strongYen = C.calculateFxDeposit({
+    principalBP: 10000,
+    entryRateBPPerBD: 150,
+    exitRateBPPerBD: 135,
+    annualRatePct: 0,
+    elapsedWeeks: 1
+  });
+  assert.ok(weakYen.fxGainLossBP > 0);
+  assert.ok(strongYen.fxGainLossBP < 0);
+  assert.equal(weakYen.outcome, 'gain');
+  assert.equal(strongYen.outcome, 'loss');
+});
+
+test('分割払い: 仕様例の一括・3回・6回・12回の総額を再現する', () => {
+  const plans = C.compareInstallmentPlans(50000, 620);
+  assert.deepEqual(plans.map(p => p.installments), [1, 3, 6, 12]);
+  assert.deepEqual(plans.map(p => p.totalBP), [50000, 52500, 55000, 59000]);
+  assert.deepEqual(plans.map(p => p.extraCostBP), [0, 2500, 5000, 9000]);
+  assert.equal(plans[2].paymentBP, 9167);
+  assert.equal(plans[3].paymentBP, 4917);
+  assert.equal(plans[3].paymentSchedule.reduce((a, b) => a + b, 0), 59000);
+});
+
+test('分割払い: 700点以上は手数料半額、300点未満は利用停止', () => {
+  const preferred = C.calculateInstallmentPlan(50000, 12, 700);
+  assert.equal(preferred.available, true);
+  assert.equal(preferred.feeBP, 4500);
+  assert.equal(preferred.totalBP, 54500);
+  assert.equal(preferred.feeMultiplier, 0.5);
+
+  const blocked = C.calculateInstallmentPlan(50000, 3, 299);
+  assert.equal(blocked.available, false);
+  assert.equal(blocked.reason, 'credit-score-below-300');
+  assert.equal(blocked.totalBP, null);
+
+  const cash = C.calculateInstallmentPlan(50000, 1, 0);
+  assert.equal(cash.available, true, '一括払いは信用スコアで停止しない');
+});
+
+test('信用スコア: 返済・完済・延滞を履歴付きで反映する', () => {
+  assert.equal(C.INITIAL_CREDIT_SCORE, 500);
+  const result = C.applyCreditEvents(C.INITIAL_CREDIT_SCORE, [
+    'payment',
+    { type: 'payment', count: 2 },
+    'payoff',
+    'late'
+  ]);
+  assert.equal(result.delta, 100);
+  assert.equal(result.score, 600);
+  assert.deepEqual(result.history.map(h => h.delta), [50, 100, 100, -150]);
+  assert.equal(result.status.id, 'standard');
+  assert.equal(result.status.installmentsAllowed, true);
+});
+
+test('信用スコア: 閾値700・300を正しく分類する', () => {
+  assert.equal(C.creditScoreStatus(700).id, 'preferred');
+  assert.equal(C.creditScoreStatus(700).feeMultiplier, 0.5);
+  assert.equal(C.creditScoreStatus(300).id, 'standard');
+  assert.equal(C.creditScoreStatus(300).installmentsAllowed, true);
+  assert.equal(C.creditScoreStatus(299).id, 'blocked');
+  assert.equal(C.creditScoreStatus(299).installmentsAllowed, false);
+});
+
+test('金融計算: 不正な数値・未対応の分割回数・未知イベントを拒否する', () => {
+  assert.throws(() => C.accrueWeeklyInterest(-1, 0.2, 1, 0), RangeError);
+  assert.throws(() => C.accrueWeeklyInterest(1000, -0.2, 1, 0), RangeError);
+  assert.throws(() => C.calculateFxDeposit({
+    principalBP: 10000,
+    entryRateBPPerBD: 0,
+    exitRateBPPerBD: 140,
+    annualRatePct: 4.5,
+    elapsedWeeks: 1
+  }), RangeError);
+  assert.throws(() => C.calculateInstallmentPlan(50000, 4, 500), RangeError);
+  assert.throws(() => C.applyCreditEvents(500, ['unknown']), RangeError);
+  assert.throws(() => C.applyCreditEvents(500, [null]), RangeError);
+  assert.throws(() => C.roundAmount(Number.NaN, 0), TypeError);
+});

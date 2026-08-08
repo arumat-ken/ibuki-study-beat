@@ -1,6 +1,6 @@
 # 受け入れ試験結果
 
-実行日: 2026-08-05 / 環境: Playwright + Chromium (iPhone 13 viewport)
+実行日: 2026-08-08 / 環境: Playwright + Chromium (iPhone 13 viewport)
 
 **69/69 合格**
 

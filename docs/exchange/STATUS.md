@@ -35,8 +35,8 @@
 | 6b | モックの実機幅レンダリング検査 | Claude | ✅ **完了・全項目合格**(390px/320px 横あふれなし、44px未満のタップ要素0、JSエラーなし、外部通信なし) |
 | 6c | 欠落9件の補完(設計+モック) | Claude | ✅ **完了** → `docs/design/GUI_SPEC_v4_ADDENDUM.md` / モックに実装済 |
 | 6d | GPTへのフィードバック作成 | Claude | ✅ 完了 → `docs/exchange/FEEDBACK_TO_GPT.md` |
-| 7 | 計算ロジック(金利・為替・分割)+ 単体テスト | Claude | ⏭ **次はここ** |
-| 8 | UI実装・受け入れ試験の追加・段階リリース | Claude | ⏸ 未着手 |
+| 7 | 計算ロジック(金利・為替・分割)+ 単体テスト | GPT(試験) / Claude(実装) | ✅ **完了** → `js/calc.js` / 単体22件・E2E69件 **全合格** |
+| 8 | UI実装・受け入れ試験の追加・段階リリース | Claude | ⏭ **次はここ**(第1段=ニュース記録 → ver.4.0.0) |
 
 ---
 
@@ -81,8 +81,20 @@
 
 ## 次にやること
 
-1. **Claude**: `js/calc.js` に計算ロジックを実装 + 単体テスト
-   (BP集計・倍率合成・金利52倍速・為替差損益・分割払い・信用スコア)
-2. **Claude**: 第1段「ニュース記録 + AI連携」を実装 → ver.4.0.0 としてリリース
-3. **Claude**: 第2段「ポイント・装備・ショップ」→ ver.4.1.0
-4. **Claude**: 第3段「金融ラボ・GT・PayPay交換申請」→ ver.4.2.0
+1. ~~`js/calc.js` に計算ロジックを実装 + 単体テスト~~ ✅ **完了**
+2. **Claude**: BP集計・倍率合成(H-4の置換方式)を `js/calc.js` に追加
+3. **Claude**: 第1段「ニュース記録 + AI連携」を実装 → ver.4.0.0 としてリリース
+4. **Claude**: 第2段「ポイント・装備・ショップ」→ ver.4.1.0
+5. **Claude**: 第3段「金融ラボ・GT・PayPay交換申請」→ ver.4.2.0
+
+### 実装済みの金融関数(`js/calc.js`)
+
+| 関数 | 対応する仕様 |
+|---|---|
+| `accrueWeeklyInterest()` | D章 52倍速の週次複利 |
+| `calculateDeposit()` / `DEPOSIT_LOCK_WEEKS` | D章・H-7(1ヶ月=4週 / 3ヶ月=12週・満期前解約は利息なし) |
+| `calculateFxDeposit()` | D章【最重要】利息と為替差損益を分解して表示 |
+| `calculateInstallmentPlan()` / `compareInstallmentPlans()` | D章 分割払い(50,000→52,500/55,000/59,000) |
+| `creditScoreStatus()` / `applyCreditEvents()` | D章 信用スコア(初期500・700以上で手数料半額・300未満で停止) |
+
+**まだ未実装**: BP集計(A章)、倍率合成(B章)、ニュースBP(C章)、GT→円換算・PayPay上限(D章)

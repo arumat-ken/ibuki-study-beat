@@ -386,6 +386,291 @@
     return out;
   }
 
+  /* ==================================================================
+   * 金融シミュレーション (ver.4)
+   * 仕様: docs/design/FEATURE_SPEC_v4.md D章 / 決定事項 H-4〜H-7
+   * ================================================================== */
+
+  /* アプリの1週間 = 現実の1年。年利をそのまま週次で付利する(52倍速)。 */
+  var INTEREST_SPEED_MULTIPLIER = 52;
+
+  /* 定期預金のロック期間(週)。H-7で確定。 */
+  var DEPOSIT_LOCK_WEEKS = {
+    ordinary: 0,        // 普通預金・いつでも引き出せる
+    fixed1Month: 4,     // 1ヶ月定期
+    fixed3Months: 12    // 3ヶ月定期
+  };
+
+  /* 分割払いの手数料率。FEATURE_SPEC_v4.md の実例(50,000BPに対して
+   * 52,500 / 55,000 / 59,000)と一致する。 */
+  var INSTALLMENT_FEE_RATES = { 1: 0, 3: 0.05, 6: 0.10, 12: 0.18 };
+  var INSTALLMENT_OPTIONS = [1, 3, 6, 12];
+
+  var INITIAL_CREDIT_SCORE = 500;
+  var MAX_CREDIT_SCORE = 1000;
+  var CREDIT_EVENT_DELTAS = {
+    payment: 50,    // 返済を1回完了
+    payoff: 100,    // 完済
+    late: -150      // 返済日に残高不足(延滞)
+  };
+
+  function assertNumber(value, label) {
+    if (typeof value !== 'number' || !isFinite(value)) {
+      throw new TypeError(label + 'は数値で指定してください');
+    }
+  }
+
+  function assertNotNegative(value, label) {
+    assertNumber(value, label);
+    if (value < 0) throw new RangeError(label + 'は0以上で指定してください');
+  }
+
+  function assertPositive(value, label) {
+    assertNumber(value, label);
+    if (value <= 0) throw new RangeError(label + 'は0より大きい値で指定してください');
+  }
+
+  function assertWholeCount(value, label) {
+    assertNumber(value, label);
+    if (value < 0 || Math.floor(value) !== value) {
+      throw new RangeError(label + 'は0以上の整数で指定してください');
+    }
+  }
+
+  /** 通貨額を桁数で丸める。BPは0桁、BDは1桁で扱う。 */
+  function roundAmount(value, digits) {
+    assertNumber(value, '金額');
+    var d = (digits === undefined || digits === null) ? 0 : digits;
+    assertWholeCount(d, '丸め桁数');
+    var factor = Math.pow(10, d);
+    return Math.round(value * factor) / factor;
+  }
+
+  /**
+   * 週次で複利計算する(52倍速)。
+   * 毎週の利息を通貨の桁数で丸めてから残高へ加えるため、
+   * 画面に出る数字と計算結果が必ず一致する。
+   */
+  function accrueWeeklyInterest(principal, annualRatePct, weeks, digits) {
+    assertNotNegative(principal, '元本');
+    assertNotNegative(annualRatePct, '金利');
+    assertWholeCount(weeks, '経過週数');
+    var d = (digits === undefined || digits === null) ? 0 : digits;
+    var weeklyRate = annualRatePct / 100;
+    var balance = roundAmount(principal, d);
+    var interest = 0;
+    for (var w = 0; w < weeks; w++) {
+      var gain = roundAmount(balance * weeklyRate, d);
+      balance = roundAmount(balance + gain, d);
+      interest = roundAmount(interest + gain, d);
+    }
+    return {
+      principal: roundAmount(principal, d),
+      interest: interest,
+      balance: balance,
+      weeks: weeks,
+      annualRatePct: annualRatePct,
+      speedMultiplier: INTEREST_SPEED_MULTIPLIER
+    };
+  }
+
+  /**
+   * 円建て預金(普通・定期)の評価。
+   * 定期は満期前に解約すると利息が付かない(流動性 vs リターンの学習)。
+   */
+  function calculateDeposit(opts) {
+    var o = opts || {};
+    var lockWeeks = (o.lockWeeks === undefined || o.lockWeeks === null) ? 0 : o.lockWeeks;
+    assertWholeCount(lockWeeks, 'ロック期間');
+    assertWholeCount(o.elapsedWeeks, '経過週数');
+    assertNotNegative(o.principal, '元本');
+    assertNotNegative(o.annualRatePct, '金利');
+    var digits = (o.currencyDigits === undefined || o.currencyDigits === null) ? 0 : o.currencyDigits;
+    var matured = o.elapsedWeeks >= lockWeeks;
+    var remainingWeeks = Math.max(0, lockWeeks - o.elapsedWeeks);
+    if (!matured) {
+      return {
+        principal: roundAmount(o.principal, digits),
+        interest: 0,
+        balance: roundAmount(o.principal, digits),
+        matured: false,
+        earlyCancellation: true,
+        elapsedWeeks: o.elapsedWeeks,
+        lockWeeks: lockWeeks,
+        remainingWeeks: remainingWeeks,
+        speedMultiplier: INTEREST_SPEED_MULTIPLIER
+      };
+    }
+    var accrued = accrueWeeklyInterest(o.principal, o.annualRatePct, o.elapsedWeeks, digits);
+    return {
+      principal: accrued.principal,
+      interest: accrued.interest,
+      balance: accrued.balance,
+      matured: true,
+      earlyCancellation: false,
+      elapsedWeeks: o.elapsedWeeks,
+      lockWeeks: lockWeeks,
+      remainingWeeks: 0,
+      speedMultiplier: INTEREST_SPEED_MULTIPLIER
+    };
+  }
+
+  /**
+   * 外貨預金(BD)の評価。この機能の目的は
+   * 「金利で増えても為替で負けることがある」を体験させること。
+   * したがって利息分と為替分を必ず分解して返す。
+   * 内訳は interestGainBP + fxGainLossBP === netGainLossBP を常に満たす。
+   */
+  function calculateFxDeposit(opts) {
+    var o = opts || {};
+    assertNotNegative(o.principalBP, '元本');
+    assertPositive(o.entryRateBPPerBD, '預入時のレート');
+    assertPositive(o.exitRateBPPerBD, '評価時のレート');
+    assertNotNegative(o.annualRatePct, '金利');
+    assertWholeCount(o.elapsedWeeks, '経過週数');
+
+    var initialBD = roundAmount(o.principalBP / o.entryRateBPPerBD, 1);
+    var accrued = accrueWeeklyInterest(initialBD, o.annualRatePct, o.elapsedWeeks, 1);
+    var finalBD = accrued.balance;
+    var finalBP = roundAmount(finalBD * o.exitRateBPPerBD, 0);
+
+    /* 利息は「預入時のレートで評価した増加分」として切り出す。
+     * 残りをすべて為替の影響とすることで、内訳の合計が必ず実額に一致する。 */
+    var interestGainBP = roundAmount(accrued.interest * o.entryRateBPPerBD, 0);
+    var netGainLossBP = roundAmount(finalBP - o.principalBP, 0);
+    var fxGainLossBP = roundAmount(netGainLossBP - interestGainBP, 0);
+
+    return {
+      principalBP: roundAmount(o.principalBP, 0),
+      initialBD: initialBD,
+      interestBD: accrued.interest,
+      finalBD: finalBD,
+      finalBP: finalBP,
+      interestGainBP: interestGainBP,
+      fxGainLossBP: fxGainLossBP,
+      netGainLossBP: netGainLossBP,
+      outcome: netGainLossBP > 0 ? 'gain' : (netGainLossBP < 0 ? 'loss' : 'even'),
+      entryRateBPPerBD: o.entryRateBPPerBD,
+      exitRateBPPerBD: o.exitRateBPPerBD,
+      elapsedWeeks: o.elapsedWeeks,
+      speedMultiplier: INTEREST_SPEED_MULTIPLIER
+    };
+  }
+
+  /** 信用スコアの区分。700以上=手数料半額 / 300未満=分割払い停止。 */
+  function creditScoreStatus(score) {
+    assertNumber(score, '信用スコア');
+    if (score >= 700) {
+      return { id: 'preferred', label: '優遇', feeMultiplier: 0.5, installmentsAllowed: true };
+    }
+    if (score >= 300) {
+      return { id: 'standard', label: '標準', feeMultiplier: 1, installmentsAllowed: true };
+    }
+    return { id: 'blocked', label: '利用停止', feeMultiplier: 1, installmentsAllowed: false };
+  }
+
+  /**
+   * 分割払い1プランの計算。
+   * 端数は最終回で調整し、支払い予定の合計が総額と必ず一致するようにする。
+   */
+  function calculateInstallmentPlan(principalBP, installments, creditScore) {
+    assertNotNegative(principalBP, '価格');
+    assertNumber(installments, '分割回数');
+    if (!Object.prototype.hasOwnProperty.call(INSTALLMENT_FEE_RATES, installments)) {
+      throw new RangeError('分割回数は ' + INSTALLMENT_OPTIONS.join('・') + ' のいずれかです');
+    }
+    var score = (creditScore === undefined || creditScore === null) ? INITIAL_CREDIT_SCORE : creditScore;
+    var status = creditScoreStatus(score);
+
+    /* 一括払いは借入ではないので、信用スコアでは止めない。 */
+    if (installments > 1 && !status.installmentsAllowed) {
+      return {
+        installments: installments,
+        available: false,
+        reason: 'credit-score-below-300',
+        principalBP: roundAmount(principalBP, 0),
+        feeBP: null,
+        totalBP: null,
+        paymentBP: null,
+        extraCostBP: null,
+        paymentSchedule: [],
+        feeMultiplier: status.feeMultiplier,
+        creditScore: score,
+        status: status
+      };
+    }
+
+    var feeMultiplier = installments > 1 ? status.feeMultiplier : 1;
+    var feeBP = roundAmount(principalBP * INSTALLMENT_FEE_RATES[installments] * feeMultiplier, 0);
+    var totalBP = roundAmount(principalBP + feeBP, 0);
+    var paymentBP = roundAmount(totalBP / installments, 0);
+    var schedule = [];
+    for (var i = 0; i < installments - 1; i++) schedule.push(paymentBP);
+    schedule.push(roundAmount(totalBP - paymentBP * (installments - 1), 0));
+
+    return {
+      installments: installments,
+      available: true,
+      reason: null,
+      principalBP: roundAmount(principalBP, 0),
+      feeBP: feeBP,
+      totalBP: totalBP,
+      paymentBP: paymentBP,
+      extraCostBP: feeBP,
+      paymentSchedule: schedule,
+      feeMultiplier: feeMultiplier,
+      creditScore: score,
+      status: status
+    };
+  }
+
+  /** 一括・3回・6回・12回を並べて比較する(この画面を見せること自体が教育)。 */
+  function compareInstallmentPlans(principalBP, creditScore) {
+    return INSTALLMENT_OPTIONS.map(function (n) {
+      return calculateInstallmentPlan(principalBP, n, creditScore);
+    });
+  }
+
+  /**
+   * 信用スコアに出来事を反映する。
+   * events は 'payment' | 'payoff' | 'late' の文字列、
+   * または {type, count} の形で回数をまとめて指定できる。
+   */
+  function applyCreditEvents(currentScore, events) {
+    assertNumber(currentScore, '信用スコア');
+    if (!Array.isArray(events)) throw new TypeError('出来事は配列で指定してください');
+    var score = currentScore;
+    var history = [];
+    events.forEach(function (ev) {
+      var type, count;
+      if (typeof ev === 'string') {
+        type = ev;
+        count = 1;
+      } else if (ev && typeof ev === 'object') {
+        type = ev.type;
+        count = (ev.count === undefined || ev.count === null) ? 1 : ev.count;
+      } else {
+        throw new RangeError('出来事の形式が不正です');
+      }
+      if (!Object.prototype.hasOwnProperty.call(CREDIT_EVENT_DELTAS, type)) {
+        throw new RangeError('未知の出来事です: ' + type);
+      }
+      assertNumber(count, '回数');
+      if (count < 1 || Math.floor(count) !== count) {
+        throw new RangeError('回数は1以上の整数で指定してください');
+      }
+      var delta = CREDIT_EVENT_DELTAS[type] * count;
+      score = Math.min(MAX_CREDIT_SCORE, Math.max(0, score + delta));
+      history.push({ type: type, count: count, delta: delta, score: score });
+    });
+    return {
+      score: score,
+      delta: score - currentScore,
+      history: history,
+      status: creditScoreStatus(score)
+    };
+  }
+
   /** 旧パイロット版(ibuki_beat_state)からの移行 */
   function migrateOldPilot(oldParsed, subjects) {
     if (!oldParsed || !Array.isArray(oldParsed.sessionLog)) return [];
@@ -437,6 +722,21 @@
     fmtDuration: fmtDuration,
     defaultState: defaultState,
     sanitizeState: sanitizeState,
-    migrateOldPilot: migrateOldPilot
+    migrateOldPilot: migrateOldPilot,
+    /* --- 金融シミュレーション (ver.4) --- */
+    INTEREST_SPEED_MULTIPLIER: INTEREST_SPEED_MULTIPLIER,
+    DEPOSIT_LOCK_WEEKS: DEPOSIT_LOCK_WEEKS,
+    INSTALLMENT_FEE_RATES: INSTALLMENT_FEE_RATES,
+    INSTALLMENT_OPTIONS: INSTALLMENT_OPTIONS,
+    INITIAL_CREDIT_SCORE: INITIAL_CREDIT_SCORE,
+    CREDIT_EVENT_DELTAS: CREDIT_EVENT_DELTAS,
+    roundAmount: roundAmount,
+    accrueWeeklyInterest: accrueWeeklyInterest,
+    calculateDeposit: calculateDeposit,
+    calculateFxDeposit: calculateFxDeposit,
+    creditScoreStatus: creditScoreStatus,
+    calculateInstallmentPlan: calculateInstallmentPlan,
+    compareInstallmentPlans: compareInstallmentPlans,
+    applyCreditEvents: applyCreditEvents
   };
 });
