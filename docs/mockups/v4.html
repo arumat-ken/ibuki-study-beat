@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0b0b10">
+  <title>IBUKI STUDY BEAT 大型アップデート UIモック</title>
+  <style>
+    :root {
+      --bg: #0b0b10;
+      --surface: #14141c;
+      --card: #1a1a24;
+      --card-2: #20202c;
+      --gold: #d9b24a;
+      --gold-bright: #f0c75e;
+      --text: #f2efe6;
+      --dim: #9c99a6;
+      --line: rgba(255,255,255,0.09);
+      --panel: #f5f2ea;
+      --danger: #e0564f;
+      --ok: #58b368;
+      --eng: #4A90D9;
+      --math: #58B368;
+      --jpn: #F5A623;
+      --sci: #9B59B6;
+      --soc: #E8604C;
+      --other: #9AA0A6;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: #050508; color: var(--text); }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+      display: flex;
+      justify-content: center;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, select, textarea { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 3px solid rgba(240,199,94,.55);
+      outline-offset: 2px;
+    }
+    .phone {
+      width: min(100%, 430px);
+      min-height: 100dvh;
+      background: var(--bg);
+      position: relative;
+      overflow-x: hidden;
+      box-shadow: 0 0 44px rgba(0,0,0,.62);
+    }
+    .app-header {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 60px;
+      padding: calc(10px + env(safe-area-inset-top)) 16px 10px;
+      background: rgba(11,11,16,.94);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(12px);
+    }
+    .brand { color: var(--gold-bright); font-size: 17px; font-weight: 900; letter-spacing: .08em; }
+    .version { color: var(--dim); font-size: 11px; }
+    .focus-pill {
+      display: none;
+      align-items: center;
+      min-height: 32px;
+      padding: 5px 9px;
+      border: 1px solid rgba(240,199,94,.35);
+      border-radius: 999px;
+      color: var(--gold-bright);
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .phone.focus-mode .focus-pill { display: flex; }
+    main { padding: 14px 14px calc(92px + env(safe-area-inset-bottom)); }
+    .screen { display: none; animation: screen-in .18s ease-out; }
+    .screen.active { display: block; }
+    @keyframes screen-in { from { opacity: .35; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 12px; font-size: 22px; }
+    h2 { margin-bottom: 9px; color: var(--gold-bright); font-size: 16px; }
+    h3 { margin-bottom: 7px; font-size: 15px; }
+    p { color: var(--dim); font-size: 13px; line-height: 1.58; }
+    .eyebrow { margin-bottom: 6px; color: var(--gold); font-size: 11px; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+    .title-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .title-row h1 { margin: 0; }
+    .card {
+      margin-bottom: 12px;
+      padding: 15px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 8px 22px rgba(0,0,0,.16);
+    }
+    .card.gold-edge { border-color: rgba(217,178,74,.42); }
+    .card.compact { padding: 12px 14px; }
+    .hero { display: grid; grid-template-columns: 86px 1fr; gap: 14px; align-items: center; }
+    .char-placeholder {
+      display: grid;
+      place-items: center;
+      min-height: 128px;
+      border: 1px dashed rgba(217,178,74,.46);
+      border-radius: 16px;
+      background: radial-gradient(circle at 50% 15%, rgba(240,199,94,.23), transparent 58%), var(--card-2);
+      color: var(--gold);
+      font-size: 11px;
+      font-weight: 800;
+      text-align: center;
+    }
+    .bubble {
+      position: relative;
+      padding: 12px;
+      border-radius: 15px;
+      background: var(--card-2);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .bubble::before {
+      content: "";
+      position: absolute;
+      left: -8px;
+      top: 24px;
+      width: 16px;
+      height: 16px;
+      background: var(--card-2);
+      transform: rotate(45deg);
+    }
+    .slogan { text-align: center; }
+    .slogan strong { color: var(--gold-bright); font-size: 18px; line-height: 1.45; }
+    .plan-row, .history-row, .metric-row, .equipment-row, .shop-row, .setting-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 48px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .plan-row:last-child, .history-row:last-child, .metric-row:last-child,
+    .equipment-row:last-child, .shop-row:last-child, .setting-row:last-child { border-bottom: 0; }
+    .plan-row input { width: 22px; height: 22px; accent-color: var(--gold); }
+    .subject-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: var(--eng); }
+    .grow { flex: 1; min-width: 0; }
+    .label { font-size: 14px; font-weight: 800; }
+    .sub { color: var(--dim); font-size: 11px; line-height: 1.45; }
+    .value { font-weight: 900; white-space: nowrap; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 46px;
+      padding: 10px 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--card-2);
+      color: var(--text);
+      font-weight: 850;
+      cursor: pointer;
+    }
+    .btn.primary { border-color: transparent; background: linear-gradient(135deg, var(--gold-bright), var(--gold)); color: #17120a; }
+    .btn.secondary { border-color: rgba(217,178,74,.35); color: var(--gold-bright); }
+    .btn.danger { border-color: rgba(224,86,79,.42); color: #ff8b85; }
+    .btn.full { width: 100%; }
+    .btn.small { min-height: 44px; padding: 8px 12px; font-size: 12px; }
+    .btn.linkish { border: 0; background: transparent; color: var(--gold-bright); }
+    .button-stack { display: grid; gap: 9px; }
+    .button-row { display: flex; gap: 9px; }
+    .button-row .btn { flex: 1; }
+    .start-btn { min-height: 62px; margin-bottom: 12px; font-size: 18px; border-radius: 18px; }
+    .boost-card {
+      width: 100%;
+      min-height: 64px;
+      margin: 0 0 12px;
+      padding: 11px 13px;
+      border: 1px solid rgba(217,178,74,.34);
+      border-radius: 16px;
+      background: linear-gradient(100deg, rgba(217,178,74,.13), rgba(32,32,44,.8));
+      text-align: left;
+      cursor: pointer;
+    }
+    .boost-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .boost-top strong { color: var(--gold-bright); font-size: 16px; }
+    .boost-top span { color: var(--gold-bright); font-size: 19px; font-weight: 950; }
+    .boost-bottom { display: flex; justify-content: space-between; gap: 8px; margin-top: 5px; color: var(--dim); font-size: 11px; }
+    .progress { height: 11px; overflow: hidden; border-radius: 999px; background: var(--card-2); }
+    .progress > span { display: block; height: 100%; width: 50%; border-radius: inherit; background: linear-gradient(90deg, var(--gold), var(--gold-bright)); }
+    .big-number { color: var(--gold-bright); font-size: 34px; font-weight: 950; letter-spacing: -.04em; }
+    .stat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+    .stat { padding: 10px 7px; border-radius: 12px; background: var(--card-2); text-align: center; }
+    .stat b { display: block; margin-bottom: 4px; font-size: 14px; }
+    .stat span { color: var(--dim); font-size: 10px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .field { margin-bottom: 11px; }
+    .field label { display: block; margin-bottom: 6px; color: var(--dim); font-size: 12px; font-weight: 700; }
+    .input {
+      width: 100%;
+      min-height: 46px;
+      padding: 10px 11px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--card-2);
+      color: var(--text);
+    }
+    textarea.input { min-height: 82px; resize: vertical; }
+    .tag, .chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: var(--card-2);
+      color: var(--dim);
+      font-size: 11px;
+      font-weight: 800;
+    }
+    .chip.gold { background: rgba(217,178,74,.13); color: var(--gold-bright); }
+    .chip.ok { background: rgba(88,179,104,.14); color: #7bd68b; }
+    .chip.danger { background: rgba(224,86,79,.14); color: #ff8b85; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .panel {
+      overflow: hidden;
+      padding: 10px;
+      border-radius: 15px;
+      background: var(--panel);
+      color: #25232a;
+    }
+    .segmented { display: flex; gap: 4px; padding: 4px; border-radius: 13px; background: var(--card-2); }
+    .segmented button {
+      flex: 1;
+      min-height: 44px;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--dim);
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .segmented button.active { background: var(--gold); color: #17120a; }
+    .feature-card {
+      width: 100%;
+      margin-bottom: 12px;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--card);
+      text-align: left;
+      cursor: pointer;
+    }
+    .feature-card .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
+    .feature-title { color: var(--gold-bright); font-size: 16px; font-weight: 900; }
+    .feature-copy { display: block; margin-top: 9px; color: var(--dim); font-size: 13px; line-height: 1.58; }
+    .feature-card > .btn { margin-top: 10px; }
+    .map-mini { position: relative; height: 142px; overflow: hidden; border-radius: 13px; background: #101722; }
+    .map-mini svg { width: 100%; height: 100%; }
+    .map-dot { fill: var(--gold-bright); filter: drop-shadow(0 0 3px var(--gold-bright)); }
+    .level-line { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; margin-top: 12px; }
+    .level-node { position: relative; padding: 8px 2px; border-radius: 9px; background: var(--card-2); color: var(--dim); font-size: 10px; font-weight: 850; text-align: center; }
+    .level-node.done { background: rgba(217,178,74,.17); color: var(--gold-bright); }
+    .stage {
+      padding: 18px;
+      border-radius: 20px;
+      background: radial-gradient(ellipse at 50% 0, rgba(240,199,94,.32), transparent 58%), #111118;
+      border: 1px solid rgba(217,178,74,.33);
+      text-align: center;
+    }
+    .stage .char-placeholder { width: 142px; min-height: 190px; margin: 0 auto 12px; }
+    .slot-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: rgba(217,178,74,.13); color: var(--gold-bright); font-size: 18px; }
+    .score {
+      display: inline-grid;
+      place-items: center;
+      min-width: 54px;
+      min-height: 54px;
+      border: 2px solid var(--gold);
+      border-radius: 50%;
+      color: var(--gold-bright);
+      font-weight: 950;
+    }
+    .bottom-tabs {
+      position: fixed;
+      left: 50%;
+      bottom: 0;
+      z-index: 30;
+      display: flex;
+      width: min(100%, 430px);
+      min-height: calc(68px + env(safe-area-inset-bottom));
+      padding: 3px 3px env(safe-area-inset-bottom);
+      transform: translateX(-50%);
+      background: rgba(11,11,16,.97);
+      border-top: 1px solid var(--line);
+      backdrop-filter: blur(14px);
+    }
+    .tab-btn {
+      flex: 1 1 0;
+      min-width: 44px;
+      min-height: 64px;
+      padding: 5px 1px;
+      border: 0;
+      border-radius: 10px;
+      background: transparent;
+      color: var(--dim);
+      cursor: pointer;
+    }
+    .tab-btn .icon { display: block; height: 25px; font-size: 20px; line-height: 25px; }
+    .tab-btn .tab-label { display: block; margin-top: 2px; font-size: 10px; font-weight: 850; white-space: nowrap; }
+    .tab-btn.active { color: var(--gold-bright); background: rgba(217,178,74,.08); }
+    .phone.focus-mode .tab-btn[data-screen="world"],
+    .phone.focus-mode .tab-btn[data-screen="coach"] { display: none; }
+    .modal {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 16px 0 0;
+      background: rgba(0,0,0,.68);
+      backdrop-filter: blur(5px);
+    }
+    .modal[hidden] { display: none; }
+    .sheet {
+      width: min(100%, 430px);
+      max-height: 88dvh;
+      overflow-y: auto;
+      padding: 10px 16px calc(20px + env(safe-area-inset-bottom));
+      border: 1px solid var(--line);
+      border-bottom: 0;
+      border-radius: 24px 24px 0 0;
+      background: var(--surface);
+      box-shadow: 0 -18px 44px rgba(0,0,0,.45);
+      animation: sheet-in .22s ease-out;
+    }
+    .sheet.tall { min-height: 84dvh; }
+    @keyframes sheet-in { from { transform: translateY(24px); opacity: .4; } to { transform: none; opacity: 1; } }
+    .grabber { width: 42px; height: 5px; margin: 1px auto 12px; border-radius: 999px; background: rgba(255,255,255,.16); }
+    .sheet-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+    .sheet-header h2 { margin: 0; font-size: 19px; }
+    .icon-btn {
+      flex: 0 0 auto;
+      width: 44px;
+      height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      background: var(--card-2);
+      color: var(--text);
+      font-size: 21px;
+      cursor: pointer;
+    }
+    .breakdown { padding: 12px; border-radius: 15px; background: var(--card); }
+    .break-row { display: flex; justify-content: space-between; gap: 16px; min-height: 39px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+    .break-row:last-child { border-bottom: 0; }
+    .break-row strong { color: var(--gold-bright); }
+    .result-total { margin: 8px 0 14px; color: var(--gold-bright); font-size: 42px; font-weight: 950; text-align: center; }
+    .result-char { width: 118px; min-height: 138px; margin: 0 auto 12px; }
+    .waterfall { padding: 12px; border-radius: 16px; background: var(--card); }
+    .water-row { display: grid; grid-template-columns: 84px 1fr 62px; align-items: center; gap: 8px; min-height: 44px; border-bottom: 1px solid var(--line); font-size: 12px; }
+    .water-row:last-child { border-bottom: 0; }
+    .bar { height: 12px; border-radius: 999px; background: var(--card-2); overflow: hidden; }
+    .bar span { display: block; height: 100%; border-radius: inherit; }
+    .bar .positive { width: 65%; background: var(--ok); }
+    .bar .negative { width: 100%; background: var(--danger); }
+    .positive-text { color: #7bd68b; font-weight: 900; }
+    .negative-text { color: #ff8b85; font-weight: 900; }
+    .net-loss { margin-top: 12px; padding: 13px; border: 1px solid rgba(224,86,79,.38); border-radius: 14px; background: rgba(224,86,79,.08); }
+    .notice { padding: 11px 12px; border-radius: 13px; background: rgba(217,178,74,.09); color: var(--gold-bright); font-size: 12px; line-height: 1.5; }
+    .region-scroll { display: flex; gap: 8px; overflow-x: auto; padding: 3px 0 10px; scrollbar-width: none; }
+    .region-scroll::-webkit-scrollbar { display: none; }
+    .region-btn { flex: 0 0 auto; min-width: 78px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--card-2); color: var(--text); cursor: pointer; }
+    .toggle {
+      position: relative;
+      width: 52px;
+      height: 44px;
+      border: 0;
+      border-radius: 12px;
+      background: transparent;
+      cursor: pointer;
+    }
+    .toggle::before { content: ""; position: absolute; top: 7px; left: 0; width: 52px; height: 30px; border-radius: 999px; background: #373744; }
+    .toggle::after { content: ""; position: absolute; top: 11px; left: 4px; width: 22px; height: 22px; border-radius: 50%; background: white; transition: .18s; }
+    .toggle.on::before { background: var(--ok); }
+    .toggle.on::after { transform: translateX(22px); }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: calc(82px + env(safe-area-inset-bottom));
+      z-index: 200;
+      max-width: calc(100% - 40px);
+      padding: 11px 15px;
+      border-radius: 999px;
+      background: var(--text);
+      color: #18171c;
+      font-size: 12px;
+      font-weight: 900;
+      transform: translate(-50%, 16px);
+      opacity: 0;
+      pointer-events: none;
+      transition: .2s;
+    }
+    .toast.show { transform: translate(-50%, 0); opacity: 1; }
+    .mock-note { margin: 2px 0 12px; color: var(--dim); font-size: 10px; text-align: center; }
+    .new-dot { display: inline-block; width: 7px; height: 7px; margin-left: 4px; border-radius: 50%; background: var(--danger); vertical-align: top; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .celebration { text-align: center; }
+    .spotlight {
+      min-height: 190px;
+      display: grid;
+      place-items: center;
+      border-radius: 18px;
+      background: radial-gradient(ellipse at 50% 0, rgba(240,199,94,.55), rgba(217,178,74,.06) 52%, transparent 70%);
+    }
+    .level-big { color: var(--gold-bright); font-size: 48px; font-weight: 950; }
+    .hidden-detail { display: none; }
+    .hidden-detail.open { display: block; }
+
+    @media (max-width: 340px) {
+      main { padding-left: 10px; padding-right: 10px; }
+      .app-header { padding-left: 12px; padding-right: 12px; }
+      .brand { font-size: 15px; letter-spacing: .05em; }
+      .hero { grid-template-columns: 72px 1fr; gap: 10px; }
+      .char-placeholder { min-height: 116px; }
+      .card { padding: 13px; border-radius: 16px; }
+      .tab-btn .tab-label { font-size: 9.5px; }
+      .stat-grid { gap: 5px; }
+      .stat { padding-left: 4px; padding-right: 4px; }
+      .form-grid { grid-template-columns: 1fr; gap: 0; }
+      .water-row { grid-template-columns: 76px 1fr 58px; gap: 6px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="phone" id="phone">
+    <header class="app-header">
+      <div>
+        <div class="brand">IBUKI STUDY BEAT</div>
+        <div class="version">大型アップデート UIモック</div>
+      </div>
+      <div class="focus-pill">集中モード</div>
+    </header>
+
+    <main>
+      <section class="screen active" id="screen-today" aria-labelledby="today-title">
+        <div class="card hero gold-edge">
+          <div class="char-placeholder">キャラクター<br>画像</div>
+          <div>
+            <div class="eyebrow">ビート</div>
+            <div class="bubble">よし、伊吹！ 今日も一歩、未来へ進もう！</div>
+          </div>
+        </div>
+
+        <div class="card slogan compact">
+          <div class="sub">今日のスローガン</div>
+          <strong>一日一歩、<br>未来のステージをつくる</strong>
+        </div>
+
+        <div class="card">
+          <div class="title-row"><h2 id="today-title">今日の予定</h2><span class="chip gold">2件</span></div>
+          <label class="plan-row">
+            <input type="checkbox" aria-label="英語の予定を完了">
+            <span class="subject-dot"></span>
+            <span class="grow"><span class="label">英語　公募推薦の過去問</span><br><span class="sub">長文読解・見直し</span></span>
+            <span class="value">60分</span>
+          </label>
+          <label class="plan-row">
+            <input type="checkbox" aria-label="国語の予定を完了">
+            <span class="subject-dot" style="background:var(--jpn)"></span>
+            <span class="grow"><span class="label">国語　現代文</span><br><span class="sub">評論1題</span></span>
+            <span class="value">45分</span>
+          </label>
+          <button type="button" class="btn secondary full small" data-open="quick-modal">＋ 予定を追加</button>
+        </div>
+
+        <button type="button" class="btn primary full start-btn" data-open="session-modal">学習を開始する ▶</button>
+
+        <button type="button" class="boost-card" data-open="boost-modal" aria-label="今日のブースト内訳を開く">
+          <span class="boost-top"><strong>今日のブースト</strong><span>1.35倍 ›</span></span>
+          <span class="boost-bottom"><span>装備+0.10・条件+0.25</span><span>12,450BP</span></span>
+        </button>
+
+        <div class="card">
+          <div class="title-row"><h2>今日の積み上げ</h2><span class="sub">目標3時間</span></div>
+          <div class="big-number">90分</div>
+          <div class="progress" role="progressbar" aria-label="今日の目標達成率" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><span></span></div>
+          <div class="stat-grid">
+            <div class="stat"><b>7日</b><span>連続</span></div>
+            <div class="stat"><b>420分</b><span>今週</span></div>
+            <div class="stat"><b>84日</b><span>受験まで</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-record" aria-labelledby="record-title">
+        <h1 id="record-title">記録</h1>
+        <div class="card">
+          <h2>学習記録</h2>
+          <div class="form-grid">
+            <div class="field"><label for="record-date">日付</label><input class="input" id="record-date" type="date" value="2026-08-08"></div>
+            <div class="field"><label for="record-subject">科目</label><select class="input" id="record-subject"><option>英語</option><option>国語</option><option>社会</option></select></div>
+          </div>
+          <div class="field"><label for="record-content">内容</label><input class="input" id="record-content" type="text" value="公募推薦の過去問・長文読解"></div>
+          <div class="form-grid">
+            <div class="field"><label for="record-plan">計画分</label><input class="input" id="record-plan" type="number" value="90"></div>
+            <div class="field"><label for="record-actual">実績分</label><input class="input" id="record-actual" type="number" value="90"></div>
+          </div>
+          <div class="field"><label for="record-reflection">振り返り</label><textarea class="input" id="record-reflection">設問の根拠を本文に戻って確認できた。</textarea></div>
+          <button type="button" class="btn primary full" data-action="show-result">保存演出を見る</button>
+        </div>
+        <div class="card">
+          <div class="title-row"><h2>これまでの記録</h2><button type="button" class="btn small" data-open="quick-modal">ごみ箱</button></div>
+          <div class="history-row"><span class="subject-dot"></span><span class="grow"><span class="label">8/8 英語・過去問</span><br><span class="sub">計画90分 / 実績90分</span></span><button type="button" class="btn small" data-open="quick-modal">編集</button></div>
+          <div class="history-row"><span class="subject-dot" style="background:var(--jpn)"></span><span class="grow"><span class="label">8/7 国語・評論</span><br><span class="sub">計画60分 / 実績55分</span></span><button type="button" class="btn small" data-open="quick-modal">編集</button></div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-graph" aria-labelledby="graph-title">
+        <h1 id="graph-title">グラフ</h1>
+        <div class="segmented" role="tablist" aria-label="グラフ期間">
+          <button type="button" class="active" data-segment>日</button><button type="button" data-segment>週</button><button type="button" data-segment>月</button><button type="button" data-segment>全体</button>
+        </div>
+        <div class="card">
+          <div class="panel">
+            <svg viewBox="0 0 320 220" role="img" aria-label="計画と実績の積み上げ棒、累積計画と累積実績の折れ線を示すモック">
+              <g stroke="#d8d5cc" stroke-width="1"><line x1="32" y1="20" x2="32" y2="188"/><line x1="32" y1="188" x2="300" y2="188"/><line x1="32" y1="132" x2="300" y2="132"/><line x1="32" y1="76" x2="300" y2="76"/></g>
+              <g opacity=".55"><rect x="53" y="112" width="12" height="76" fill="#4A90D9"/><rect x="65" y="143" width="12" height="45" fill="#F5A623"/><rect x="112" y="96" width="12" height="92" fill="#4A90D9"/><rect x="124" y="126" width="12" height="62" fill="#F5A623"/><rect x="171" y="82" width="12" height="106" fill="#4A90D9"/><rect x="183" y="115" width="12" height="73" fill="#E8604C"/></g>
+              <g><rect x="79" y="120" width="12" height="68" fill="#4A90D9"/><rect x="91" y="154" width="12" height="34" fill="#F5A623"/><rect x="138" y="105" width="12" height="83" fill="#4A90D9"/><rect x="150" y="139" width="12" height="49" fill="#F5A623"/><rect x="197" y="88" width="12" height="100" fill="#4A90D9"/><rect x="209" y="133" width="12" height="55" fill="#E8604C"/></g>
+              <polyline points="59,152 118,116 177,76 236,48 286,35" fill="none" stroke="#58B368" stroke-width="3"/>
+              <polyline points="85,160 144,132 203,94 247,70" fill="none" stroke="#4A90D9" stroke-width="3"/>
+              <path d="M274 52 l7 8 -7 8 -7-8z" fill="#d9b24a"/><text x="247" y="86" font-size="9" fill="#504b3f">◆受験</text>
+              <g font-size="9" fill="#625f66"><text x="52" y="207">8/6</text><text x="111" y="207">8/7</text><text x="170" y="207">8/8</text></g>
+            </svg>
+          </div>
+          <div class="chips" style="margin-top:10px"><span class="chip">左=計画</span><span class="chip">右=実績</span><span class="chip ok">累積計画</span><span class="chip" style="color:#72a9e3">累積実績</span></div>
+          <p style="margin:10px 0 0">左右スワイプで期間移動・ピンチで拡大縮小・棒タップで日別詳細。既存仕様を維持します。</p>
+        </div>
+        <button type="button" class="btn secondary full" data-open="quick-modal">日別詳細のモックを開く</button>
+      </section>
+
+      <section class="screen" id="screen-world" aria-labelledby="world-title">
+        <div class="title-row" style="margin-bottom:12px"><h1 id="world-title">世界<span class="new-dot" aria-hidden="true"></span><span class="sr-only">新機能あり</span></h1><button type="button" class="btn small secondary" data-open="level-modal">Lv3</button></div>
+        <button type="button" class="feature-card gold-edge" data-open="news-modal">
+          <span class="top"><span class="feature-title">今日の1ニュース</span><span class="chip gold">0/3本</span></span>
+          <span class="feature-copy">ジャンル・自分の見出し・気になった理由だけ。志望学部一致はBP×1.5。</span>
+          <span class="btn primary full small">ニュースを記録する</span>
+        </button>
+        <button type="button" class="feature-card" data-open="map-modal">
+          <span class="top"><span class="feature-title">ワールドマップ</span><span class="chip">12か国点灯 ›</span></span>
+          <span class="map-mini" aria-hidden="true">
+            <svg viewBox="0 0 330 150"><g fill="#283443" stroke="#3d4b5a" stroke-width="1"><path d="M20 35l45-18 39 12 4 25-25 12-17 25-28-9-9-24z"/><path d="M93 90l26 8 12 27-17 22-16-15-8-27z"/><path d="M147 32l34-13 25 9 7 17-20 10-14-8-22 7z"/><path d="M178 61l28 2 17 25-8 42-25 8-15-34z"/><path d="M211 30l62-10 38 24-17 19-38-2-20 18-22-15z"/><path d="M273 103l30-7 20 20-16 19-31-7z"/></g><g><circle class="map-dot" cx="78" cy="48" r="4"/><circle class="map-dot" cx="174" cy="36" r="4"/><circle class="map-dot" cx="195" cy="84" r="4"/><circle class="map-dot" cx="255" cy="48" r="4"/><circle class="map-dot" cx="287" cy="117" r="4"/></g></svg>
+          </span>
+          <span class="chips" style="margin-top:9px"><span class="chip">G7 4/7</span><span class="chip">アジア 3/8</span><span class="chip">大陸 2/6</span></span>
+        </button>
+        <button type="button" class="feature-card" data-open="summary-modal">
+          <span class="top"><span class="feature-title">週末のまとめ</span><span class="chip">2/3本 ›</span></span>
+          <span class="feature-copy">3本を200字で要約し、面接ネタ帳へ。保存済み6件。</span>
+        </button>
+        <button type="button" class="feature-card" data-open="finance-modal">
+          <span class="top"><span class="feature-title">金融ラボ</span><span class="chip gold">Lv3 ›</span></span>
+          <span class="metric-row"><span class="grow"><span class="label">BP残高</span><br><span class="sub">円普通・定期を体験</span></span><span class="value">24,500 BP</span></span>
+          <span class="notice">アプリの1週間＝現実の1年（52倍速）</span>
+        </button>
+        <button type="button" class="feature-card" data-open="market-modal">
+          <span class="top"><span class="feature-title">週次マーケット</span><span class="chip">日曜入力 ›</span></span>
+          <span class="feature-copy">ドル円・日経平均・円金利・米ドル金利と、動いた理由を自分で記録。</span>
+        </button>
+        <div class="card compact">
+          <div class="sub">段階解放</div>
+          <div class="level-line"><div class="level-node done">Lv1</div><div class="level-node done">Lv2</div><div class="level-node done">Lv3</div><div class="level-node">Lv4</div><div class="level-node">Lv5</div><div class="level-node">Lv6</div></div>
+        </div>
+      </section>
+
+      <section class="screen" id="screen-coach" aria-labelledby="coach-title">
+        <h1 id="coach-title">コーチ</h1>
+        <div class="stage">
+          <div class="char-placeholder" id="coach-char">キャラクター<br>画像</div>
+          <div class="eyebrow">ビート</div>
+          <p style="color:var(--text)">今日もリズムよくいこう！</p>
+          <button type="button" class="btn secondary" data-action="change-pose">ポーズ変更</button>
+        </div>
+        <div class="card" style="margin-top:12px">
+          <div class="title-row"><h2>装備</h2><span class="chip gold">合計 +0.8</span></div>
+          <div class="equipment-row"><span class="slot-icon">♛</span><span class="grow"><span class="sub">衣装</span><br><span class="label" id="equip-costume">フェドーラハット</span></span><button type="button" class="btn small" data-open="equipment-modal">変更</button></div>
+          <div class="equipment-row"><span class="slot-icon">♪</span><span class="grow"><span class="sub">スキル</span><br><span class="label">ムーンウォーク</span></span><button type="button" class="btn small" data-open="equipment-modal">変更</button></div>
+          <div class="equipment-row"><span class="slot-icon">◎</span><span class="grow"><span class="sub">ステージ</span><br><span class="label">ライブハウス</span></span><button type="button" class="btn small" data-open="equipment-modal">変更</button></div>
+        </div>
+        <button type="button" class="feature-card" data-open="shop-modal"><span class="top"><span class="feature-title">ショップ</span><span class="chip gold">12,450BP ›</span></span><span class="feature-copy">衣装・スキル・ステージ・消費アイテム</span></button>
+        <button type="button" class="feature-card" data-open="collection-modal"><span class="top"><span class="feature-title">仲間コレクション</span><span class="chip">4/50 ›</span></span><span class="feature-copy">ニュースで世界各国の応援キャラを解放。</span></button>
+        <button type="button" class="btn secondary full" data-open="ai-modal">🤖 AIに聞く</button>
+      </section>
+
+      <section class="screen" id="screen-settings" aria-labelledby="settings-title">
+        <h1 id="settings-title">設定</h1>
+        <div class="card">
+          <div class="setting-row"><span class="grow"><span class="label">プロフィール</span><br><span class="sub">伊吹・ビート</span></span><button type="button" class="btn small" data-open="quick-modal">開く</button></div>
+          <div class="setting-row"><span class="grow"><span class="label">受験情報</span><br><span class="sub">公募推薦・一般選抜</span></span><button type="button" class="btn small" data-open="quick-modal">開く</button></div>
+          <div class="setting-row"><span class="grow"><span class="label">科目設定</span><br><span class="sub">私立大学の受験科目を選択</span></span><button type="button" class="btn small" data-open="quick-modal">開く</button></div>
+        </div>
+        <div class="card">
+          <div class="setting-row"><span class="grow"><span class="label">コンディション記録</span><br><span class="sub">本人が任意で使用</span></span><button type="button" class="toggle on" data-action="toggle" aria-label="コンディション記録を切り替える" aria-pressed="true"></button></div>
+          <button type="button" class="btn secondary full" data-open="condition-modal">今夜のコンディションを入力</button>
+        </div>
+        <div class="card gold-edge">
+          <div class="title-row"><h2>集中モード</h2><span class="chip gold">自動</span></div>
+          <p>受験30日前に世界・コーチ・ショップ・金融を隠し、学習記録へ集中します。データは消えません。</p>
+          <div class="metric-row"><span class="grow"><span class="label">開始予定</span><br><span class="sub">対象日 10/12</span></span><span class="value">あと54日</span></div>
+          <button type="button" class="btn secondary full" data-open="focus-modal">集中モードの表示を確認</button>
+        </div>
+        <div class="card"><h2>データ管理</h2><p>JSON書出・読込・全消去は既存仕様を維持します。</p><button type="button" class="btn full" data-open="quick-modal">データ管理を開く</button></div>
+      </section>
+    </main>
+
+    <nav class="bottom-tabs" aria-label="メインタブ">
+      <button type="button" class="tab-btn active" data-screen="today" aria-selected="true"><span class="icon">⌂</span><span class="tab-label">今日</span></button>
+      <button type="button" class="tab-btn" data-screen="record" aria-selected="false"><span class="icon">✎</span><span class="tab-label">記録</span></button>
+      <button type="button" class="tab-btn" data-screen="graph" aria-selected="false"><span class="icon">▥</span><span class="tab-label">グラフ</span></button>
+      <button type="button" class="tab-btn" data-screen="world" aria-selected="false"><span class="icon">◎</span><span class="tab-label">世界</span></button>
+      <button type="button" class="tab-btn" data-screen="coach" aria-selected="false"><span class="icon">♬</span><span class="tab-label">コーチ</span></button>
+      <button type="button" class="tab-btn" data-screen="settings" aria-selected="false"><span class="icon">⚙</span><span class="tab-label">設定</span></button>
+    </nav>
+  </div>
+
+  <div class="modal" id="boost-modal" hidden><div class="sheet"><div class="grabber"></div><div class="sheet-header"><h2>今日のブースト 1.35倍</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><div class="breakdown"><div class="break-row"><span>基礎倍率</span><strong>1.00</strong></div><div class="break-row"><span>衣装・白いソックス</span><strong>+0.10</strong></div><div class="break-row"><span>コンディション</span><strong>+0.25</strong></div><div class="break-row"><span>今日の合計</span><strong>1.35倍</strong></div></div><p style="margin-top:12px">早寝・朝食・運動・休憩・読書は任意入力。今夜の記録が明日の倍率に反映されます。</p><button type="button" class="btn secondary full" data-open="condition-modal">コンディションを入力</button></div></div>
+
+  <div class="modal" id="session-modal" hidden><div class="sheet"><div class="grabber"></div><div class="sheet-header"><h2>学習セッション</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><div class="card" style="text-align:center"><div class="eyebrow">英語・公募推薦の過去問</div><div class="big-number">00:42:18</div><p>フィーバー未使用・今日の通常倍率1.35倍</p></div><div class="button-row"><button type="button" class="btn" data-close>一時停止して戻る</button><button type="button" class="btn primary" data-action="show-result">終了して保存</button></div></div></div>
+
+  <div class="modal" id="result-modal" hidden><div class="sheet"><div class="grabber"></div><div class="celebration"><div class="char-placeholder result-char">お祝い<br>画像</div><div class="eyebrow">NICE BEAT!</div><div class="result-total">+282 BP</div></div><div class="breakdown"><div class="break-row"><span>学習90分</span><strong>+90</strong></div><div class="break-row"><span>今日の倍率1.35倍</span><strong>+32</strong></div><div class="break-row"><span>行動ボーナス</span><strong>+160</strong></div></div><div class="chips" style="justify-content:center;margin:12px 0"><span class="chip gold">振り返り +10</span><span class="chip gold">計画達成 +50</span><span class="chip ok">連続7日 +100</span></div><button type="button" class="btn linkish full" data-action="toggle-breakdown">詳しい内訳</button><div class="hidden-detail" id="result-detail"><p>通常倍率は装備とコンディションを足し算し、上限3.0倍で表示します。フィーバー10倍は別の期間限定状態として扱います。</p></div><button type="button" class="btn primary full" data-close>続ける</button></div></div>
+
+  <div class="modal" id="condition-modal" hidden><div class="sheet"><div class="grabber"></div><div class="sheet-header"><h2>今夜のコンディション</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><p>使いたい項目だけONにできます。学習BPとは別に、明日の倍率へ反映します。</p><div class="card"><label class="plan-row"><input type="checkbox" checked><span class="grow">早寝</span><span class="positive-text">+0.05</span></label><label class="plan-row"><input type="checkbox" checked><span class="grow">朝食</span><span class="positive-text">+0.05</span></label><label class="plan-row"><input type="checkbox"><span class="grow">運動30分</span><span class="positive-text">+0.10</span></label><label class="plan-row"><input type="checkbox" checked><span class="grow">適切な休憩</span><span class="positive-text">+0.05</span></label><label class="plan-row"><input type="checkbox"><span class="grow">読書30分</span><span class="positive-text">+0.05</span></label></div><div class="notice">現在の入力では、明日の倍率は+0.15の見込みです。</div><button type="button" class="btn primary full" style="margin-top:12px" data-action="save-toast" data-message="コンディションを保存しました">保存する</button></div></div>
+
+  <div class="modal" id="news-modal" hidden><div class="sheet tall"><div class="grabber"></div><div class="sheet-header"><h2>今日の1ニュース</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><div class="field"><label for="news-genre">ジャンル</label><select class="input" id="news-genre"><option>経済（志望学部一致 ×1.5）</option><option>政治法律</option><option>国際</option><option>社会</option><option>IT/AI</option></select></div><div class="field"><label for="news-headline">自分の言葉の見出し</label><input class="input" id="news-headline" type="text" value="円相場の変化が輸入価格に影響"></div><div class="field"><label for="news-reason">なぜ気になったか</label><textarea class="input" id="news-reason">家計と企業の両方に影響すると思ったから。</textarea></div><div class="notice">記事本文は保存しません。今日はあと2本記録できます。</div><button type="button" class="btn primary full" style="margin-top:12px" data-action="news-to-ai">保存してAI質問を見る</button></div></div>
+
+  <div class="modal" id="ai-modal" hidden><div class="sheet"><div class="grabber"></div><div class="sheet-header"><h2>AIに聞く内容</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><div class="card"><p style="color:var(--text)">経済学部・法学部・国際学部の受験面接を想定し、「円相場の変化が輸入価格に影響」というニュースについて、背景・異なる立場・生活への影響を高校生向けに質問してください。</p></div><div class="button-row"><button type="button" class="btn" data-action="save-toast" data-message="質問文をコピーしました">コピー</button><button type="button" class="btn primary" data-action="save-toast" data-message="AIアプリへの受け渡しを開始する想定です">AIを開く</button></div></div></div>
+
+  <div class="modal" id="map-modal" hidden><div class="sheet tall"><div class="grabber"></div><div class="sheet-header"><h2>ワールドマップ</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><div class="segmented"><button type="button" class="active" data-map-view="map">地図</button><button type="button" data-map-view="list">国一覧</button></div><div id="map-view" style="margin-top:12px"><div class="map-mini" style="height:230px"><svg viewBox="0 0 330 190"><g fill="#283443" stroke="#536273" stroke-width="1"><path d="M12 45l51-24 45 12 5 31-28 13-20 32-31-10-12-27z"/><path d="M91 112l29 7 16 35-20 30-19-17-9-34z"/><path d="M145 36l38-16 30 12 6 20-22 12-17-10-25 8z"/><path d="M177 73l31 2 20 31-10 53-28 10-17-42z"/><path d="M216 34l64-13 42 28-18 24-39-3-23 20-25-17z"/><path d="M274 129l31-9 23 24-19 25-32-8z"/></g><g><circle class="map-dot" cx="77" cy="54" r="4"/><circle class="map-dot" cx="176" cy="45" r="4"/><circle class="map-dot" cx="194" cy="99" r="4"/><circle class="map-dot" cx="261" cy="57" r="4"/><circle class="map-dot" cx="293" cy="145" r="4"/></g></svg></div><p>点は記録済み国。小さな点を直接押す必要はなく、下の地域ボタンから選びます。</p></div><div id="country-list-view" hidden style="margin-top:12px"><div class="history-row"><span class="grow"><span class="label">日本</span><br><span class="sub">経済2・政治法律1</span></span><span class="chip ok">仲間解放</span></div><div class="history-row"><span class="grow"><span class="label">アメリカ</span><br><span class="sub">国際2・IT/AI1</span></span><span class="chip ok">仲間解放</span></div><div class="history-row"><span class="grow"><span class="label">韓国</span><br><span class="sub">国際1</span></span><span class="chip">あと2本</span></div></div><div class="region-scroll"><button type="button" class="region-btn" data-action="region">アジア</button><button type="button" class="region-btn" data-action="region">欧州</button><button type="button" class="region-btn" data-action="region">北米</button><button type="button" class="region-btn" data-action="region">南米</button><button type="button" class="region-btn" data-action="region">アフリカ</button><button type="button" class="region-btn" data-action="region">オセアニア</button></div></div></div>
+
+  <div class="modal" id="summary-modal" hidden><div class="sheet"><div class="grabber"></div><div class="sheet-header"><h2>週末のまとめ</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><p>今週のニュースから3本選び、200字で要約します。</p><div class="card"><label class="plan-row"><input type="checkbox" checked><span class="grow">円相場と輸入価格</span></label><label class="plan-row"><input type="checkbox" checked><span class="grow">大学無償化の議論</span></label><label class="plan-row"><input type="checkbox"><span class="grow">AI規制の国際比較</span></label></div><button type="button" class="btn primary full" data-action="save-toast" data-message="選んだ3本で要約画面へ進む想定です">200字要約へ</button></div></div>
+
+  <div class="modal" id="finance-modal" hidden><div class="sheet tall"><div class="grabber"></div><div class="sheet-header"><h2>金融ラボ</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><div class="notice">時間換算：アプリの1週間＝現実の1年（52倍速）</div><div class="card" style="margin-top:12px"><div class="metric-row"><span class="grow"><span class="sub">ゲーム内の円</span><span class="label">BP</span></span><span class="value">24,500</span></div><div class="metric-row"><span class="grow"><span class="sub">ゲーム内の外貨</span><span class="label">BD</span></span><span class="value">82.5</span></div><div class="metric-row"><span class="grow"><span class="sub">PayPay引換券</span><span class="label">GT</span></span><span class="value">12枚</span></div></div><h3>外貨預金の結果</h3><div class="waterfall"><div class="water-row"><span>元本</span><div class="bar"><span style="width:85%;background:var(--gold)"></span></div><strong>10,000</strong></div><div class="water-row"><span>利息</span><div class="bar"><span class="positive"></span></div><span class="positive-text">+450</span></div><div class="water-row"><span>為替差損</span><div class="bar"><span class="negative"></span></div><span class="negative-text">-692</span></div></div><div class="net-loss"><div class="title-row"><strong>今回の結果</strong><span class="negative-text">-242BP</span></div><p style="margin:6px 0 0;color:var(--text)">金利では増えましたが、円高による損が上回りました。10,000BP → 9,758BP</p></div><div class="button-stack" style="margin-top:12px"><button type="button" class="btn secondary full" data-action="save-toast" data-message="円預金の商品比較を開く想定です">円預金を見る</button><button type="button" class="btn secondary full" data-action="save-toast" data-message="手入力レートの両替画面を開く想定です">BPとBDを両替</button><button type="button" class="btn secondary full" data-open="gt-modal">GTをPayPayへ交換申請</button></div></div></div>
+
+  <div class="modal" id="gt-modal" hidden><div class="sheet"><div class="grabber"></div><div class="sheet-header"><h2>GT交換申請</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><div class="notice">表示例：今週は1GT＝118円。実際の換算式は実装前に確定が必要です。</div><div class="card" style="margin-top:12px"><div class="metric-row"><span>月間上限</span><strong>2,000円</strong></div><div class="metric-row"><span>必要GT</span><strong>17枚</strong></div><div class="metric-row"><span>所持GT</span><strong>12枚</strong></div></div><button type="button" class="btn primary full" data-action="save-toast" data-message="親への交換申請を記録する想定です">親に交換申請する</button></div></div>
+
+  <div class="modal" id="market-modal" hidden><div class="sheet tall"><div class="grabber"></div><div class="sheet-header"><h2>週次マーケット入力</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><p>毎週日曜に自分で調べた値を入力します。自動取得はしません。</p><div class="form-grid"><div class="field"><label for="usd-jpy">ドル円</label><input class="input" id="usd-jpy" type="number" value="147.80"></div><div class="field"><label for="nikkei">日経平均</label><input class="input" id="nikkei" type="number" value="42800"></div><div class="field"><label for="jp-rate">普通預金金利%</label><input class="input" id="jp-rate" type="number" value="0.2"></div><div class="field"><label for="us-rate">米ドル金利%</label><input class="input" id="us-rate" type="number" value="4.5"></div></div><div class="field"><label for="market-reason">なぜ動いたと思うか</label><textarea class="input" id="market-reason">米国の金利見通しが変化したためだと思う。</textarea></div><div class="panel"><svg viewBox="0 0 300 110" role="img" aria-label="ドル円推移の折れ線モック"><g stroke="#d8d5cc"><line x1="20" y1="12" x2="20" y2="92"/><line x1="20" y1="92" x2="286" y2="92"/></g><polyline points="22,70 72,55 122,64 172,38 222,43 282,24" fill="none" stroke="#4A90D9" stroke-width="4"/><g fill="#4A90D9"><circle cx="22" cy="70" r="4"/><circle cx="72" cy="55" r="4"/><circle cx="122" cy="64" r="4"/><circle cx="172" cy="38" r="4"/><circle cx="222" cy="43" r="4"/><circle cx="282" cy="24" r="4"/></g></svg></div><button type="button" class="btn primary full" style="margin-top:12px" data-action="save-toast" data-message="週次マーケットを保存しました">保存する</button></div></div>
+
+  <div class="modal" id="equipment-modal" hidden><div class="sheet"><div class="grabber"></div><div class="sheet-header"><h2>装備を変更</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><div class="segmented"><button type="button" class="active" data-segment>衣装</button><button type="button" data-segment>スキル</button><button type="button" data-segment>ステージ</button></div><div class="shop-row"><span class="slot-icon">♛</span><span class="grow"><span class="label">フェドーラハット</span><br><span class="sub">通常倍率+0.3</span></span><span class="chip ok">装備中</span></div><div class="shop-row"><span class="slot-icon">✦</span><span class="grow"><span class="label">ライトアップジャケット</span><br><span class="sub">通常倍率+0.5</span></span><button type="button" class="btn small" data-action="equip">装備</button></div><button type="button" class="btn secondary full" data-open="shop-modal">ショップで入手する</button></div></div>
+
+  <div class="modal" id="shop-modal" hidden><div class="sheet tall"><div class="grabber"></div><div class="sheet-header"><h2>ビートショップ</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><div class="title-row" style="margin-bottom:12px"><span class="chip gold">残高 12,450BP</span><span class="sub">装備は各1個</span></div><div class="segmented"><button type="button" class="active" data-segment>衣装</button><button type="button" data-segment>スキル</button><button type="button" data-segment>ステージ</button><button type="button" data-segment>消費</button></div><div class="shop-row"><span class="slot-icon">✦</span><span class="grow"><span class="label">ライトアップジャケット</span><br><span class="sub">衣装・通常倍率+0.5</span></span><button type="button" class="btn small primary" data-buy="ライトアップジャケット|12,000BP|通常倍率+0.5">12,000</button></div><div class="shop-row"><span class="slot-icon">☾</span><span class="grow"><span class="label">ムーンウォーク</span><br><span class="sub">遅れている科目+0.5</span></span><button type="button" class="btn small" data-buy="ムーンウォーク|4,000BP|最も遅れている科目+0.5倍">4,000</button></div><div class="shop-row"><span class="slot-icon">◎</span><span class="grow"><span class="label">武道館</span><br><span class="sub">ステージ・通常倍率+0.4</span></span><button type="button" class="btn small" data-buy="武道館|10,000BP|通常倍率+0.4">10,000</button></div><div class="shop-row"><span class="slot-icon">⚡</span><span class="grow"><span class="label">フィーバータイム</span><br><span class="sub">30分だけ10倍・週1回</span></span><button type="button" class="btn small" data-buy="フィーバータイム|3,000BP|30分だけ10倍・週1回">3,000</button></div><div class="notice">通常倍率上限3.0倍とフィーバー10倍の計算上の関係は、実装前に確認が必要です。</div></div></div>
+
+  <div class="modal" id="purchase-modal" hidden><div class="sheet"><div class="grabber"></div><div class="sheet-header"><h2 id="purchase-title">購入確認</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><div class="card"><div class="metric-row"><span>価格</span><strong id="purchase-price">—</strong></div><div class="metric-row"><span>効果</span><strong id="purchase-effect">—</strong></div><div class="metric-row"><span>購入前残高</span><strong>12,450BP</strong></div></div><button type="button" class="btn primary full" data-action="save-toast" data-message="購入を完了した想定です">購入する</button></div></div>
+
+  <div class="modal" id="collection-modal" hidden><div class="sheet tall"><div class="grabber"></div><div class="sheet-header"><h2>仲間コレクション 4/50</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><div class="stat-grid"><div class="stat"><b>日本</b><span>解放済み</span></div><div class="stat"><b>米国</b><span>解放済み</span></div><div class="stat"><b>英国</b><span>解放済み</span></div></div><p style="margin-top:12px">同じ国の国際ニュースを3本記録すると、その国の応援キャラが解放されます。倍率効果はありません。</p><button type="button" class="btn secondary full" data-open="map-modal">地図で見る</button></div></div>
+
+  <div class="modal" id="level-modal" hidden><div class="sheet"><div class="grabber"></div><div class="spotlight"><div class="celebration"><div class="level-big">Lv4</div><h2>世界がひらいた</h2><p style="color:var(--text)">為替・外貨・海外ショップを体験できます。</p></div></div><div class="button-row"><button type="button" class="btn" data-close>あとで</button><button type="button" class="btn primary" data-action="go-world">今見る</button></div></div></div>
+
+  <div class="modal" id="focus-modal" hidden><div class="sheet"><div class="grabber"></div><div class="sheet-header"><h2>集中モード</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><div class="card gold-edge"><h3>本番まで30日</h3><p style="color:var(--text)">ステージを受験勉強に絞ります。</p><div class="chips"><span class="chip ok">今日</span><span class="chip ok">記録</span><span class="chip ok">グラフ</span><span class="chip ok">設定</span></div><p style="margin-top:10px">世界・コーチ・ショップ・金融は一時的に隠れます。データ、BP、装備、ニュース、金融履歴は消えません。</p></div><div class="button-row"><button type="button" class="btn" data-close>戻る</button><button type="button" class="btn primary" data-action="activate-focus">集中表示を試す</button></div></div></div>
+
+  <div class="modal" id="quick-modal" hidden><div class="sheet"><div class="grabber"></div><div class="sheet-header"><h2>既存機能の領域</h2><button type="button" class="icon-btn" data-close aria-label="閉じる">×</button></div><p>このモックでは大型アップデートの情報階層を確認します。この操作は既存仕様のボトムシートへ接続する想定です。</p><button type="button" class="btn primary full" data-close>確認</button></div></div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    // 静的モックの画面・モーダル切替専用。保存・計算・外部通信は行わない。
+    const phone = document.getElementById('phone');
+    const screens = [...document.querySelectorAll('.screen')];
+    const tabs = [...document.querySelectorAll('.tab-btn')];
+    const modals = [...document.querySelectorAll('.modal')];
+    const toast = document.getElementById('toast');
+    let toastTimer;
+
+    function showScreen(name) {
+      screens.forEach(s => s.classList.toggle('active', s.id === `screen-${name}`));
+      tabs.forEach(t => {
+        const active = t.dataset.screen === name;
+        t.classList.toggle('active', active);
+        t.setAttribute('aria-selected', String(active));
+      });
+      window.scrollTo({top: 0, behavior: 'smooth'});
+    }
+    function openModal(id) {
+      modals.forEach(m => { if (m.id !== id) m.hidden = true; });
+      const modal = document.getElementById(id);
+      if (modal) { modal.hidden = false; modal.querySelector('button')?.focus(); }
+    }
+    function closeAll() { modals.forEach(m => m.hidden = true); }
+    function showToast(message) {
+      closeAll();
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
+    }
+
+    tabs.forEach(tab => tab.addEventListener('click', () => showScreen(tab.dataset.screen)));
+    document.querySelectorAll('[data-open]').forEach(btn => btn.addEventListener('click', () => openModal(btn.dataset.open)));
+    document.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', closeAll));
+    modals.forEach(modal => modal.addEventListener('click', e => { if (e.target === modal) closeAll(); }));
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
+
+    document.querySelectorAll('[data-segment]').forEach(btn => btn.addEventListener('click', () => {
+      btn.parentElement.querySelectorAll('[data-segment]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }));
+    document.querySelectorAll('[data-action="toggle"]').forEach(btn => btn.addEventListener('click', () => {
+      btn.classList.toggle('on');
+      btn.setAttribute('aria-pressed', String(btn.classList.contains('on')));
+    }));
+    document.querySelectorAll('[data-action="show-result"]').forEach(btn => btn.addEventListener('click', () => openModal('result-modal')));
+    document.querySelector('[data-action="toggle-breakdown"]').addEventListener('click', () => document.getElementById('result-detail').classList.toggle('open'));
+    document.querySelector('[data-action="change-pose"]').addEventListener('click', () => {
+      const char = document.getElementById('coach-char');
+      char.innerHTML = char.textContent.includes('ムーン') ? 'キャラクター<br>画像' : 'ムーンウォーク<br>ポーズ';
+    });
+    document.querySelectorAll('[data-action="save-toast"]').forEach(btn => btn.addEventListener('click', () => showToast(btn.dataset.message || '保存しました')));
+    document.querySelector('[data-action="news-to-ai"]').addEventListener('click', () => openModal('ai-modal'));
+    document.querySelectorAll('[data-map-view]').forEach(btn => btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-map-view]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('map-view').hidden = btn.dataset.mapView !== 'map';
+      document.getElementById('country-list-view').hidden = btn.dataset.mapView !== 'list';
+    }));
+    document.querySelectorAll('[data-action="region"]').forEach(btn => btn.addEventListener('click', () => showToast(`${btn.textContent}の国一覧を表示する想定です`)));
+    document.querySelectorAll('[data-buy]').forEach(btn => btn.addEventListener('click', () => {
+      const [name, price, effect] = btn.dataset.buy.split('|');
+      document.getElementById('purchase-title').textContent = `${name}を購入`;
+      document.getElementById('purchase-price').textContent = price;
+      document.getElementById('purchase-effect').textContent = effect;
+      openModal('purchase-modal');
+    }));
+    document.querySelector('[data-action="equip"]').addEventListener('click', () => {
+      document.getElementById('equip-costume').textContent = 'ライトアップジャケット';
+      showToast('ライトアップジャケットを装備しました');
+    });
+    document.querySelector('[data-action="go-world"]').addEventListener('click', () => { closeAll(); showScreen('world'); });
+    document.querySelector('[data-action="activate-focus"]').addEventListener('click', () => {
+      phone.classList.add('focus-mode');
+      closeAll();
+      showScreen('today');
+      showToast('集中モードの4タブ表示に切り替えました');
+    });
+  </script>
+</body>
+</html>
