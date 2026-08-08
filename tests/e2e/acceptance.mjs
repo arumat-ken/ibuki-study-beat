@@ -753,6 +753,206 @@ async function test11_worldNews() {
   ok('志望学部の設定もリロード後も保持される', st.settings.faculties.economics === false);
 }
 
+async function test12_pointsEquipShop() {
+  console.log('\n■ 試験12: ポイント(BP)獲得・装備・ショップ・コンディション(ver.4.1.0)');
+  await freshPage(true);
+
+  // --- BP獲得: 記録保存で自動計算される ---
+  await addRecord({ subjectLabel: '英語', content: 'BP検証1', plan: 30, actual: 30 });
+  let st = await getState();
+  ok('学習記録の保存でBPが自動付与される(基本30+計画達成50=80)', st.records[0].bp === 80, `bp=${st.records[0].bp}`);
+
+  await nav('today');
+  const boostSub1 = await page.textContent('#boost-sub');
+  ok('今日画面のブーストカードにBP残高が反映される', boostSub1.includes('BP 80'), boostSub1);
+  await page.click('#btn-boost-card');
+  await page.waitForSelector('#modal-body');
+  const boostModalText = await page.textContent('#modal-body');
+  ok('ブースト内訳モーダルにBP残高が表示される', boostModalText.includes('BP残高'));
+  await page.click('#m-close');
+
+  // 追加でBPを積み増す(ショップ購入の検証用)
+  for (let i = 0; i < 8; i++) {
+    await addRecord({ subjectLabel: '英語', content: 'BP検証' + (i + 2), plan: 30, actual: 30 });
+  }
+  st = await getState();
+  const totalBP = st.records.reduce((s, r) => s + (r.bp || 0), 0);
+  ok('複数回の記録でBPが積み上がる', totalBP >= 720, `total=${totalBP}`);
+
+  // --- 受験科目チェック: 初期状態と、トグル操作が保存されることを確認 ---
+  st = await getState();
+  ok('「その他」科目は初期状態で非受験科目', st.settings.subjects.find(s => s.id === 'other').examSubject === false);
+  await nav('settings');
+  await page.click('.settings-item[data-panel="subjects"]');
+  await page.waitForSelector('#modal-body .subject-row');
+  const engRow = page.locator('#modal-body .subject-row').first();
+  await engRow.locator('[data-f="exam"]').click();
+  await page.waitForTimeout(150);
+  await page.click('#m-close');
+  st = await getState();
+  ok('受験科目チェックのOFF操作が保存される', st.settings.subjects[0].examSubject === false);
+  // 英語をもとの受験科目に戻す(以降の検証への影響を避ける)
+  await nav('settings');
+  await page.click('.settings-item[data-panel="subjects"]');
+  await page.waitForSelector('#modal-body .subject-row');
+  await page.locator('#modal-body .subject-row').first().locator('[data-f="exam"]').click();
+  await page.waitForTimeout(150);
+  await page.click('#m-close');
+
+  // 「その他」(非受験科目)は1日100BPが上限。2件目でキャップにかかることを確認する
+  await addRecord({ subjectLabel: 'その他', content: '非受験科目1', plan: 30, actual: 30 });
+  st = await getState();
+  const nonExam1 = st.records[st.records.length - 1];
+  ok('非受験科目1件目はキャップ未満なら満額もらえる', nonExam1.bp === 80, `bp=${nonExam1.bp}`);
+
+  await addRecord({ subjectLabel: 'その他', content: '非受験科目2', plan: 30, actual: 30 });
+  st = await getState();
+  const nonExam2 = st.records[st.records.length - 1];
+  ok('非受験科目2件目で1日100BPの上限にかかる(80+80→100までしか付かない)', nonExam2.bp === 20, `bp=${nonExam2.bp}`);
+  const bpBoxAfterCap = await page.textContent('#celebrate-bp');
+  ok('上限到達時にその旨が表示される', bpBoxAfterCap.includes('非受験科目'));
+
+  // ショップ購入力の検証に十分なBPを直接投入する(獲得ロジック自体は上のUI操作で検証済み)
+  await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const today = new Date();
+    const p = n => (n < 10 ? '0' : '') + n;
+    const dstr = `${today.getFullYear()}-${p(today.getMonth() + 1)}-${p(today.getDate() + 1)}`;
+    for (let i = 0; i < 10; i++) {
+      s.records.push({ id: 'topup' + i, date: dstr, subjectId: 'eng', content: 'BP補充' + i, kind: '暗記', planMin: 0, actualMin: 0, reflection: '', deletedAt: null, bp: 1000, createdAt: Date.now(), updatedAt: Date.now(), score: null, maxScore: null });
+    }
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(s));
+  });
+  await reload();
+
+  // --- 装備・ショップ(コーチ画面) ---
+  await nav('coach');
+  let equipSlots = await page.textContent('#equip-slots');
+  ok('初期状態はステージ「ストリート」のみ装備', equipSlots.includes('ストリート') && equipSlots.includes('未装備'));
+
+  await page.click('#btn-open-shop');
+  await page.waitForSelector('#shop-items');
+  ok('ショップに衣装タブのアイテムが並ぶ', await page.locator('.shop-item').count() === 5);
+  await shot('50-shop-costume');
+
+  const balanceNum = async () => Number((await page.textContent('#shop-balance')).replace(/,/g, ''));
+  const balanceBeforeBuy = await balanceNum();
+  const socksRow = page.locator('.shop-item:has-text("白いソックス")');
+  await socksRow.locator('[data-buy]').click();
+  await page.waitForTimeout(200);
+  ok('購入するとアイテムが所持済みになり「装備する」ボタンに変わる', await socksRow.textContent().then(t => t.includes('装備する')));
+  st = await getState();
+  ok('購入済みアイテムがstateに記録される', st.shop.owned.costume.includes('socks'));
+  const balanceAfterBuy = await balanceNum();
+  ok('購入するとショップのBP残高表示が価格(500)分すぐに減る', balanceBeforeBuy - balanceAfterBuy === 500, `${balanceBeforeBuy} -> ${balanceAfterBuy}`);
+  await socksRow.locator('[data-equip]').click();
+  await page.waitForTimeout(200);
+  ok('購入したアイテムを装備できる', await socksRow.textContent().then(t => t.includes('装備中')));
+  await page.click('#m-close');
+  equipSlots = await page.textContent('#equip-slots');
+  ok('装備スロットに反映される', equipSlots.includes('白いソックス'));
+  const equipTotal = await page.textContent('#equip-total-mult');
+  ok('装備の合計倍率が更新される', equipTotal.includes('+0.10'), equipTotal);
+
+  await nav('today');
+  const boostSub2 = await page.textContent('#boost-sub');
+  ok('装備を変えると今日のブーストカードにも反映される', boostSub2.includes('装備+0.10'), boostSub2);
+
+  // --- 消費アイテム: エナジードリンク ---
+  await nav('coach');
+  await page.click('#btn-open-shop');
+  await page.click('[data-tab="consumable"]');
+  await page.waitForTimeout(150);
+  const energyRow = page.locator('.shop-item:has-text("エナジードリンク")');
+  await energyRow.locator('[data-buy]').click();
+  await page.waitForTimeout(150);
+  await energyRow.locator('[data-use]').click();
+  await page.waitForTimeout(150);
+  await page.click('#m-close');
+  await nav('today');
+  const boostMultEnergy = await page.textContent('#boost-mult');
+  // この時点で白いソックス(+0.10)を装備済みのため、基礎1.0+装備0.10+エナジー1.0=2.10倍
+  ok('エナジードリンク使用中は倍率が上がる(装備+0.10とあわせて2.10倍)', boostMultEnergy.includes('2.10'), boostMultEnergy);
+
+  // --- 消費アイテム: フィーバータイム(週1回制限) ---
+  await nav('coach');
+  await page.click('#btn-open-shop');
+  await page.click('[data-tab="consumable"]');
+  await page.waitForTimeout(150);
+  const feverRow = page.locator('.shop-item:has-text("フィーバータイム")');
+  await feverRow.locator('[data-buy]').click();
+  await page.waitForTimeout(150);
+  await feverRow.locator('[data-use]').click();
+  await page.waitForTimeout(150);
+  await page.click('#m-close');
+  await nav('today');
+  const boostMultFever = await page.textContent('#boost-mult');
+  ok('フィーバータイム発動中は10倍になる', boostMultFever.includes('10.00'), boostMultFever);
+
+  await nav('coach');
+  await page.click('#btn-open-shop');
+  await page.click('[data-tab="consumable"]');
+  await page.waitForTimeout(150);
+  const feverRow2 = page.locator('.shop-item:has-text("フィーバータイム")');
+  await feverRow2.locator('[data-buy]').click();
+  await page.waitForTimeout(150);
+  await feverRow2.locator('[data-use]').click();
+  await page.waitForTimeout(250);
+  const feverToast = await page.textContent('#toast-text');
+  ok('フィーバータイムは週1回までに制限される', feverToast.includes('週1回'), feverToast);
+  await page.click('#m-close');
+
+  // --- コンディション記録(生活習慣) ---
+  await nav('settings');
+  await page.click('[data-panel="condition"]');
+  await page.waitForSelector('.habit-row');
+  ok('生活習慣は5項目ある', await page.locator('.habit-row').count() === 5);
+  await page.locator('.habit-row[data-k="sleepEarly"]').click();
+  await page.locator('.habit-row[data-k="reading"]').click();
+  await page.waitForTimeout(150);
+  const condTotal = await page.textContent('#cond-total');
+  ok('チェックした生活習慣の合計BPが表示される(20+40=60)', condTotal.includes('60'), condTotal);
+  const condBonus = await page.textContent('#cond-bonus');
+  ok('翌日の倍率プレビューが表示される(60BP→+0.20)', condBonus.includes('0.20'), condBonus);
+  await page.click('#m-close');
+  st = await getState();
+  const todayKey = Object.keys(st.habits)[0];
+  ok('生活習慣がstateに保存される', st.habits[todayKey].sleepEarly === true && st.habits[todayKey].reading === true);
+
+  // --- リロード後も装備・ショップ・コンディションが保持される ---
+  await reload();
+  st = await getState();
+  ok('装備状態はリロード後も保持される', st.shop.equipped.costume === 'socks');
+  ok('所持アイテムはリロード後も保持される', st.shop.owned.costume.includes('socks'));
+  ok('生活習慣の記録はリロード後も保持される', st.habits[todayKey].sleepEarly === true);
+  ok('フィーバー週制限の記録はリロード後も保持される', !!st.shop.feverLastUsedDate);
+
+  // --- 320px幅でコーチ画面(装備・ショップ)が横あふれしない ---
+  await page.setViewportSize({ width: 320, height: 680 });
+  await nav('coach');
+  await page.waitForTimeout(200);
+  const coachOverflow = await page.evaluate(() => document.documentElement.scrollWidth > 330);
+  ok('320px幅でコーチ画面(装備・ショップ)が横スクロールしない', !coachOverflow);
+  await shot('51-coach-320px');
+  await page.click('#btn-open-shop');
+  await page.waitForTimeout(200);
+  const shopOverflow = await page.evaluate(() => document.documentElement.scrollWidth > 330);
+  ok('320px幅でショップモーダルが横スクロールしない', !shopOverflow);
+  await page.click('#m-close');
+
+  // 科目設定(受験チェックの追加で横あふれ・文字重なりが起きないか)
+  await nav('settings');
+  await page.click('.settings-item[data-panel="subjects"]');
+  await page.waitForSelector('.subject-row');
+  const subjectsOverflow = await page.evaluate(() => document.documentElement.scrollWidth > 330);
+  ok('320px幅で科目設定(受験チェック追加後)が横スクロールしない', !subjectsOverflow);
+  const examLabelVisible = await page.locator('.subject-row .mini-toggle-btn[data-f="exam"]').first().isVisible();
+  ok('320px幅でも「受験」トグルの文字が読める(専用ボタンで表示)', examLabelVisible);
+  await shot('52-subjects-320px');
+  await page.click('#m-close');
+  await page.setViewportSize({ width: 390, height: 844 });
+}
+
 async function extra_screens() {
   console.log('\n■ 追加: 全画面スクリーンショットとコーチ・320px幅・横向き');
   await freshPage(true);
@@ -836,6 +1036,7 @@ try {
   await test9_versionAndUpdate();
   await test10_aiIntegration();
   await test11_worldNews();
+  await test12_pointsEquipShop();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

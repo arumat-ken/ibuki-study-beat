@@ -511,3 +511,166 @@ test('sanitizeState: news配列と志望学部の設定が壊れていても復�
   assert.equal(out.settings.faculties.law, true, '不正な値はデフォルトのまま');
   assert.equal(out.settings.faculties.international, true, '未指定はデフォルトのまま');
 });
+
+/* ==================================================================
+ * 装備・ショップ (ver.4.1.0)
+ * ================================================================== */
+
+test('defaultShopState: ステージはストリートを初期所持・装備している', () => {
+  const shop = C.defaultShopState();
+  assert.deepEqual(shop.owned.stage, ['street']);
+  assert.equal(shop.equipped.stage, 'street');
+  assert.equal(shop.equipped.costume, null);
+  assert.equal(shop.equipped.skill, null);
+});
+
+test('calcBpBalance: 記録・ニュースのbp合計から購入済みアイテムの価格を差し引く', () => {
+  const st = C.defaultState('2026-08-08');
+  st.records.push({ id: 'r1', date: '2026-08-08', subjectId: 'eng', content: 'x', kind: '暗記', planMin: 30, actualMin: 30, reflection: '', deletedAt: null, bp: 500 });
+  st.news.push({ id: 'n1', date: '2026-08-08', genreId: 'economy', headline: 'x', comment: '', bp: 60, createdAt: 1 });
+  assert.equal(C.calcBpBalance(st), 560);
+  st.shop.owned.costume.push('socks'); // 500 BP
+  assert.equal(C.calcBpBalance(st), 60);
+});
+
+test('calcBpBalance: 削除済み記録のBPは残高に含めない', () => {
+  const st = C.defaultState('2026-08-08');
+  st.records.push({ id: 'r1', date: '2026-08-08', subjectId: 'eng', content: 'x', kind: '暗記', planMin: 30, actualMin: 30, reflection: '', deletedAt: Date.now(), bp: 500 });
+  assert.equal(C.calcBpBalance(st), 0);
+});
+
+test('validatePurchase: 残高不足・二重購入を拒否する', () => {
+  const shop = C.defaultShopState();
+  assert.ok(!C.validatePurchase(shop, 'socks', 100).ok, '残高不足は拒否');
+  const ok = C.validatePurchase(shop, 'socks', 500);
+  assert.ok(ok.ok);
+  assert.equal(ok.item.price, 500);
+  shop.owned.costume.push('socks');
+  assert.ok(!C.validatePurchase(shop, 'socks', 10000).ok, '所持済みは二重購入を拒否');
+  // 消費アイテムは何個でも買える
+  shop.owned.consumable.energy_drink = 2;
+  assert.ok(C.validatePurchase(shop, 'energy_drink', 10000).ok);
+});
+
+test('validateEquip: 所持していないアイテムは装備できない・ステージは未装備にできない', () => {
+  const shop = C.defaultShopState();
+  assert.ok(!C.validateEquip(shop, 'costume', 'socks').ok, '未所持は拒否');
+  shop.owned.costume.push('socks');
+  assert.ok(C.validateEquip(shop, 'costume', 'socks').ok);
+  assert.ok(C.validateEquip(shop, 'costume', null).ok, '衣装は未装備にできる');
+  assert.ok(!C.validateEquip(shop, 'stage', null).ok, 'ステージは未装備にできない');
+});
+
+test('composeMultiplier: 装備3スロット合計+コンディションが3.0倍で頭打ちになる', () => {
+  const r = C.composeMultiplier({ costumeBonus: 0.5, skillBonus: 1.0, stageBonus: 1.0, conditionBonus: 0.3 });
+  assert.equal(r.multiplier, 3.0);
+  assert.ok(r.capped);
+  assert.ok(!r.feverActive);
+});
+
+test('composeMultiplier: フィーバー中は他の倍率をすべて無視して10倍に置換する', () => {
+  const r = C.composeMultiplier({ feverActive: true, costumeBonus: 0.5, skillBonus: 1.0, stageBonus: 1.0, conditionBonus: 0.3, consumableBonus: 1.5 });
+  assert.equal(r.multiplier, 10);
+  assert.ok(r.feverActive);
+});
+
+test('composeMultiplier: フィーバー中もbreakdown.consumableキーが存在する(NaN表示・例外を防ぐ)', () => {
+  const r = C.composeMultiplier({ feverActive: true });
+  assert.equal(typeof r.breakdown.consumable, 'number');
+  assert.equal(r.breakdown.costume + r.breakdown.skill + r.breakdown.stage + r.breakdown.consumable, 0);
+});
+
+test('weekStartStr / canUseFever: フィーバーは週1回まで', () => {
+  assert.equal(C.weekStartStr('2026-08-08'), '2026-08-03', '土曜日の週は月曜起点');
+  assert.equal(C.weekStartStr('2026-08-03'), '2026-08-03', '月曜日はその日自身');
+  assert.ok(C.canUseFever(null, '2026-08-08'), '未使用なら使える');
+  assert.ok(!C.canUseFever('2026-08-03', '2026-08-08'), '同じ週はまだ使えない');
+  assert.ok(C.canUseFever('2026-08-02', '2026-08-08'), '前の週なら使える(週またぎ)');
+});
+
+test('consumableAvailable: 購入数から使用済み数を引いた残数を返す', () => {
+  const shop = C.defaultShopState();
+  assert.equal(C.consumableAvailable(shop, 'energy_drink'), 0);
+  shop.owned.consumable.energy_drink = 3;
+  shop.used.consumable.energy_drink = 1;
+  assert.equal(C.consumableAvailable(shop, 'energy_drink'), 2);
+});
+
+test('calcHabitBP: ON にした生活習慣の合計を返す', () => {
+  assert.equal(C.calcHabitBP({ sleepEarly: true, breakfast: true }), 35);
+  assert.equal(C.calcHabitBP({}), 0);
+  assert.equal(C.calcHabitBP(null), 0);
+});
+
+test('conditionBonusFromHabits と calcHabitBP の連携: 90BP以上で+0.3', () => {
+  const bp = C.calcHabitBP({ sleepEarly: true, breakfast: true, exercise: true, restTaken: true, reading: true }); // 20+15+30+10+40=115
+  assert.equal(bp, 115);
+  assert.equal(C.conditionBonusFromHabits(bp), 0.3);
+});
+
+test('evaluateSkillBonus: 装備中スキルの条件を満たしたときだけ倍率が乗る', () => {
+  assert.equal(C.evaluateSkillBonus('zero_gravity', { actualMin: 89 }), 0);
+  assert.equal(C.evaluateSkillBonus('zero_gravity', { actualMin: 90 }), 0.5);
+  assert.equal(C.evaluateSkillBonus('spin_turn', { distinctSubjectsToday: 2 }), 0);
+  assert.equal(C.evaluateSkillBonus('spin_turn', { distinctSubjectsToday: 3 }), 0.3);
+  assert.equal(C.evaluateSkillBonus('anti_gravity_lean', { hour: 5 }), 0);
+  assert.equal(C.evaluateSkillBonus('anti_gravity_lean', { hour: 7 }), 1.0);
+  assert.equal(C.evaluateSkillBonus('anti_gravity_lean', { hour: 8 }), 0, '8時ちょうどは対象外(6〜8時)');
+  assert.equal(C.evaluateSkillBonus('moonwalk', { isLaggingSubject: true }), 0.5);
+  assert.equal(C.evaluateSkillBonus('moonwalk', { isLaggingSubject: false }), 0);
+  assert.equal(C.evaluateSkillBonus('rhythm_keep', {}), 0, '連続日数ボーナス2倍は別枠で処理するためここでは0');
+  assert.equal(C.evaluateSkillBonus(null, {}), 0, '未装備は0');
+});
+
+test('laggingSubjectId: 累計実績が最も少ない科目を返す', () => {
+  const subjects = C.DEFAULT_SUBJECTS;
+  const records = [
+    rec({ id: 'a', subjectId: 'eng', actualMin: 100 }),
+    rec({ id: 'b', subjectId: 'math', actualMin: 10 }),
+    rec({ id: 'c', subjectId: 'jpn', actualMin: 50 })
+  ];
+  assert.equal(C.laggingSubjectId(records, subjects), 'sci', '記録が一切ない科目(0分)が最優先で最も遅れている');
+});
+
+test('streakDays: リカバリーで守った日は実績0でも連続扱いになる', () => {
+  const records = [
+    rec({ id: 'a', date: '2026-08-06', actualMin: 30 }),
+    rec({ id: 'b', date: '2026-08-08', actualMin: 20 })
+  ];
+  assert.equal(C.streakDays(records, '2026-08-08'), 1, 'ガードなしだと8/7が抜けて連続1日');
+  assert.equal(C.streakDays(records, '2026-08-08', ['2026-08-07']), 3, 'リカバリーで8/7を守ると6-7-8で3日連続');
+});
+
+test('sanitizeState: shop/habitsが壊れていても既定値に復元できる', () => {
+  const st = C.defaultState('2026-08-08');
+  st.shop.owned.costume = ['socks', 'not-a-real-item'];
+  st.shop.equipped.costume = 'socks';
+  st.shop.owned.consumable = { energy_drink: 2, bogus: 5 };
+  st.habits['2026-08-07'] = { sleepEarly: true, bogus: true };
+  st.habits['bad-date'] = { sleepEarly: true };
+  const out = C.sanitizeState(JSON.parse(JSON.stringify(st)), '2026-08-08');
+  assert.ok(out);
+  assert.deepEqual(out.shop.owned.costume, ['socks'], '不正なIDは除外される');
+  assert.equal(out.shop.equipped.costume, 'socks');
+  assert.deepEqual(out.shop.owned.consumable, { energy_drink: 2 }, '不正な消費アイテムIDは除外される');
+  assert.deepEqual(out.habits['2026-08-07'], { sleepEarly: true }, '不正なキーは除外される');
+  assert.equal(out.habits['bad-date'], undefined, '不正な日付キーは除外される');
+});
+
+test('sanitizeState: 壊れたshopオブジェクト全体でも既定のshopに復元できる', () => {
+  const st = C.defaultState('2026-08-08');
+  st.shop = { garbage: true };
+  const out = C.sanitizeState(JSON.parse(JSON.stringify(st)), '2026-08-08');
+  assert.ok(out);
+  assert.deepEqual(out.shop.owned.stage, ['street']);
+  assert.equal(out.shop.equipped.stage, 'street');
+});
+
+test('defaultState: 科目にexamSubjectが正しく含まれる(「その他」は非受験科目)', () => {
+  const st = C.defaultState('2026-08-08');
+  const other = st.settings.subjects.find(s => s.id === 'other');
+  assert.equal(other.examSubject, false, '「その他」はデフォルトで非受験科目');
+  const eng = st.settings.subjects.find(s => s.id === 'eng');
+  assert.equal(eng.examSubject, true, '「英語」はデフォルトで受験科目');
+  st.settings.subjects.forEach(s => assert.equal(typeof s.examSubject, 'boolean', s.id + 'のexamSubjectはboolean'));
+});

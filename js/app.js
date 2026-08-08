@@ -5,7 +5,7 @@
 
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
-  var APP_VERSION = '4.0.0';
+  var APP_VERSION = '4.1.0';
 
   /* ================= ストレージ ================= */
   var KEY = 'ibukiStudyBeat.v3';
@@ -194,7 +194,7 @@
   function checkPoseUnlocks() {
     var recs = C.activeRecords(state.records);
     var unlocked = [];
-    if (C.streakDays(state.records, todayStr()) >= 7) unlocked.push('moonwalk');
+    if (C.streakDays(state.records, todayStr(), state.shop.streakGuardDates) >= 7) unlocked.push('moonwalk');
     var total = 0;
     recs.forEach(function (r) { total += r.actualMin; });
     if (total >= 20 * 60) unlocked.push('zerogravity');
@@ -302,7 +302,7 @@
     $('today-total').textContent = C.fmtDuration(total);
     $('today-goal').textContent = '目標 ' + C.fmtDuration(goal);
     $('today-progress').style.width = Math.min(100, Math.round(total / goal * 100)) + '%';
-    $('today-streak').textContent = C.streakDays(state.records, todayStr());
+    $('today-streak').textContent = C.streakDays(state.records, todayStr(), state.shop.streakGuardDates);
     var weekStart = C.addDays(todayStr(), -6);
     var weekSeries = C.buildSeries(state.records, weekStart, 7);
     $('today-week').textContent = C.fmtDuration(C.summarize(weekSeries).actualTotal);
@@ -315,12 +315,52 @@
     }
 
     renderTimerCard();
+    renderBoostCard();
     var banner = $('today-banner');
     if (storageWarning) {
       banner.innerHTML = '<div class="banner">' + esc(storageWarning) + '</div>';
     } else {
       banner.innerHTML = '';
     }
+  }
+
+  /** 今日のブーストカード(GUI_SPEC_v4.md 2.1)。開始ボタンより下、BP残高より倍率を先に見せる。 */
+  function renderBoostCard() {
+    var boost = currentBoostBreakdown();
+    var b = boost.breakdown;
+    var balance = C.calcBpBalance(state);
+    $('boost-mult').textContent = (boost.feverActive ? '🔥 ' : '') + boost.multiplier.toFixed(2) + '倍';
+    var equipTotal = C.roundAmount(b.costume + b.skill + b.stage + b.consumable, 2);
+    $('boost-sub').textContent =
+      '装備+' + equipTotal.toFixed(2) + ' / 条件+' + b.condition.toFixed(2) + ' / BP ' + balance.toLocaleString('ja-JP');
+  }
+
+  $('btn-boost-card').addEventListener('click', openBoostModal);
+  function openBoostModal() {
+    var boost = currentBoostBreakdown();
+    var b = boost.breakdown;
+    var balance = C.calcBpBalance(state);
+    var rows = [
+      ['基礎', '1.00倍'],
+      ['衣装', '+' + b.costume.toFixed(2) + '倍'],
+      ['スキル', '+' + b.skill.toFixed(2) + '倍'],
+      ['ステージ', '+' + b.stage.toFixed(2) + '倍'],
+      ['コンディション(昨日の生活習慣)', '+' + b.condition.toFixed(2) + '倍'],
+      ['消費アイテム', '+' + b.consumable.toFixed(2) + '倍']
+    ];
+    var html = '<h3>今日のブースト内訳<button class="icon-btn" id="m-close">✕</button></h3>';
+    if (boost.feverActive) {
+      html += '<p class="small" style="color:var(--gold-bright)">🔥 フィーバータイム発動中は他の倍率をすべて無視して10倍になります。</p>';
+    } else {
+      html += '<div class="boost-rows">' + rows.map(function (r) {
+        return '<div class="boost-row"><span>' + esc(r[0]) + '</span><span>' + esc(r[1]) + '</span></div>';
+      }).join('') + '</div>';
+      html += '<p class="small muted" style="margin-top:8px">合計 ' + boost.multiplier.toFixed(2) + '倍(上限3.0倍)' + (boost.capped ? '・上限に到達しています' : '') + '</p>';
+    }
+    html += '<p class="small muted" style="margin-top:10px">BP残高 <b style="color:var(--gold-bright)">' + balance.toLocaleString('ja-JP') + '</b></p>';
+    html += '<p class="small muted">装備・ショップは「コーチ」画面から変更できます。</p>';
+    openModal(html);
+    $('m-close').onclick = closeModal;
   }
 
   $('slogan-card').addEventListener('click', function () {
@@ -518,20 +558,21 @@
       rec.reflection = candidate.reflection;
       rec.updatedAt = Date.now();
       state.activeSession = null;
+      var grant = grantStudyBP(rec);
       save(); closeModal();
-      celebrateAfterSave(rec);
+      celebrateAfterSave(rec, grant);
       renderToday();
     };
   }
 
   /* --- お祝い演出 --- */
-  function celebrateAfterSave(rec) {
+  function celebrateAfterSave(rec, grant) {
     checkPoseUnlocks();
     var total = 0;
     todayRecords().forEach(function (r) { total += r.actualMin; });
     var all = 0;
     C.activeRecords(state.records).forEach(function (r) { all += r.actualMin; });
-    var streak = C.streakDays(state.records, todayStr());
+    var streak = C.streakDays(state.records, todayStr(), state.shop.streakGuardDates);
     var msg = 'ナイスビート！', sub = C.fmtDuration(rec.actualMin) + ' 積み上げたよ', img = 'cele_nicebeat.png';
     if (all >= 100 * 60 && all - rec.actualMin < 100 * 60) {
       msg = '累計100時間達成！'; sub = 'ここまで来た君は本物だ！'; img = 'cele_gokaku.png';
@@ -547,11 +588,156 @@
     $('celebrate-beat').innerHTML = charImg(img, msg);
     $('celebrate-msg').textContent = msg;
     $('celebrate-sub').textContent = sub;
+    showBpResult(grant);
     $('celebrate').classList.add('open');
   }
   $('celebrate-close').addEventListener('click', function () {
     $('celebrate').classList.remove('open');
   });
+
+  /* ================= BP(ポイント)獲得 (ver.4) =================
+   * 仕様: docs/design/FEATURE_SPEC_v4.md A章・B章 / 決定事項 H-4
+   * BPは記録の新規保存時に一度だけ計算してrec.bpに確定する。
+   * 編集では再計算しない(時間を水増しして何度もボーナスを稼げないようにするため)。 */
+  function subjectExamIds() {
+    return state.settings.subjects.filter(function (s) { return s.examSubject; }).map(function (s) { return s.id; });
+  }
+
+  function pruneActiveBoosts() {
+    var now = Date.now();
+    var before = state.shop.activeBoosts.length;
+    state.shop.activeBoosts = state.shop.activeBoosts.filter(function (b) { return b.expiresAt > now; });
+    return state.shop.activeBoosts.length !== before;
+  }
+
+  /** 発動中の消費アイテムの効果を集計する(フィーバーは別枠のフラグで返す)。 */
+  function activeConsumableEffect() {
+    pruneActiveBoosts();
+    var bonus = 0, feverActive = false;
+    state.shop.activeBoosts.forEach(function (b) {
+      if (b.kind === 'fever') { feverActive = true; return; }
+      var item = C.consumableById(b.itemId);
+      if (item) bonus += (item.bonus || 0);
+    });
+    return { bonus: bonus, feverActive: feverActive };
+  }
+
+  /*
+   * 記録は「後から記録」で過去日にも保存できるため、BP計算は常に rec.date を基準にする
+   * (実行中の実時刻=todayStr()ではない)。消費アイテム・早朝スキルなど実時刻に依存する
+   * 効果は、rec.date が本当の今日のときだけ適用する。
+   */
+  function studyMultiplierForRecord(rec) {
+    var shop = state.shop;
+    var costumeItem = shop.equipped.costume ? C.costumeById(shop.equipped.costume) : null;
+    var stageItem = shop.equipped.stage ? C.stageById(shop.equipped.stage) : null;
+    var skillId = shop.equipped.skill;
+    var isToday = rec.date === todayStr();
+
+    var distinct = {};
+    C.activeRecords(state.records).forEach(function (r) {
+      if (r.date === rec.date && r.id !== rec.id && r.actualMin > 0) distinct[r.subjectId] = true;
+    });
+    if (rec.actualMin > 0) distinct[rec.subjectId] = true;
+
+    var isLagging = skillId === 'moonwalk' &&
+      C.laggingSubjectId(state.records, state.settings.subjects) === rec.subjectId;
+
+    var skillBonus = skillId ? C.evaluateSkillBonus(skillId, {
+      actualMin: rec.actualMin,
+      distinctSubjectsToday: Object.keys(distinct).length,
+      hour: isToday ? new Date().getHours() : -1,
+      isLaggingSubject: isLagging
+    }) : 0;
+
+    var prevDay = C.addDays(rec.date, -1);
+    var conditionBonus = C.conditionBonusFromHabits(C.calcHabitBP(state.habits[prevDay]));
+    var cons = isToday ? activeConsumableEffect() : { bonus: 0, feverActive: false };
+
+    return C.composeMultiplier({
+      feverActive: cons.feverActive,
+      costumeBonus: costumeItem ? costumeItem.bonus : 0,
+      skillBonus: skillBonus,
+      stageBonus: stageItem ? stageItem.bonus : 0,
+      conditionBonus: conditionBonus,
+      consumableBonus: cons.bonus
+    });
+  }
+
+  /** 今日のブースト内訳。今日画面のカードに使う(消費アイテム・コンディションを含む)。 */
+  function currentBoostBreakdown() {
+    return studyMultiplierForRecord({ id: '__preview__', date: todayStr(), subjectId: null, actualMin: 0 });
+  }
+
+  function buildActionsForRecord(rec) {
+    var actions = [];
+    if (C.isPlanAchieved(rec.planMin, rec.actualMin)) actions.push('planAchieved');
+    if (rec.reflection && rec.reflection.trim()) actions.push('reflection');
+
+    var streak = C.streakDays(state.records, rec.date, state.shop.streakGuardDates);
+    if (streak === 3) actions.push('streak3');
+    else if (streak === 7) actions.push('streak7');
+    else if (streak === 30) actions.push('streak30');
+
+    var examIds = subjectExamIds();
+    if (examIds.length > 0) {
+      var covered = {};
+      C.activeRecords(state.records).forEach(function (r) {
+        if (r.date === rec.date && r.actualMin > 0) covered[r.subjectId] = true;
+      });
+      if (examIds.every(function (id) { return covered[id]; })) actions.push('allExamSubjects');
+    }
+
+    if (rec.kind === 'テスト' && typeof rec.score === 'number' && typeof rec.maxScore === 'number') {
+      actions.push('mockExamTaken');
+    }
+
+    if (state.shop.equipped.skill === 'rhythm_keep') {
+      ['streak3', 'streak7', 'streak30'].forEach(function (k) {
+        if (actions.indexOf(k) !== -1) actions.push(k); // リズムキープ: 連続日数ボーナスBPを2倍に
+      });
+    }
+    return actions;
+  }
+
+  /**
+   * 記録1件のBPを計算してrec.bpに確定する。呼び出し前にrecはstate.recordsに
+   * 入っている必要がある(今日の他の記録との合算・上限判定のため)。
+   */
+  function grantStudyBP(rec) {
+    var mult = studyMultiplierForRecord(rec);
+    var todayTotalBP = 0, todayNonExamBP = 0;
+    C.activeRecords(state.records).forEach(function (r) {
+      if (r.date !== rec.date || r.id === rec.id) return;
+      todayTotalBP += (r.bp || 0);
+      var s = subjectById(r.subjectId);
+      if (s && !s.examSubject) todayNonExamBP += (r.bp || 0);
+    });
+    var subj = subjectById(rec.subjectId);
+    var result = C.calcStudyBP({
+      minutes: rec.actualMin,
+      multiplier: mult.multiplier,
+      actions: buildActionsForRecord(rec),
+      todayTotalBP: todayTotalBP,
+      todayNonExamBP: todayNonExamBP,
+      isExamSubject: subj ? subj.examSubject : true
+    });
+    rec.bp = result.grantedBP;
+    return { result: result, multiplier: mult };
+  }
+
+  function showBpResult(grant) {
+    if (!grant || grant.result.grantedBP <= 0) { $('celebrate-bp').style.display = 'none'; return; }
+    var r = grant.result;
+    var lines = ['<b>+' + r.grantedBP + ' BP</b> 獲得！'];
+    lines.push('基本 ' + r.baseBP + 'BP × 倍率 ' + r.multiplierApplied.toFixed(2) + '倍 = ' + r.multipliedBP + 'BP');
+    if (r.bonusBP > 0) lines.push('行動ボーナス +' + r.bonusBP + 'BP');
+    if (grant.multiplier.feverActive) lines.push('🔥 フィーバータイム発動中！');
+    if (r.nonExamCapped) lines.push('非受験科目の1日上限(100BP)に到達したよ');
+    if (r.dailyCapped) lines.push('1日の獲得上限(1,500BP)に到達したよ');
+    $('celebrate-bp').innerHTML = lines.join('<br>');
+    $('celebrate-bp').style.display = '';
+  }
 
   /* ================= 学習記録画面 ================= */
   function renderRecordScreen() {
@@ -589,12 +775,13 @@
     var v = C.validateRecord(rec, state.settings.subjects);
     if (!v.ok) { toast(v.errors[0], true); return; }
     state.records.push(rec);
+    var grant = rec.actualMin > 0 ? grantStudyBP(rec) : null;
     save();
     $('rf-content').value = ''; $('rf-plan').value = ''; $('rf-actual').value = '';
     $('rf-score').value = ''; $('rf-maxscore').value = ''; $('rf-reflection').value = '';
     renderRecordList();
     checkPoseUnlocks();
-    if (rec.actualMin > 0) celebrateAfterSave(rec);
+    if (rec.actualMin > 0) celebrateAfterSave(rec, grant);
     else toast('保存したよ！');
   });
 
@@ -1470,10 +1657,11 @@
     $('coach-bubble-text').textContent = coachComment();
     renderPoseGrid();
     renderChatLog();
+    renderEquipCard();
   }
 
   function coachComment() {
-    var streak = C.streakDays(state.records, todayStr());
+    var streak = C.streakDays(state.records, todayStr(), state.shop.streakGuardDates);
     var total = 0;
     todayRecords().forEach(function (r) { total += r.actualMin; });
     var all = 0;
@@ -1501,6 +1689,150 @@
         renderCoach();
       });
     });
+  }
+
+  /* ================= 装備・ショップ (ver.4.1.0) =================
+   * 仕様: docs/design/FEATURE_SPEC_v4.md B章 / GUI_SPEC_v4.md 2.5 */
+  var SHOP_TABS = [
+    { id: 'costume', label: '衣装', items: function () { return C.COSTUME_ITEMS; } },
+    { id: 'skill', label: 'スキル', items: function () { return C.SKILL_ITEMS; } },
+    { id: 'stage', label: 'ステージ', items: function () { return C.STAGE_ITEMS; } },
+    { id: 'consumable', label: '消費', items: function () { return C.CONSUMABLE_ITEMS; } }
+  ];
+
+  function ownedItemCount() {
+    var shop = state.shop;
+    var n = shop.owned.costume.length + shop.owned.skill.length + (shop.owned.stage.length - 1);
+    Object.keys(shop.owned.consumable).forEach(function (id) { n += shop.owned.consumable[id]; });
+    return n;
+  }
+
+  function renderEquipCard() {
+    var shop = state.shop;
+    var costume = shop.equipped.costume ? C.costumeById(shop.equipped.costume) : null;
+    var skill = shop.equipped.skill ? C.skillById(shop.equipped.skill) : null;
+    var stage = C.stageById(shop.equipped.stage);
+    var total = (costume ? costume.bonus : 0) + (skill ? skill.bonus : 0) + (stage ? stage.bonus : 0);
+    $('equip-total-mult').textContent = '合計+' + C.roundAmount(total, 2).toFixed(2);
+    $('equip-slots').innerHTML =
+      '<div class="equip-slot"><span class="es-label">衣装</span><span class="es-val">' + esc(costume ? costume.name : '未装備') + '</span></div>' +
+      '<div class="equip-slot"><span class="es-label">スキル</span><span class="es-val">' + esc(skill ? skill.name : '未装備') + (skill ? '(条件付き)' : '') + '</span></div>' +
+      '<div class="equip-slot"><span class="es-label">ステージ</span><span class="es-val">' + esc(stage.name) + '</span></div>';
+    $('shop-summary').textContent = 'BP ' + C.calcBpBalance(state).toLocaleString('ja-JP') + ' / 所持' + ownedItemCount();
+  }
+
+  $('btn-equip-change').addEventListener('click', function () { openShopModal('costume'); });
+  $('btn-open-shop').addEventListener('click', function () { openShopModal('costume'); });
+
+  function openShopModal(tab) {
+    var html = '<h3>ショップ<button class="icon-btn" id="m-close">✕</button></h3>' +
+      '<p class="small muted">BP残高 <b id="shop-balance" style="color:var(--gold-bright)">' + C.calcBpBalance(state).toLocaleString('ja-JP') + '</b></p>' +
+      '<div class="shop-tabs" id="shop-tabs">' + SHOP_TABS.map(function (t) {
+        return '<button class="shop-tab' + (t.id === tab ? ' active' : '') + '" data-tab="' + t.id + '">' + t.label + '</button>';
+      }).join('') + '</div>' +
+      '<div class="shop-items" id="shop-items"></div>';
+    openModal(html);
+    $('m-close').onclick = closeModal;
+    document.querySelectorAll('#shop-tabs .shop-tab').forEach(function (btn) {
+      btn.addEventListener('click', function () { openShopModal(btn.dataset.tab); });
+    });
+    renderShopItems(tab);
+  }
+
+  function itemBonusLabel(item) {
+    if (item.desc) return item.desc;
+    return item.bonus > 0 ? '+' + item.bonus.toFixed(1) + '倍' : '±0(初期装備)';
+  }
+
+  function renderShopItems(category) {
+    var shop = state.shop;
+    if ($('shop-balance')) $('shop-balance').textContent = C.calcBpBalance(state).toLocaleString('ja-JP');
+    var tabDef = SHOP_TABS.filter(function (t) { return t.id === category; })[0];
+    var html = '';
+    tabDef.items().forEach(function (item) {
+      var owned, statusHtml;
+      if (category === 'consumable') {
+        var avail = C.consumableAvailable(shop, item.id);
+        owned = (shop.owned.consumable[item.id] || 0) > 0;
+        statusHtml = '<button class="btn small" data-buy="' + item.id + '">購入する</button>' +
+          (avail > 0 ? '<button class="btn small primary" data-use="' + item.id + '">使う(残' + avail + ')</button>' : '');
+      } else {
+        owned = shop.owned[category].indexOf(item.id) !== -1;
+        var equipped = shop.equipped[category] === item.id;
+        if (equipped) statusHtml = '<span class="chip on">装備中</span>';
+        else if (owned) statusHtml = '<button class="btn small" data-equip="' + item.id + '" data-cat="' + category + '">装備する</button>';
+        else statusHtml = '<button class="btn small" data-buy="' + item.id + '">購入する</button>';
+      }
+      html += '<div class="shop-item' + (owned ? ' owned' : '') + '">' +
+        '<div class="si-main"><div class="si-name">' + esc(item.name) + '</div>' +
+        '<div class="si-desc">' + esc(itemBonusLabel(item)) + '</div></div>' +
+        '<div class="si-side"><div class="si-price">' + (item.price > 0 ? item.price.toLocaleString('ja-JP') + 'BP' : '') + '</div>' + statusHtml + '</div>' +
+        '</div>';
+    });
+    $('shop-items').innerHTML = html;
+    document.querySelectorAll('#shop-items [data-buy]').forEach(function (btn) {
+      btn.addEventListener('click', function () { buyShopItem(btn.dataset.buy, category); });
+    });
+    document.querySelectorAll('#shop-items [data-equip]').forEach(function (btn) {
+      btn.addEventListener('click', function () { equipShopItem(btn.dataset.cat, btn.dataset.equip, category); });
+    });
+    document.querySelectorAll('#shop-items [data-use]').forEach(function (btn) {
+      btn.addEventListener('click', function () { useConsumable(btn.dataset.use, category); });
+    });
+  }
+
+  function buyShopItem(itemId, category) {
+    var balance = C.calcBpBalance(state);
+    var v = C.validatePurchase(state.shop, itemId, balance);
+    if (!v.ok) { toast(v.errors[0], true); return; }
+    if (v.category === 'consumable') {
+      state.shop.owned.consumable[itemId] = (state.shop.owned.consumable[itemId] || 0) + 1;
+    } else {
+      state.shop.owned[v.category].push(itemId);
+    }
+    save();
+    toast(v.item.name + ' を購入したよ！');
+    renderShopItems(category);
+    renderEquipCard();
+    renderBoostCard();
+  }
+
+  function equipShopItem(category, itemId, tabCategory) {
+    var v = C.validateEquip(state.shop, category, itemId);
+    if (!v.ok) { toast(v.errors[0], true); return; }
+    state.shop.equipped[category] = itemId;
+    save();
+    toast('装備したよ！');
+    renderShopItems(tabCategory);
+    renderEquipCard();
+    renderBoostCard();
+  }
+
+  function useConsumable(itemId, category) {
+    var avail = C.consumableAvailable(state.shop, itemId);
+    if (avail <= 0) { toast('所持していません', true); return; }
+    var item = C.consumableById(itemId);
+    if (item.kind === 'fever') {
+      if (!C.canUseFever(state.shop.feverLastUsedDate, todayStr())) {
+        toast('フィーバータイムは週1回までだよ', true); return;
+      }
+      state.shop.feverLastUsedDate = todayStr();
+      state.shop.activeBoosts.push({ id: nextId('ab'), itemId: itemId, kind: 'fever', expiresAt: Date.now() + item.durationMin * 60000 });
+    } else if (item.kind === 'timed') {
+      state.shop.activeBoosts.push({ id: nextId('ab'), itemId: itemId, kind: 'timed', expiresAt: Date.now() + item.durationMin * 60000 });
+    } else if (item.kind === 'day') {
+      var endOfDay = new Date();
+      endOfDay.setHours(23, 59, 59, 999);
+      state.shop.activeBoosts.push({ id: nextId('ab'), itemId: itemId, kind: 'day', expiresAt: endOfDay.getTime() });
+    } else if (item.kind === 'streak-guard') {
+      if (state.shop.streakGuardDates.indexOf(todayStr()) === -1) state.shop.streakGuardDates.push(todayStr());
+    }
+    state.shop.used.consumable[itemId] = (state.shop.used.consumable[itemId] || 0) + 1;
+    save();
+    toast(item.name + ' を使ったよ！');
+    renderShopItems(category);
+    renderEquipCard();
+    renderBoostCard();
   }
 
   $('btn-pose').addEventListener('click', function () {
@@ -1537,7 +1869,7 @@
   }
 
   function coachReply(text) {
-    var streak = C.streakDays(state.records, todayStr());
+    var streak = C.streakDays(state.records, todayStr(), state.shop.streakGuardDates);
     var total = 0;
     todayRecords().forEach(function (r) { total += r.actualMin; });
     var rules = [
@@ -1580,7 +1912,7 @@
     });
     var lines = [
       '・今日の学習: ' + C.fmtDuration(today) + '(1日の目標 ' + C.fmtDuration(state.settings.dailyGoalMin) + ')',
-      '・連続記録: ' + C.streakDays(state.records, todayStr()) + '日',
+      '・連続記録: ' + C.streakDays(state.records, todayStr(), state.shop.streakGuardDates) + '日',
       '・累計学習時間: ' + C.fmtDuration(all)
     ];
     var subjLine = Object.keys(subjTotals).map(function (id) {
@@ -1765,10 +2097,56 @@
     if (panel === 'exam') return openExamPanel();
     if (panel === 'faculty') return openFacultyPanel();
     if (panel === 'subjects') return openSubjectsPanel();
+    if (panel === 'condition') return openConditionPanel();
     if (panel === 'ai') return openAIPanel();
     if (panel === 'axis') return openAxisModal();
     if (panel === 'data') return openDataPanel();
     if (panel === 'about') return openAboutPanel();
+  }
+
+  var HABIT_LABELS = {
+    sleepEarly: '24時前に就寝',
+    breakfast: '朝ごはんを食べた',
+    exercise: '運動30分',
+    restTaken: '休憩をちゃんと取った',
+    reading: '読書30分'
+  };
+
+  /**
+   * コンディション記録(生活習慣)。本人が任意でON/OFFする(デフォルトOFF=未記録)。
+   * 今日チェックした分が「翌日の倍率+0.05〜+0.3」に反映される(A章)。
+   */
+  function openConditionPanel() {
+    var today = todayStr();
+    var entry = state.habits[today] || {};
+    var todayBP = C.calcHabitBP(entry);
+    var html = '<h3>コンディション記録<button class="icon-btn" id="m-close">✕</button></h3>' +
+      '<p class="muted small" style="margin-bottom:10px">今日チェックした生活習慣は、明日の学習ポイントの倍率に+0.05〜+0.3として反映されます。無理せず、できた日だけでOK。</p>' +
+      '<div class="habit-list">' + C.HABIT_KEYS.map(function (k) {
+        var on = !!entry[k];
+        return '<button class="habit-row' + (on ? ' on' : '') + '" data-k="' + k + '">' +
+          '<span>' + esc(HABIT_LABELS[k]) + '</span>' +
+          '<span class="habit-bp">+' + C.HABIT_BP[k] + 'BP</span>' +
+          '<span class="toggle' + (on ? ' on' : '') + '"></span>' +
+          '</button>';
+      }).join('') + '</div>' +
+      '<p class="small muted" style="margin-top:10px">今日の合計 <b id="cond-total" style="color:var(--gold-bright)">' + todayBP + 'BP</b>' +
+      '　→ 明日の倍率 <b id="cond-bonus" style="color:var(--gold-bright)">+' + C.conditionBonusFromHabits(todayBP).toFixed(2) + '倍</b></p>';
+    openModal(html);
+    $('m-close').onclick = closeModal;
+    document.querySelectorAll('#modal-body .habit-row').forEach(function (row) {
+      row.addEventListener('click', function () {
+        var k = row.dataset.k;
+        entry[k] = !entry[k];
+        state.habits[today] = entry;
+        save();
+        row.classList.toggle('on');
+        row.querySelector('.toggle').classList.toggle('on');
+        var bp = C.calcHabitBP(entry);
+        $('cond-total').textContent = bp + 'BP';
+        $('cond-bonus').textContent = '+' + C.conditionBonusFromHabits(bp).toFixed(2) + '倍';
+      });
+    });
   }
 
   function openProfilePanel() {
@@ -1843,15 +2221,20 @@
 
   function openSubjectsPanel() {
     var html = '<h3>科目設定<button class="icon-btn" id="m-close">✕</button></h3>' +
-      '<p class="muted small" style="margin-bottom:10px">色・表示・並び順を変えられます。記録がある科目は削除できません(非表示にできます)。</p>';
+      '<p class="muted small" style="margin-bottom:10px">色・表示・並び順を変えられます。記録がある科目は削除できません(非表示にできます)。「受験」は受験科目チェック(OFFの科目は1日100BPまで)。</p>';
     state.settings.subjects.forEach(function (s, i) {
       html += '<div class="subject-row" data-id="' + esc(s.id) + '">' +
+        '<div class="subject-row-top">' +
         '<input type="color" value="' + s.color + '" data-f="color" aria-label="色">' +
         '<div class="nm"><input type="text" value="' + esc(s.name) + '" maxlength="12" data-f="name" aria-label="科目名"></div>' +
+        '<button class="icon-btn danger" data-f="del" aria-label="削除">✕</button>' +
+        '</div>' +
+        '<div class="subject-row-bottom">' +
         '<button class="icon-btn" data-f="up"' + (i === 0 ? ' disabled style="opacity:0.3"' : '') + '>↑</button>' +
         '<button class="icon-btn" data-f="down"' + (i === state.settings.subjects.length - 1 ? ' disabled style="opacity:0.3"' : '') + '>↓</button>' +
-        '<button class="toggle' + (s.visible ? ' on' : '') + '" data-f="vis" aria-label="表示"></button>' +
-        '<button class="icon-btn danger" data-f="del" aria-label="削除">✕</button>' +
+        '<button class="mini-toggle-btn' + (s.examSubject ? ' on' : '') + '" data-f="exam" aria-label="受験科目"><span class="toggle-dot"></span>受験</button>' +
+        '<button class="mini-toggle-btn' + (s.visible ? ' on' : '') + '" data-f="vis" aria-label="表示"><span class="toggle-dot"></span>表示</button>' +
+        '</div>' +
         '</div>';
     });
     html += '<button class="btn block" id="m-add">＋ 科目を追加</button>';
@@ -1859,7 +2242,7 @@
     $('m-close').onclick = closeModal;
     $('m-add').onclick = function () {
       var newId = 's' + Date.now().toString(36);
-      state.settings.subjects.push({ id: newId, name: '新しい科目', color: '#7f8fa6', visible: true });
+      state.settings.subjects.push({ id: newId, name: '新しい科目', color: '#7f8fa6', visible: true, examSubject: true });
       save(); openSubjectsPanel();
     };
     document.querySelectorAll('#modal-body .subject-row').forEach(function (row) {
@@ -1888,6 +2271,11 @@
       });
       row.querySelector('[data-f="vis"]').addEventListener('click', function () {
         subj.visible = !subj.visible;
+        this.classList.toggle('on');
+        save();
+      });
+      row.querySelector('[data-f="exam"]').addEventListener('click', function () {
+        subj.examSubject = !subj.examSubject;
         this.classList.toggle('on');
         save();
       });
@@ -2097,7 +2485,7 @@
     var recs = todayRecords();
     var total = 0;
     recs.forEach(function (r) { total += r.actualMin; });
-    var streak = C.streakDays(state.records, todayStr());
+    var streak = C.streakDays(state.records, todayStr(), state.shop.streakGuardDates);
     var name = state.settings.userName || '伊吹';
     var sub = '';
     if (state.settings.examDate) {

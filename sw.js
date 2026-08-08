@@ -1,5 +1,5 @@
 /* IBUKI STUDY BEAT — Service Worker (オフライン対応) */
-var CACHE = 'isb-v4.0.0';
+var CACHE = 'isb-v4.1.0';
 var ASSETS = [
   './',
   './index.html',

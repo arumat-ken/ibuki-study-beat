@@ -89,6 +89,17 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
   border-radius: 16px; padding: 14px; margin-bottom: 12px;
 }
 .card h2 { font-size: 0.8rem; color: var(--gold); letter-spacing: 0.12em; margin-bottom: 10px; font-weight: 700; }
+
+.boost-card {
+  display: block; width: 100%; text-align: left; font-family: inherit; cursor: pointer;
+}
+.boost-top { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: var(--text); }
+.boost-top .boost-mult { color: var(--gold-bright); font-weight: 800; font-size: 1rem; }
+.boost-top .boost-arrow { margin-left: auto; color: var(--dim); }
+.boost-sub { margin-top: 4px; font-size: 0.75rem; color: var(--dim); }
+.boost-rows { display: flex; flex-direction: column; gap: 6px; }
+.boost-row { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.boost-row span:last-child { color: var(--gold-bright); font-weight: 700; }
 .muted { color: var(--dim); font-size: 0.78rem; }
 .small { font-size: 0.78rem; }
 
@@ -110,6 +121,7 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 .btn.block { display: flex; width: 100%; }
 .btn.big { min-height: 54px; font-size: 1.05rem; border-radius: 14px; }
 .btn.ghost { background: transparent; }
+.btn.small { min-height: 44px; padding: 6px 12px; font-size: 0.78rem; border-radius: 10px; }
 .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .btn-row > .btn { flex: 1; }
 
@@ -360,12 +372,22 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 .settings-item .ico { font-size: 1.05rem; width: 24px; text-align: center; }
 .settings-item .chev { margin-left: auto; color: var(--dim); }
 .subject-row {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; flex-direction: column; gap: 8px;
   background: var(--card-2); border: 1px solid var(--line);
   border-radius: 12px; padding: 8px; margin-bottom: 8px;
 }
+.subject-row-top { display: flex; align-items: center; gap: 8px; }
+.subject-row-bottom { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .subject-row .nm { flex: 1; min-width: 0; }
 .subject-row input[type="text"] { min-height: 40px; padding: 8px 10px; }
+.mini-toggle-btn {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px;
+  padding: 6px 10px; border-radius: 10px;
+  background: var(--card); border: 1px solid var(--line); color: var(--dim); font-size: 0.75rem;
+}
+.mini-toggle-btn .toggle-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); flex-shrink: 0; }
+.mini-toggle-btn.on { color: var(--text); border-color: rgba(212, 175, 55, 0.5); }
+.mini-toggle-btn.on .toggle-dot { background: var(--gold); }
 .toggle {
   position: relative; width: 46px; height: 28px; flex-shrink: 0;
   border-radius: 14px; background: var(--card); border: 1px solid var(--line);
@@ -378,6 +400,44 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 }
 .toggle.on { background: var(--gold); border-color: var(--gold); }
 .toggle.on::after { transform: translateX(18px); background: #17130a; }
+
+/* ---------- 装備・ショップ (ver.4.1.0) ---------- */
+.equip-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.equip-head h2 { margin-bottom: 0; }
+.equip-total { color: var(--gold-bright); font-weight: 800; font-size: 0.9rem; }
+.equip-slots { display: flex; flex-direction: column; gap: 6px; }
+.equip-slot { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.equip-slot .es-label { color: var(--dim); }
+.equip-slot .es-val { font-weight: 700; }
+
+.shop-tabs { display: flex; gap: 6px; margin: 10px 0; overflow-x: auto; }
+.shop-tab {
+  flex-shrink: 0; padding: 8px 14px; border-radius: 20px; min-height: 44px;
+  background: var(--card-2); border: 1px solid var(--line); color: var(--text); font-size: 0.82rem;
+}
+.shop-tab.active { background: var(--gold); border-color: var(--gold); color: #17130a; font-weight: 700; }
+.shop-items { display: flex; flex-direction: column; gap: 8px; max-height: 55vh; overflow-y: auto; }
+.shop-item {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--card-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+}
+.shop-item.owned { border-color: rgba(212, 175, 55, 0.4); }
+.shop-item .si-main { flex: 1; min-width: 0; }
+.shop-item .si-name { font-weight: 700; font-size: 0.88rem; }
+.shop-item .si-desc { color: var(--dim); font-size: 0.75rem; margin-top: 2px; }
+.shop-item .si-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.shop-item .si-price { font-size: 0.78rem; color: var(--gold-bright); }
+.shop-item .chip.on { background: var(--gold); color: #17130a; padding: 4px 10px; border-radius: 10px; font-size: 0.75rem; font-weight: 700; }
+
+.habit-list { display: flex; flex-direction: column; gap: 8px; }
+.habit-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px;
+  background: var(--card-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+  color: var(--text); font-size: 0.85rem; text-align: left; cursor: pointer;
+}
+.habit-row.on { border-color: rgba(212, 175, 55, 0.5); }
+.habit-row .habit-bp { margin-left: auto; color: var(--gold-bright); font-size: 0.78rem; }
+.habit-row .toggle { pointer-events: none; }
 
 /* ---------- モーダル・トースト ---------- */
 .modal-back {
@@ -452,6 +512,12 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 .celebrate.open { display: flex; }
 .celebrate .c-msg { font-size: 1.5rem; font-weight: 900; color: var(--gold-bright); margin-top: 12px; }
 .celebrate .c-sub { color: var(--dim); margin-top: 8px; font-size: 0.9rem; }
+.celebrate .c-bp {
+  margin-top: 14px; padding: 10px 16px; border-radius: 12px;
+  background: rgba(212, 175, 55, 0.12); border: 1px solid rgba(212, 175, 55, 0.35);
+  color: var(--gold-bright); font-size: 0.85rem; line-height: 1.6; text-align: left;
+}
+.celebrate .c-bp b { font-size: 1.1rem; }
 .celebrate .beat-wrap { width: 230px; max-width: 70vw; }
 @media (prefers-reduced-motion: no-preference) {
   .celebrate.open .beat-wrap { animation: pop 0.5s ease; }
