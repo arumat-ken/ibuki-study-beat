@@ -1,5 +1,8 @@
 # 設計フォルダ — GUI設計の受け渡し場所
 
+> 🔗 AI同士の役割分担・受け渡しの取り決めは [`../exchange/PROTOCOL.md`](../exchange/PROTOCOL.md)、
+> 現在の進行状況は [`../exchange/STATUS.md`](../exchange/STATUS.md) を参照。
+
 IBUKI STUDY BEAT の大型アップデート(ver. 4.x)に向けた、**GUI設計の受け渡しフォルダ**です。
 ChatGPT が画面設計を行い、Claude(Claude Code)が実装します。
 
