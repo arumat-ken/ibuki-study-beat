@@ -273,6 +273,32 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 .event-item .e-sub { font-size: 0.7rem; color: var(--dim); margin-top: 1px; }
 .event-item .e-days { font-size: 0.68rem; color: var(--dim); white-space: nowrap; }
 
+/* ---------- 世界(ニュース)画面 ---------- */
+.world-stats-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.world-stat { font-size: 0.72rem; color: var(--dim); display: flex; flex-direction: column-reverse; gap: 2px; }
+.world-stat b { font-size: 1.05rem; color: var(--gold-bright); font-weight: 800; }
+.news-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: var(--card-2); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 12px; margin-bottom: 8px;
+}
+.news-item .n-main { flex: 1; min-width: 0; }
+.news-item .n-title { font-size: 0.88rem; font-weight: 600; }
+.news-item .n-sub { font-size: 0.72rem; color: var(--dim); margin-top: 2px; }
+.news-item .n-comment { font-size: 0.75rem; color: var(--dim); margin-top: 4px; border-left: 2px solid var(--gold-dim); padding-left: 6px; }
+.news-item .n-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
+.genre-chip {
+  display: inline-block; border-radius: 8px; padding: 2px 8px;
+  font-size: 0.68rem; font-weight: 700; color: var(--gold-bright);
+  background: rgba(217, 178, 74, 0.12); border: 1px solid var(--gold-dim);
+  white-space: nowrap;
+}
+.bp-chip {
+  display: inline-block; border-radius: 8px; padding: 2px 8px;
+  font-size: 0.7rem; font-weight: 800; color: #17130a;
+  background: var(--gold); white-space: nowrap;
+}
+
 /* ---------- コーチ画面 ---------- */
 .stage {
   position: relative; text-align: center;

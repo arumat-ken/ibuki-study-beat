@@ -5,7 +5,7 @@
 
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
-  var APP_VERSION = '3.3.0';
+  var APP_VERSION = '4.0.0';
 
   /* ================= ストレージ ================= */
   var KEY = 'ibukiStudyBeat.v3';
@@ -232,6 +232,7 @@
     if (name === 'today') renderToday();
     if (name === 'record') renderRecordScreen();
     if (name === 'graph') renderGraphScreen();
+    if (name === 'world') renderWorldScreen();
     if (name === 'coach') renderCoach();
     window.scrollTo(0, 0);
   }
@@ -1255,6 +1256,210 @@
     };
   }
 
+  /* ================= 世界(時事ニュース)画面 =================
+   * アプリはニュース本文を取得・保存しない。本人が読んで自分の言葉で
+   * 見出しと一言だけを記録する(著作権対応・外部通信ゼロの原則に合わせる)。 */
+  function todayNews() {
+    var today = todayStr();
+    return state.news.filter(function (n) { return n.date === today; });
+  }
+
+  function facultyLabel(id) {
+    return { economics: '経済学部', law: '法学部', international: '国際学部' }[id] || id;
+  }
+  function selectedFacultyIds() {
+    var f = state.settings.faculties || {};
+    return C.FACULTY_IDS.filter(function (id) { return f[id]; });
+  }
+
+  function genreOptions(selected) {
+    return C.NEWS_GENRES.map(function (g) {
+      return '<option value="' + g.id + '"' + (g.id === selected ? ' selected' : '') + '>' + esc(g.name) + '</option>';
+    }).join('');
+  }
+
+  function renderWorldScreen() {
+    var today = todayNews();
+    $('world-today-count').textContent = today.length + '/' + C.NEWS_DAILY_LIMIT;
+    var recordedGenres = {};
+    state.news.forEach(function (n) { recordedGenres[n.genreId] = true; });
+    $('world-genre-count').textContent = Object.keys(recordedGenres).length + '/' + C.NEWS_GENRES.length;
+    renderNewsList();
+  }
+
+  function renderNewsList() {
+    var items = state.news.slice().sort(function (a, b) {
+      return a.date < b.date ? 1 : a.date > b.date ? -1 : (b.createdAt - a.createdAt);
+    });
+    if (items.length === 0) {
+      $('news-list').innerHTML = '<p class="muted">まだ記録がありません。今日読んだニュースを1つ記録してみよう。</p>';
+      return;
+    }
+    var html = '';
+    items.slice(0, 120).forEach(function (n) {
+      var genre = C.newsGenreById(n.genreId);
+      html += '<div class="news-item" data-id="' + n.id + '">' +
+        '<div class="n-main">' +
+        '<span class="genre-chip">' + esc(genre ? genre.name : n.genreId) + '</span> ' +
+        (n.bp > 0 ? '<span class="bp-chip">+' + n.bp + 'BP</span>' : '') +
+        '<div class="n-title" style="margin-top:4px">' + esc(n.headline) + '</div>' +
+        '<div class="n-sub">' + fmtDateJa(n.date) + '</div>' +
+        (n.comment ? '<div class="n-comment">' + esc(n.comment) + '</div>' : '') +
+        '</div>' +
+        '<div class="n-actions">' +
+        '<button class="icon-btn" data-act="ask" aria-label="AIに聞く">🤖</button>' +
+        '<button class="icon-btn danger" data-act="del" aria-label="削除">🗑</button>' +
+        '</div></div>';
+    });
+    $('news-list').innerHTML = html;
+    document.querySelectorAll('#news-list .icon-btn').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var id = btn.closest('.news-item').dataset.id;
+        var entry = state.news.find(function (n) { return n.id === id; });
+        if (!entry) return;
+        if (btn.dataset.act === 'ask') askNewsAI(entry);
+        else deleteNews(id);
+      });
+    });
+  }
+
+  function deleteNews(id) {
+    var idx = state.news.findIndex(function (n) { return n.id === id; });
+    if (idx === -1) return;
+    var removed = state.news[idx];
+    state.news.splice(idx, 1);
+    save(); renderWorldScreen();
+    toast('削除しました', false, '元に戻す', function () {
+      state.news.splice(idx, 0, removed);
+      save(); renderWorldScreen();
+    });
+  }
+
+  $('btn-add-news').addEventListener('click', openNewsFormModal);
+
+  function openNewsFormModal() {
+    var today = todayNews();
+    var remaining = Math.max(0, C.NEWS_DAILY_LIMIT - today.length);
+    openModal(
+      '<h3>今日のニュースを記録<button class="icon-btn" id="m-close">✕</button></h3>' +
+      (remaining > 0
+        ? '<p class="small muted" style="margin-bottom:10px">今日はあと' + remaining + '本記録できます(1日' + C.NEWS_DAILY_LIMIT + '本まで)。</p>'
+        : '<p class="small muted" style="margin-bottom:10px">今日はもう' + C.NEWS_DAILY_LIMIT + '本記録済みです。記録は保存されますが、ポイントは付きません。</p>') +
+      '<div class="field"><label for="m-genre">ジャンル</label><select id="m-genre">' + genreOptions() + '</select></div>' +
+      '<div class="field"><label for="m-headline">見出し(自分の言葉で)</label>' +
+      '<input type="text" id="m-headline" maxlength="60" placeholder="例: 円安が1ドル160円台に"></div>' +
+      '<div class="field"><label for="m-comment">一言(なぜ気になったか・任意)</label>' +
+      '<textarea id="m-comment" maxlength="120" placeholder="輸入品が高くなる理由が分かった気がする"></textarea></div>' +
+      '<button class="btn primary block big" id="m-save">記録する ✓</button>'
+    );
+    $('m-close').onclick = closeModal;
+    $('m-save').onclick = function () {
+      var entry = {
+        id: nextId('n'),
+        date: todayStr(),
+        genreId: $('m-genre').value,
+        headline: $('m-headline').value.trim(),
+        comment: $('m-comment').value.trim(),
+        bp: 0,
+        createdAt: Date.now()
+      };
+      var v = C.validateNewsEntry(entry);
+      if (!v.ok) { toast(v.errors[0], true); return; }
+      var result = C.calcNewsBP({
+        genreId: entry.genreId,
+        faculties: selectedFacultyIds(),
+        todayCount: today.length
+      });
+      entry.bp = result.bp;
+      state.news.push(entry);
+      save();
+      closeModal();
+      renderWorldScreen();
+      if (result.overLimit) {
+        toast('記録したよ！(今日はもう' + C.NEWS_DAILY_LIMIT + '本記録済みのためポイントは付きません)');
+      } else if (result.facultyMatched) {
+        toast('記録したよ！+' + result.bp + 'BP(志望学部ボーナスで1.5倍！)');
+      } else {
+        toast('記録したよ！+' + result.bp + 'BP');
+      }
+      askNewsAI(entry);
+    };
+  }
+
+  /**
+   * ニュース1件についてAIに聞くための質問文(FEATURE_SPEC_v4.md C章の型)。
+   * コーチのAI連携(askAI)とは別に、志望学部を踏まえた小論文対策の質問を組み立てる。
+   */
+  function buildNewsAIPrompt(entry) {
+    var faculties = selectedFacultyIds().map(facultyLabel);
+    var facultyText = faculties.length ? faculties.join('・') : '経済学部・法学部・国際学部';
+    var genre = C.newsGenreById(entry.genreId);
+    var parts = [
+      '私は' + facultyText + 'を志望する高校生です。',
+      '次のニュースについて、①背景を中学生にも分かるように、',
+      '②入試小論文で書くならどんな論点があるか、',
+      '③賛成/反対の両方の立場を、それぞれ3行で教えてください。',
+      '',
+      '【ジャンル】' + (genre ? genre.name : entry.genreId),
+      '【ニュース】' + entry.headline
+    ];
+    if (entry.comment) parts.push('【気になった理由】' + entry.comment);
+    return parts.join('\n');
+  }
+
+  function askNewsAI(entry) {
+    var target = aiTargetUrl();
+    if (!target.url && state.settings.ai.appId === 'custom') {
+      toast('先に「設定 → AI連携設定」でURLを入れてね', true);
+      return;
+    }
+    var prompt = buildNewsAIPrompt(entry);
+    state.coach.messages.push({ id: nextId('m'), role: 'ibuki', text: '「' + entry.headline + '」についてAIに聞く', ts: Date.now() });
+    state.coach.messages.push({
+      id: nextId('m'), role: 'beat',
+      text: '「' + (target.name || 'AIアプリ') + '」に聞いてみよう！質問をコピーしたよ。',
+      ts: Date.now()
+    });
+    state.coach.messages = state.coach.messages.slice(-200);
+    save();
+    copyToClipboard(prompt).then(function (copied) {
+      if (!target.url) { openAIResultModal(prompt, copied, null); return; }
+      var url = target.url;
+      if (target.prefill) {
+        var withQ = url + encodeURIComponent(prompt);
+        if (withQ.length > 1800) {
+          var shortQ = url + encodeURIComponent(entry.headline);
+          url = shortQ.length <= 1800 ? shortQ : url;
+        } else {
+          url = withQ;
+        }
+      }
+      openAIResultModal(prompt, copied, url);
+    });
+  }
+
+  function openFacultyPanel() {
+    var f = state.settings.faculties;
+    var html = '<h3>志望学部<button class="icon-btn" id="m-close">✕</button></h3>' +
+      '<p class="small muted" style="margin-bottom:12px">選んだ学部に関係するニュースはポイントが1.5倍になり、AIへの質問文もこの学部に合わせて変わります。複数選べます。</p>';
+    C.FACULTY_IDS.forEach(function (id) {
+      html += '<div class="setting-row" style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)">' +
+        '<span>' + esc(facultyLabel(id)) + '</span>' +
+        '<button class="toggle' + (f[id] ? ' on' : '') + '" data-id="' + id + '" aria-label="' + esc(facultyLabel(id)) + '"></button></div>';
+    });
+    openModal(html);
+    $('m-close').onclick = closeModal;
+    document.querySelectorAll('#modal-body .toggle').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var id = btn.dataset.id;
+        f[id] = !f[id];
+        btn.classList.toggle('on', f[id]);
+        save();
+      });
+    });
+  }
+
   /* ================= コーチ画面 ================= */
   function renderCoach() {
     var pose = poseById(currentPose);
@@ -1558,6 +1763,7 @@
     if (panel === 'profile') return openProfilePanel();
     if (panel === 'goal') return openGoalPanel();
     if (panel === 'exam') return openExamPanel();
+    if (panel === 'faculty') return openFacultyPanel();
     if (panel === 'subjects') return openSubjectsPanel();
     if (panel === 'ai') return openAIPanel();
     if (panel === 'axis') return openAxisModal();
@@ -1863,6 +2069,7 @@
     renderToday();
     renderRecordScreen();
     if (currentScreen === 'graph') renderGraphScreen();
+    if (currentScreen === 'world') renderWorldScreen();
     if (currentScreen === 'coach') renderCoach();
   }
 

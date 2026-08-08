@@ -248,6 +248,13 @@
     return AI_APPS[0];
   }
 
+  /* 志望学部。ニュースの学部ボーナス(×1.5)とAI質問文の分岐に使う。
+   * 現時点の想定進路(経済/法/国際)に合わせ、デフォルトはすべてON。 */
+  function defaultFaculties() {
+    return { economics: true, law: true, international: true };
+  }
+  var FACULTY_IDS = ['economics', 'law', 'international'];
+
   function defaultState(todayStr_) {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -260,10 +267,12 @@
         examDate: null,
         ai: defaultAI(),
         axis: defaultAxis(),
-        subjects: DEFAULT_SUBJECTS.map(function (s) { return { id: s.id, name: s.name, color: s.color, visible: s.visible }; })
+        subjects: DEFAULT_SUBJECTS.map(function (s) { return { id: s.id, name: s.name, color: s.color, visible: s.visible }; }),
+        faculties: defaultFaculties()
       },
       records: [],
       events: [],
+      news: [],
       coach: {
         members: [{ id: 'beat', label: 'BEATスター' }],
         messages: []
@@ -272,6 +281,16 @@
       poseUnlocks: [],
       seq: 1
     };
+  }
+
+  /** ニュース記録1件を検証する(C章)。見出しは必須、一言は任意。 */
+  function validateNewsEntry(entry) {
+    var errors = [];
+    if (!entry || typeof entry !== 'object') return { ok: false, errors: ['記録データが不正です'] };
+    if (!isDateStr(entry.date)) errors.push('日付が正しくありません');
+    if (!newsGenreById(entry.genreId)) errors.push('ジャンルを選択してください');
+    if (typeof entry.headline !== 'string' || entry.headline.trim() === '') errors.push('見出しを入力してください');
+    return { ok: errors.length === 0, errors: errors };
   }
 
   /**
@@ -320,6 +339,10 @@
       });
       if (subs.length > 0) out.settings.subjects = subs;
     }
+    var fac = s.faculties || {};
+    FACULTY_IDS.forEach(function (id) {
+      if (typeof fac[id] === 'boolean') out.settings.faculties[id] = fac[id];
+    });
     var subjectIds = out.settings.subjects.map(function (x) { return x.id; });
     if (Array.isArray(parsed.records)) {
       out.records = parsed.records.filter(function (r) {
@@ -358,6 +381,22 @@
           method: typeof e.method === 'string' ? e.method.slice(0, 40) : '',
           url: (typeof e.url === 'string' && /^https?:\/\//.test(e.url)) ? e.url.slice(0, 500) : '',
           memo: typeof e.memo === 'string' ? e.memo.slice(0, 300) : ''
+        };
+      });
+    }
+    if (Array.isArray(parsed.news)) {
+      out.news = parsed.news.filter(function (n) {
+        return n && typeof n === 'object' && isDateStr(n.date) &&
+          newsGenreById(n.genreId) && typeof n.headline === 'string' && n.headline.trim();
+      }).map(function (n) {
+        return {
+          id: typeof n.id === 'string' ? n.id : 'n' + Math.random().toString(36).slice(2, 10),
+          date: n.date,
+          genreId: n.genreId,
+          headline: n.headline.slice(0, 60),
+          comment: typeof n.comment === 'string' ? n.comment.slice(0, 120) : '',
+          bp: isIntInRange(n.bp, 0, 1000) ? n.bp : 0,
+          createdAt: typeof n.createdAt === 'number' ? n.createdAt : 0
         };
       });
     }
@@ -1035,6 +1074,9 @@
     parseJaDate: parseJaDate,
     validateRecord: validateRecord,
     validateEvent: validateEvent,
+    validateNewsEntry: validateNewsEntry,
+    defaultFaculties: defaultFaculties,
+    FACULTY_IDS: FACULTY_IDS,
     activeRecords: activeRecords,
     buildSeries: buildSeries,
     summarize: summarize,

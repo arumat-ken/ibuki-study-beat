@@ -155,7 +155,26 @@
     </div>
   </section>
 
-  <!-- ④コーチ -->
+  <!-- ④世界(時事ニュース) -->
+  <section class="screen" id="screen-world" aria-label="世界">
+    <div class="screen-head">
+      <h1>世界のニュース</h1>
+    </div>
+    <div class="card">
+      <div class="world-stats-row">
+        <span class="world-stat"><b id="world-today-count">0/3</b>今日の記録</span>
+        <span class="world-stat"><b id="world-genre-count">0/10</b>ジャンル制覇</span>
+      </div>
+      <p class="muted small" style="margin-top:8px">新聞・NHK・ニュースアプリで読んだ記事を、自分の言葉で3つだけ記録しよう。志望学部に関係するジャンルはポイントが1.5倍になるよ。</p>
+      <button class="btn primary big block" id="btn-add-news" style="margin-top:10px">＋ 今日のニュースを記録する</button>
+    </div>
+    <div class="card">
+      <h2>これまでの記録</h2>
+      <div id="news-list"></div>
+    </div>
+  </section>
+
+  <!-- ⑤コーチ -->
   <section class="screen" id="screen-coach" aria-label="コーチ">
     <div class="screen-head">
       <h1>BEATスター</h1>
@@ -194,7 +213,7 @@
     </div>
   </section>
 
-  <!-- ⑤設定 -->
+  <!-- ⑥設定 -->
   <section class="screen" id="screen-settings" aria-label="設定">
     <div class="screen-head">
       <h1>設定</h1>
@@ -203,6 +222,7 @@
       <button class="settings-item" data-panel="profile"><span class="ico">👤</span>プロフィール<span class="chev">›</span></button>
       <button class="settings-item" data-panel="goal"><span class="ico">🎯</span>目標・スローガン<span class="chev">›</span></button>
       <button class="settings-item" data-panel="exam"><span class="ico">🏫</span>受験情報<span class="chev">›</span></button>
+      <button class="settings-item" data-panel="faculty"><span class="ico">🌍</span>志望学部<span class="chev">›</span></button>
       <button class="settings-item" data-panel="subjects"><span class="ico">📚</span>科目設定<span class="chev">›</span></button>
       <button class="settings-item" data-panel="ai"><span class="ico">🤖</span>AI連携設定<span class="chev">›</span></button>
       <button class="settings-item" data-panel="axis"><span class="ico">📈</span>グラフ・Y軸設定<span class="chev">›</span></button>
@@ -223,6 +243,9 @@
     </button>
     <button class="nav-btn" data-screen="graph">
       <svg viewBox="0 0 24 24"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>グラフ
+    </button>
+    <button class="nav-btn" data-screen="world">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 010 18 15 15 0 010-18z"/></svg>世界
     </button>
     <button class="nav-btn" data-screen="coach">
       <svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M4 21v-2a6 6 0 016-6h4a6 6 0 016 6v2"/></svg>コーチ

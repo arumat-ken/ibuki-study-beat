@@ -631,6 +631,128 @@ async function test10_aiIntegration() {
   ok('AI連携設定はリロード後も保持', st.settings.ai.appId === 'custom' && st.settings.ai.sendStats === false);
 }
 
+async function test11_worldNews() {
+  console.log('\n■ 試験11: 世界(時事ニュース)記録とAI連携');
+  await freshPage(true);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+
+  await nav('world');
+  ok('世界タブに切り替えられる(6タブ構成)', await page.isVisible('#screen-world'));
+  let todayCount = await page.textContent('#world-today-count');
+  ok('初期状態は今日0/3件', todayCount.trim() === '0/3', todayCount);
+
+  async function addNews({ genre, headline, comment = '' }) {
+    await page.click('#btn-add-news');
+    await page.waitForSelector('#m-genre');
+    await page.selectOption('#m-genre', genre);
+    await page.fill('#m-headline', headline);
+    if (comment) await page.fill('#m-comment', comment);
+    await page.click('#m-save');
+    await page.waitForTimeout(300);
+  }
+
+  // 1本目: 経済(志望学部=経済学部はデフォルトON) → 1.5倍
+  await addNews({ genre: 'economy', headline: '円安が1ドル160円台に', comment: '輸入品が高くなる理由が分かった' });
+  ok('保存すると自動でAIに聞くモーダルが開く', await page.isVisible('#m-prompt'));
+  const prompt1 = await page.inputValue('#m-prompt');
+  ok('AIプロンプトに志望学部が含まれる', prompt1.includes('経済学部'));
+  ok('AIプロンプトにニュースの見出しが含まれる', prompt1.includes('円安が1ドル160円台に'));
+  ok('AIプロンプトに小論文の論点を問う型が含まれる', prompt1.includes('入試小論文') && prompt1.includes('賛成'));
+  await shot('40-world-ai-prompt');
+  await page.click('#m-close');
+  await page.waitForTimeout(200);
+
+  let st = await getState();
+  ok('経済ジャンルは志望学部ボーナスで1.5倍(40→60BP)', st.news[0].bp === 60, `bp=${st.news[0].bp}`);
+  ok('トーストに志望学部ボーナスの説明が出る', (await page.textContent('#toast-text')).includes('1.5倍'));
+
+  // 2本目: スポーツ(ボーナス対象外) → 等倍
+  await addNews({ genre: 'sports', headline: '甲子園で逆転勝ち' });
+  await page.click('#m-close');
+  await page.waitForTimeout(200);
+  st = await getState();
+  ok('学部ボーナス対象外のジャンルは等倍(20BP)', st.news[1].bp === 20, `bp=${st.news[1].bp}`);
+
+  // 3本目: IT・AI(全学部で加点) → 1.5倍
+  await addNews({ genre: 'tech', headline: '生成AIの新しい規制案' });
+  await page.click('#m-close');
+  await page.waitForTimeout(200);
+
+  todayCount = await page.textContent('#world-today-count');
+  ok('3本記録すると3/3になる', todayCount.trim() === '3/3', todayCount);
+  const genreCount = await page.textContent('#world-genre-count');
+  ok('記録したジャンル数が進捗に反映される', genreCount.trim() === '3/10', genreCount);
+
+  // 4本目: 1日の上限を超えるとポイントが付かない
+  await addNews({ genre: 'environment', headline: '猛暑と電力需給' });
+  const overLimitToast = await page.textContent('#toast-text');
+  ok('1日3本を超えるとポイントが付かない旨のメッセージが出る', overLimitToast.includes('もう3本'));
+  await page.click('#m-close');
+  await page.waitForTimeout(200);
+  st = await getState();
+  ok('上限超えの記録はBP=0で保存される(記録自体はできる)', st.news[3].bp === 0, `bp=${st.news[3].bp}`);
+  ok('4件とも記録は残る', st.news.length === 4);
+
+  // 一覧表示とAI再質問・削除
+  const itemCount = await page.locator('.news-item').count();
+  ok('一覧に記録した件数が表示される', itemCount === 4, `count=${itemCount}`);
+  const bpChips = await page.locator('.bp-chip').count();
+  ok('BPが付いた記録だけにBPチップが出る(3件)', bpChips === 3, `chips=${bpChips}`);
+  await shot('41-world-news-list');
+
+  await page.locator('.news-item').first().locator('[data-act="ask"]').click();
+  await page.waitForSelector('#m-prompt');
+  ok('一覧からも後でAIに聞き直せる', await page.isVisible('#m-prompt'));
+  await page.click('#m-close');
+  await page.waitForTimeout(150);
+
+  const beforeDel = (await getState()).news.length;
+  await page.locator('.news-item').first().locator('[data-act="del"]').click();
+  await page.waitForTimeout(200);
+  st = await getState();
+  ok('削除すると件数が減る', st.news.length === beforeDel - 1);
+  await page.click('#toast-action');
+  await page.waitForTimeout(200);
+  st = await getState();
+  ok('「元に戻す」で復元できる', st.news.length === beforeDel);
+
+  // 志望学部の設定を変える
+  await nav('settings');
+  await page.click('.settings-item[data-panel="faculty"]');
+  await page.waitForSelector('#modal-body .toggle');
+  const toggleCount = await page.locator('#modal-body .toggle').count();
+  ok('志望学部は3つ選べる(経済/法/国際)', toggleCount === 3, `count=${toggleCount}`);
+  await shot('42-faculty-settings');
+  // 経済学部をOFFにする
+  await page.locator('#modal-body .toggle').first().click();
+  await page.waitForTimeout(150);
+  await page.click('#m-close');
+  st = await getState();
+  ok('志望学部の設定はONOFF切替が保存される', st.settings.faculties.economics === false);
+
+  // 今日はすでに3本の上限に達しているため、多寡倍率だけを切り分けて検証する
+  // (calc.js は単体テスト済み。ここではapp.jsが設定を正しく渡しているかを確認する)
+  await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    s.news = [];
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(s));
+  });
+  await reload();
+  await nav('world');
+  await addNews({ genre: 'economy', headline: '日銀が利上げを見送り' });
+  await page.click('#m-close');
+  await page.waitForTimeout(200);
+  st = await getState();
+  const lastNews = st.news[st.news.length - 1];
+  ok('学部OFF後は経済ジャンルもボーナスなし(40BP)', lastNews.bp === 40, `bp=${lastNews.bp}`);
+
+  // リロード後も保持される
+  await reload();
+  st = await getState();
+  ok('ニュース記録はリロード後も保持される', st.news.length === 1, `count=${st.news.length}`);
+  ok('志望学部の設定もリロード後も保持される', st.settings.faculties.economics === false);
+}
+
 async function extra_screens() {
   console.log('\n■ 追加: 全画面スクリーンショットとコーチ・320px幅・横向き');
   await freshPage(true);
@@ -647,10 +769,17 @@ async function extra_screens() {
       });
     }
     s.events.push({ id: 'ev1', date: dstr(40), title: '近畿大学 公募推薦', faculty: '経営学部', method: '公募推薦', url: 'https://www.kindai.ac.jp/', memo: '' });
+    s.news.push(
+      { id: 'demoN1', date: dstr(0), genreId: 'economy', headline: '円安が1ドル160円台に', comment: '輸入品が高くなる理由が分かった気がする', bp: 60, createdAt: Date.now() },
+      { id: 'demoN2', date: dstr(-1), genreId: 'international', headline: 'G7サミットが閉幕', comment: '', bp: 60, createdAt: Date.now() - 1000 }
+    );
     localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(s));
   });
   await reload();
   await shot('20-today-demo');
+  await nav('world');
+  await page.waitForTimeout(200);
+  await shot('20b-world-demo');
   await nav('graph');
   await page.waitForTimeout(300);
   await shot('21-graph-demo-week');
@@ -679,6 +808,11 @@ async function extra_screens() {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > 330);
   ok('320px幅で横スクロールが発生しない', !overflow);
   await shot('27-today-320px');
+  await nav('world');
+  await page.waitForTimeout(200);
+  const worldOverflow = await page.evaluate(() => document.documentElement.scrollWidth > 330);
+  ok('320px幅で世界タブも横スクロールが発生しない(ジャンル・BPチップ含む)', !worldOverflow);
+  await shot('27b-world-320px');
   // 横向き
   await page.setViewportSize({ width: 844, height: 390 });
   await nav('graph');
@@ -701,6 +835,7 @@ try {
   await test8_dataProtection();
   await test9_versionAndUpdate();
   await test10_aiIntegration();
+  await test11_worldNews();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

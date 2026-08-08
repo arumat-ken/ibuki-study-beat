@@ -484,3 +484,30 @@ test('ポイント計算: 不正な入力・未知の行動ボーナスを拒否
   assert.throws(() => C.gtToYen({ fxRate: 0 }), RangeError);
   assert.throws(() => C.calcPayPayRequest({ availableGT: 1.5, fxRate: 150 }), RangeError);
 });
+
+test('ニュース記録: 志望学部のデフォルトはすべてON、stateに news 配列がある', () => {
+  const st = C.defaultState('2026-08-08');
+  assert.deepEqual(st.settings.faculties, { economics: true, law: true, international: true });
+  assert.deepEqual(st.news, []);
+});
+
+test('ニュース記録の検証: 見出し必須、ジャンルは既知のものだけ', () => {
+  assert.ok(C.validateNewsEntry({ date: '2026-08-08', genreId: 'economy', headline: '円安が進んだ' }).ok);
+  assert.ok(!C.validateNewsEntry({ date: '2026-08-08', genreId: 'economy', headline: '' }).ok, '見出し空は拒否');
+  assert.ok(!C.validateNewsEntry({ date: '2026-08-08', genreId: 'nope', headline: 'x' }).ok, '未知ジャンルは拒否');
+  assert.ok(!C.validateNewsEntry({ date: '2026-13-40', genreId: 'economy', headline: 'x' }).ok, '不正日付は拒否');
+});
+
+test('sanitizeState: news配列と志望学部の設定が壊れていても復元できる', () => {
+  const st = C.defaultState('2026-08-08');
+  st.news.push({ id: 'n1', date: '2026-08-08', genreId: 'economy', headline: '円安が進んだ', comment: '輸入品が高い', bp: 60, createdAt: 1 });
+  st.news.push({ garbage: true });
+  st.settings.faculties = { economics: false, law: 'not-a-bool' };
+  const out = C.sanitizeState(JSON.parse(JSON.stringify(st)), '2026-08-08');
+  assert.ok(out);
+  assert.equal(out.news.length, 1, '壊れた1件は除外される');
+  assert.equal(out.news[0].headline, '円安が進んだ');
+  assert.equal(out.settings.faculties.economics, false, '正常なbooleanは反映される');
+  assert.equal(out.settings.faculties.law, true, '不正な値はデフォルトのまま');
+  assert.equal(out.settings.faculties.international, true, '未指定はデフォルトのまま');
+});
