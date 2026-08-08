@@ -81,20 +81,34 @@
 
 ## 次にやること
 
-1. ~~`js/calc.js` に計算ロジックを実装 + 単体テスト~~ ✅ **完了**
-2. **Claude**: BP集計・倍率合成(H-4の置換方式)を `js/calc.js` に追加
-3. **Claude**: 第1段「ニュース記録 + AI連携」を実装 → ver.4.0.0 としてリリース
-4. **Claude**: 第2段「ポイント・装備・ショップ」→ ver.4.1.0
-5. **Claude**: 第3段「金融ラボ・GT・PayPay交換申請」→ ver.4.2.0
+1. ~~`js/calc.js` に計算ロジックを実装 + 単体テスト~~ ✅ **完了(A〜D章すべて)**
+2. **Claude**: 第1段「ニュース記録 + AI連携」を実装 → ver.4.0.0 としてリリース
+3. **Claude**: 第2段「ポイント・装備・ショップ」→ ver.4.1.0
+4. **Claude**: 第3段「金融ラボ・GT・PayPay交換申請」→ ver.4.2.0
 
-### 実装済みの金融関数(`js/calc.js`)
+### 実装済みの計算関数(`js/calc.js`)
+
+計算ロジックは**すべて実装・試験済み**。UIには未接続のため現行アプリの動作は変わらない。
 
 | 関数 | 対応する仕様 |
 |---|---|
+| `calcStudyBP()` | A章 1分=1BP・1日1,500BP上限・非受験科目100BP上限 |
+| `calcActionBonusBP()` / `isPlanAchieved()` | A章 行動ボーナス(倍率の影響を受けない固定加算) |
+| `conditionBonusFromHabits()` | A章 生活習慣→コンディション→翌日の倍率 +0.05〜+0.3 |
+| `composeMultiplier()` | B章・**H-4**(足し算で上限3.0倍 / フィーバーは10倍への**置換**) |
+| `calcNewsBP()` / `calcAllGenresBonus()` | C章 ジャンル別配点・志望学部×1.5・1日3本・全制覇+200BP |
 | `accrueWeeklyInterest()` | D章 52倍速の週次複利 |
-| `calculateDeposit()` / `DEPOSIT_LOCK_WEEKS` | D章・H-7(1ヶ月=4週 / 3ヶ月=12週・満期前解約は利息なし) |
+| `calculateDeposit()` / `DEPOSIT_LOCK_WEEKS` | D章・**H-7**(1ヶ月=4週 / 3ヶ月=12週・満期前解約は利息なし) |
 | `calculateFxDeposit()` | D章【最重要】利息と為替差損益を分解して表示 |
+| `gtToYen()` | D章・**H-5**(1GT=100円・為替で±20%まで変動) |
+| `calcPayPayRequest()` | D章・**H-6**(月間2,000円を円建てで固定・切り捨て) |
 | `calculateInstallmentPlan()` / `compareInstallmentPlans()` | D章 分割払い(50,000→52,500/55,000/59,000) |
 | `creditScoreStatus()` / `applyCreditEvents()` | D章 信用スコア(初期500・700以上で手数料半額・300未満で停止) |
 
-**まだ未実装**: BP集計(A章)、倍率合成(B章)、ニュースBP(C章)、GT→円換算・PayPay上限(D章)
+### 仕様の解釈を1件確定した
+
+`FEATURE_SPEC_v4.md` D章のPayPay表で、円高時(1GT=90円)に「2,000円分に必要なGT=**23枚**」と
+記載があるが、23枚×90円=**2,070円**となり、同章の「**親の支出は1円も超えない**」に反する。
+
+**切り捨て(22枚=1,980円)で実装した。** 上限の厳守を優先している。
+余った端数のGTは失効せず手元に残り、レートが戻るまで待つ判断ができる。

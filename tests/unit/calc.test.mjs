@@ -308,3 +308,179 @@ test('金融計算: 不正な数値・未対応の分割回数・未知イベン
   assert.throws(() => C.applyCreditEvents(500, [null]), RangeError);
   assert.throws(() => C.roundAmount(Number.NaN, 0), TypeError);
 });
+
+test('倍率合成: 足し算で積み上がり、上限3.0倍で頭打ちになる', () => {
+  const none = C.composeMultiplier({});
+  assert.equal(none.multiplier, 1.0);
+  assert.equal(none.capped, false);
+
+  const mid = C.composeMultiplier({ costumeBonus: 0.3, skillBonus: 0.5, stageBonus: 0.4, conditionBonus: 0.1 });
+  assert.equal(mid.multiplier, 2.3, '1.0+0.3+0.5+0.4+0.1');
+  assert.equal(mid.capped, false);
+
+  const full = C.composeMultiplier({ costumeBonus: 0.5, skillBonus: 1.0, stageBonus: 1.0, conditionBonus: 0.3 });
+  assert.equal(full.multiplier, 3.0, '合計3.8だが上限3.0で頭打ち');
+  assert.equal(full.capped, true);
+
+  const over = C.composeMultiplier({ costumeBonus: 9.9, skillBonus: 0, stageBonus: 0, conditionBonus: 0 });
+  assert.equal(over.breakdown.costume, 0.5, 'スロットごとの上限が先に効く');
+});
+
+test('倍率合成: フィーバーは掛け算ではなく10倍への置換(H-4)', () => {
+  const fever = C.composeMultiplier({
+    costumeBonus: 0.5, skillBonus: 1.0, stageBonus: 1.0, conditionBonus: 0.3, feverActive: true
+  });
+  assert.equal(fever.multiplier, 10.0, '3.0×10=30倍にはしない');
+  assert.equal(fever.feverActive, true);
+  assert.equal(fever.breakdown.costume, 0, '他の倍率は無効化される');
+});
+
+test('コンディション: 生活習慣の合計から翌日の倍率加算を段階で決める', () => {
+  assert.equal(C.conditionBonusFromHabits(0), 0);
+  assert.equal(C.conditionBonusFromHabits(20), 0.05);
+  assert.equal(C.conditionBonusFromHabits(30), 0.1);
+  assert.equal(C.conditionBonusFromHabits(60), 0.2);
+  assert.equal(C.conditionBonusFromHabits(115), 0.3, '満点は115BP');
+  assert.equal(C.conditionBonusFromHabits(115), C.conditionBonusFromHabits(999), '上限を超えても0.3');
+});
+
+test('BP獲得: 1分=1BP、倍率は学習時間だけに掛かり行動ボーナスには掛からない', () => {
+  const plain = C.calcStudyBP({ minutes: 180, multiplier: 1 });
+  assert.equal(plain.baseBP, 180, '1日3時間=180BP');
+  assert.equal(plain.grantedBP, 180);
+
+  const boosted = C.calcStudyBP({
+    minutes: 100, multiplier: 2, actions: ['planAchieved', 'reflection']
+  });
+  assert.equal(boosted.multipliedBP, 200, '100分×2.0倍');
+  assert.equal(boosted.bonusBP, 60, '+50 +10 は倍率の影響を受けない');
+  assert.equal(boosted.grantedBP, 260);
+});
+
+test('BP獲得: 非受験科目は1日100BPまでに抑えられる', () => {
+  const first = C.calcStudyBP({ minutes: 80, isExamSubject: false });
+  assert.equal(first.grantedBP, 80);
+  assert.equal(first.nonExamCapped, false);
+
+  const second = C.calcStudyBP({ minutes: 80, isExamSubject: false, todayNonExamBP: 80 });
+  assert.equal(second.subtotalBP, 80);
+  assert.equal(second.grantedBP, 20, '残り20BPだけ');
+  assert.equal(second.nonExamCapped, true);
+  assert.equal(second.lostToCapBP, 60);
+
+  const exam = C.calcStudyBP({ minutes: 300, isExamSubject: true, todayNonExamBP: 100 });
+  assert.equal(exam.grantedBP, 300, '受験科目は非受験の上限に影響されない');
+});
+
+test('BP獲得: 1日の上限1,500BPで頭打ちになる', () => {
+  const capped = C.calcStudyBP({ minutes: 300, multiplier: 3, todayTotalBP: 1400 });
+  assert.equal(capped.subtotalBP, 900);
+  assert.equal(capped.grantedBP, 100, '残り100BPだけ');
+  assert.equal(capped.dailyCapped, true);
+  assert.equal(capped.todayTotalAfter, 1500);
+
+  const full = C.calcStudyBP({ minutes: 60, todayTotalBP: 1500 });
+  assert.equal(full.grantedBP, 0, '上限到達後は0BP');
+  assert.equal(full.dailyCapped, true);
+});
+
+test('計画達成の判定: 達成率80〜120%のときだけ成立する', () => {
+  assert.equal(C.isPlanAchieved(60, 60), true, '100%');
+  assert.equal(C.isPlanAchieved(60, 48), true, '80%');
+  assert.equal(C.isPlanAchieved(60, 72), true, '120%');
+  assert.equal(C.isPlanAchieved(60, 47), false, '79%は未達');
+  assert.equal(C.isPlanAchieved(60, 73), false, '水増しすると外れる');
+  assert.equal(C.isPlanAchieved(0, 60), false, '計画0分では成立しない');
+});
+
+test('ニュースBP: 志望学部に一致するジャンルは1.5倍', () => {
+  const econ = C.calcNewsBP({ genreId: 'economy', faculties: ['economics'] });
+  assert.equal(econ.baseBP, 40);
+  assert.equal(econ.bp, 60, '40×1.5');
+  assert.equal(econ.facultyMatched, true);
+
+  const econNoMatch = C.calcNewsBP({ genreId: 'economy', faculties: ['law'] });
+  assert.equal(econNoMatch.bp, 40);
+  assert.equal(econNoMatch.facultyMatched, false);
+
+  const tech = C.calcNewsBP({ genreId: 'tech', faculties: [] });
+  assert.equal(tech.bp, 60, 'IT・AIはどの学部でも加点');
+
+  const sports = C.calcNewsBP({ genreId: 'sports', faculties: ['economics', 'law', 'international'] });
+  assert.equal(sports.bp, 20);
+});
+
+test('ニュースBP: 1日3本を超えると0BP、未知ジャンルは拒否', () => {
+  assert.equal(C.calcNewsBP({ genreId: 'economy', todayCount: 2 }).remainingToday, 1);
+  const over = C.calcNewsBP({ genreId: 'economy', todayCount: 3 });
+  assert.equal(over.bp, 0);
+  assert.equal(over.overLimit, true);
+  assert.throws(() => C.calcNewsBP({ genreId: 'nope' }), RangeError);
+});
+
+test('ニュース: 全ジャンル制覇で+200BP', () => {
+  const all = C.NEWS_GENRES.map(g => g.id);
+  assert.equal(C.NEWS_GENRES.length, 10);
+  const done = C.calcAllGenresBonus(all);
+  assert.equal(done.complete, true);
+  assert.equal(done.bonusBP, 200);
+
+  const partial = C.calcAllGenresBonus(['economy', 'economy', 'sports']);
+  assert.equal(partial.recorded, 2, '重複は数えない');
+  assert.equal(partial.bonusBP, 0);
+});
+
+test('GT換算: 円安で1枚の価値が上がり、変動は±20%で止まる', () => {
+  assert.equal(C.gtToYen({ fxRate: 150 }).yenPerGT, 100, '基準は1GT=100円');
+  assert.equal(C.gtToYen({ fxRate: 165 }).yenPerGT, 110, '円安=お得');
+  assert.equal(C.gtToYen({ fxRate: 135 }).yenPerGT, 90, '円高=損');
+  assert.equal(C.gtToYen({ fxRate: 165 }).trend, 'weak-yen');
+  assert.equal(C.gtToYen({ fxRate: 135 }).trend, 'strong-yen');
+
+  const extreme = C.gtToYen({ fxRate: 300 });
+  assert.equal(extreme.yenPerGT, 120, '±20%を超えて変動しない');
+  assert.equal(extreme.bandCapped, true);
+  assert.equal(C.gtToYen({ fxRate: 10 }).yenPerGT, 80);
+});
+
+test('PayPay交換: 月間上限2,000円を1円も超えない(切り捨て)', () => {
+  const base = C.calcPayPayRequest({ availableGT: 50, fxRate: 150 });
+  assert.equal(base.redeemableGT, 20, '100円×20枚=2,000円');
+  assert.equal(base.payoutYen, 2000);
+  assert.equal(base.capReached, true);
+
+  const weakYen = C.calcPayPayRequest({ availableGT: 50, fxRate: 165 });
+  assert.equal(weakYen.redeemableGT, 18, '110円×18枚=1,980円');
+  assert.ok(weakYen.payoutYen <= 2000);
+
+  const strongYen = C.calcPayPayRequest({ availableGT: 50, fxRate: 135 });
+  assert.equal(strongYen.redeemableGT, 22, '90円×22枚=1,980円。23枚だと2,070円で上限超過');
+  assert.ok(strongYen.payoutYen <= 2000);
+  assert.equal(strongYen.advice, 'wait-recommended', '円高のときは待つよう促す');
+});
+
+test('PayPay交換: 今月の使用済み分を差し引き、繰り越さない', () => {
+  const partial = C.calcPayPayRequest({ availableGT: 50, fxRate: 150, usedYenThisMonth: 1500 });
+  assert.equal(partial.redeemableGT, 5, '残り500円分だけ');
+  assert.equal(partial.payoutYen, 500);
+  assert.equal(partial.remainingCapYen, 0);
+
+  const exhausted = C.calcPayPayRequest({ availableGT: 50, fxRate: 150, usedYenThisMonth: 2000 });
+  assert.equal(exhausted.redeemableGT, 0);
+  assert.equal(exhausted.leftoverGT, 50, 'GTは手元に残る');
+
+  const few = C.calcPayPayRequest({ availableGT: 3, fxRate: 150 });
+  assert.equal(few.redeemableGT, 3, '保有枚数が上限を下回るときはそのまま');
+  assert.equal(few.capReached, false);
+});
+
+test('ポイント計算: 不正な入力・未知の行動ボーナスを拒否する', () => {
+  assert.throws(() => C.calcStudyBP({ minutes: -1 }), RangeError);
+  assert.throws(() => C.calcStudyBP({ minutes: 60, multiplier: -1 }), RangeError);
+  assert.throws(() => C.calcActionBonusBP(['unknown']), RangeError);
+  assert.throws(() => C.calcActionBonusBP([123]), RangeError);
+  assert.throws(() => C.calcActionBonusBP('planAchieved'), TypeError);
+  assert.throws(() => C.conditionBonusFromHabits(-1), RangeError);
+  assert.throws(() => C.gtToYen({ fxRate: 0 }), RangeError);
+  assert.throws(() => C.calcPayPayRequest({ availableGT: 1.5, fxRate: 150 }), RangeError);
+});

@@ -387,6 +387,248 @@
   }
 
   /* ==================================================================
+   * ポイント(BP)の獲得 (ver.4)
+   * 仕様: docs/design/FEATURE_SPEC_v4.md A章・B章・C章 / 決定事項 H-4
+   * ================================================================== */
+
+  var BP_PER_MINUTE = 1;
+  var DAILY_BP_CAP = 1500;          // 1日の獲得上限(倍率込みの最終値)
+  var NON_EXAM_DAILY_BP_CAP = 100;  // 非受験科目・読書・その他の1日上限
+
+  /* 行動ボーナス。倍率の影響を受けない固定加算。 */
+  var ACTION_BONUS_BP = {
+    planAchieved: 50,     // 計画達成(達成率80〜120%)
+    reflection: 10,       // 振り返りを書いた
+    streak3: 30,
+    streak7: 100,
+    streak30: 500,
+    allExamSubjects: 80,  // 1日で全受験科目に触れた
+    unitCleared: 200,     // 単元クリア
+    mockExamTaken: 300,   // 模試を受けた
+    mockExamImproved: 500 // 前回より点数UP
+  };
+
+  /* 生活習慣。コンディションメーターに蓄積し、翌日の倍率に効く。 */
+  var HABIT_BP = {
+    sleepEarly: 20,   // 24時前に就寝
+    breakfast: 15,    // 朝ごはんを食べた
+    exercise: 30,     // 運動30分
+    restTaken: 10,    // 休憩をちゃんと取った
+    reading: 40       // 読書30分
+  };
+
+  /* 装備スロットの上限(B章)。買い集めても同時装備は各1個。 */
+  var MULTIPLIER_LIMITS = {
+    costume: 0.5,
+    skill: 1.0,
+    stage: 1.0,
+    condition: 0.3
+  };
+  var MULTIPLIER_CAP = 3.0;
+  var FEVER_MULTIPLIER = 10.0;
+
+  /* 計画達成とみなす達成率の範囲。時間を水増しすると外れるので抑止になる。 */
+  var PLAN_ACHIEVED_MIN_RATE = 80;
+  var PLAN_ACHIEVED_MAX_RATE = 120;
+
+  function clampBonus(value, limit) {
+    if (value === undefined || value === null) return 0;
+    assertNotNegative(value, 'ボーナス');
+    return Math.min(value, limit);
+  }
+
+  /**
+   * コンディションメーター(生活習慣の合計BP)から翌日の倍率加算を求める。
+   * 満点は115BP。段階制にして「あと少しで上がる」が分かるようにする。
+   */
+  function conditionBonusFromHabits(habitBP) {
+    assertNotNegative(habitBP, 'コンディション');
+    if (habitBP >= 90) return 0.3;
+    if (habitBP >= 60) return 0.2;
+    if (habitBP >= 30) return 0.1;
+    if (habitBP > 0) return 0.05;
+    return 0;
+  }
+
+  /**
+   * 最終倍率を求める。掛け算ではなく足し算(B章)。
+   * フィーバー中は他の倍率をすべて無効化して10倍に置き換える(H-4の決定)。
+   * 掛け算にすると30倍になり経済が壊れるため。
+   */
+  function composeMultiplier(opts) {
+    var o = opts || {};
+    if (o.feverActive) {
+      return {
+        multiplier: FEVER_MULTIPLIER,
+        feverActive: true,
+        capped: false,
+        breakdown: { base: FEVER_MULTIPLIER, costume: 0, skill: 0, stage: 0, condition: 0 }
+      };
+    }
+    var costume = clampBonus(o.costumeBonus, MULTIPLIER_LIMITS.costume);
+    var skill = clampBonus(o.skillBonus, MULTIPLIER_LIMITS.skill);
+    var stage = clampBonus(o.stageBonus, MULTIPLIER_LIMITS.stage);
+    var condition = clampBonus(o.conditionBonus, MULTIPLIER_LIMITS.condition);
+    var raw = 1.0 + costume + skill + stage + condition;
+    var multiplier = Math.min(raw, MULTIPLIER_CAP);
+    return {
+      multiplier: roundAmount(multiplier, 2),
+      feverActive: false,
+      capped: raw > MULTIPLIER_CAP,
+      breakdown: { base: 1.0, costume: costume, skill: skill, stage: stage, condition: condition }
+    };
+  }
+
+  /** 達成率(%)が計画達成の範囲に入っているか */
+  function isPlanAchieved(planMin, actualMin) {
+    if (!planMin || planMin <= 0) return false;
+    var rate = actualMin / planMin * 100;
+    return rate >= PLAN_ACHIEVED_MIN_RATE && rate <= PLAN_ACHIEVED_MAX_RATE;
+  }
+
+  /** 行動ボーナスの合計。未知のキーは黙って無視せずエラーにする。 */
+  function calcActionBonusBP(actions) {
+    if (actions === undefined || actions === null) return 0;
+    if (!Array.isArray(actions)) throw new TypeError('行動ボーナスは配列で指定してください');
+    var total = 0;
+    actions.forEach(function (a) {
+      if (typeof a !== 'string') throw new RangeError('行動ボーナスの形式が不正です');
+      if (!Object.prototype.hasOwnProperty.call(ACTION_BONUS_BP, a)) {
+        throw new RangeError('未知の行動ボーナスです: ' + a);
+      }
+      total += ACTION_BONUS_BP[a];
+    });
+    return total;
+  }
+
+  /**
+   * 学習1件のBP獲得を計算する。
+   * 上限は2段階。まず非受験科目の1日100BP、次に全体の1日1,500BP。
+   * どこで削られたかを返し、画面で「今日の上限に達したよ」と出せるようにする。
+   */
+  function calcStudyBP(opts) {
+    var o = opts || {};
+    assertNotNegative(o.minutes, '学習時間');
+    var multiplier = (o.multiplier === undefined || o.multiplier === null) ? 1 : o.multiplier;
+    assertNotNegative(multiplier, '倍率');
+    var todayTotalBP = (o.todayTotalBP === undefined || o.todayTotalBP === null) ? 0 : o.todayTotalBP;
+    var todayNonExamBP = (o.todayNonExamBP === undefined || o.todayNonExamBP === null) ? 0 : o.todayNonExamBP;
+    assertNotNegative(todayTotalBP, '今日の獲得BP');
+    assertNotNegative(todayNonExamBP, '今日の非受験科目BP');
+    var isExamSubject = o.isExamSubject !== false;
+
+    var baseBP = roundAmount(o.minutes * BP_PER_MINUTE, 0);
+    var multipliedBP = roundAmount(baseBP * multiplier, 0);
+    var bonusBP = calcActionBonusBP(o.actions);
+    var subtotal = multipliedBP + bonusBP;
+
+    /* 非受験科目・読書は1日100BPまで(受験勉強を押しのけないため) */
+    var nonExamCapped = false;
+    var afterNonExam = subtotal;
+    if (!isExamSubject) {
+      var roomNonExam = Math.max(0, NON_EXAM_DAILY_BP_CAP - todayNonExamBP);
+      if (subtotal > roomNonExam) {
+        afterNonExam = roomNonExam;
+        nonExamCapped = true;
+      }
+    }
+
+    /* 全体の1日上限 1,500BP */
+    var dailyCapped = false;
+    var roomDaily = Math.max(0, DAILY_BP_CAP - todayTotalBP);
+    var granted = afterNonExam;
+    if (afterNonExam > roomDaily) {
+      granted = roomDaily;
+      dailyCapped = true;
+    }
+
+    return {
+      baseBP: baseBP,
+      multiplierApplied: multiplier,
+      multipliedBP: multipliedBP,
+      bonusBP: bonusBP,
+      subtotalBP: subtotal,
+      grantedBP: granted,
+      lostToCapBP: subtotal - granted,
+      nonExamCapped: nonExamCapped,
+      dailyCapped: dailyCapped,
+      isExamSubject: isExamSubject,
+      todayTotalAfter: todayTotalBP + granted,
+      todayNonExamAfter: isExamSubject ? todayNonExamBP : todayNonExamBP + granted
+    };
+  }
+
+  /* ---------- 時事ニュース (C章) ---------- */
+
+  /* faculty: 'economics'|'law'|'international' に一致すると×1.5。
+   * '*' はどの学部でも加点(IT・AI)。null はボーナスなし。 */
+  var NEWS_GENRES = [
+    { id: 'economy', name: '経済・金融・為替', bp: 40, faculty: 'economics' },
+    { id: 'politics', name: '政治・法律・裁判', bp: 40, faculty: 'law' },
+    { id: 'international', name: '国際・外交', bp: 40, faculty: 'international' },
+    { id: 'society', name: '社会・事件・教育', bp: 30, faculty: null },
+    { id: 'tech', name: 'IT・AI', bp: 40, faculty: '*' },
+    { id: 'environment', name: '環境・自然・災害', bp: 35, faculty: null },
+    { id: 'rights', name: '人権・多様性', bp: 35, faculty: null },
+    { id: 'local', name: '地域・ふるさと', bp: 30, faculty: null },
+    { id: 'sports', name: 'スポーツ', bp: 20, faculty: null },
+    { id: 'culture', name: '芸能・カルチャー', bp: 20, faculty: null }
+  ];
+  var NEWS_DAILY_LIMIT = 3;              // 受験勉強を圧迫しないため
+  var NEWS_FACULTY_MULTIPLIER = 1.5;
+  var NEWS_ALL_GENRES_BONUS_BP = 200;    // 全ジャンル制覇デー
+
+  function newsGenreById(id) {
+    for (var i = 0; i < NEWS_GENRES.length; i++) {
+      if (NEWS_GENRES[i].id === id) return NEWS_GENRES[i];
+    }
+    return null;
+  }
+
+  /**
+   * ニュース1本のBP。志望学部に一致するジャンルは×1.5。
+   * 1日3本を超えた分は0BP(記録自体は残せる想定)。
+   */
+  function calcNewsBP(opts) {
+    var o = opts || {};
+    var genre = newsGenreById(o.genreId);
+    if (!genre) throw new RangeError('未知のジャンルです: ' + o.genreId);
+    var faculties = Array.isArray(o.faculties) ? o.faculties : [];
+    var todayCount = (o.todayCount === undefined || o.todayCount === null) ? 0 : o.todayCount;
+    assertWholeCount(todayCount, '今日の記録本数');
+
+    var matched = genre.faculty === '*' ||
+      (genre.faculty !== null && faculties.indexOf(genre.faculty) !== -1);
+    var bp = matched ? roundAmount(genre.bp * NEWS_FACULTY_MULTIPLIER, 0) : genre.bp;
+    var overLimit = todayCount >= NEWS_DAILY_LIMIT;
+
+    return {
+      genreId: genre.id,
+      genreName: genre.name,
+      baseBP: genre.bp,
+      facultyMatched: matched,
+      bp: overLimit ? 0 : bp,
+      overLimit: overLimit,
+      remainingToday: Math.max(0, NEWS_DAILY_LIMIT - todayCount)
+    };
+  }
+
+  /** 今日その日に全ジャンルを記録したか(+200BP) */
+  function calcAllGenresBonus(recordedGenreIds) {
+    var ids = Array.isArray(recordedGenreIds) ? recordedGenreIds : [];
+    var seen = {};
+    ids.forEach(function (id) { if (newsGenreById(id)) seen[id] = true; });
+    var count = Object.keys(seen).length;
+    var complete = count >= NEWS_GENRES.length;
+    return {
+      recorded: count,
+      total: NEWS_GENRES.length,
+      complete: complete,
+      bonusBP: complete ? NEWS_ALL_GENRES_BONUS_BP : 0
+    };
+  }
+
+  /* ==================================================================
    * 金融シミュレーション (ver.4)
    * 仕様: docs/design/FEATURE_SPEC_v4.md D章 / 決定事項 H-4〜H-7
    * ================================================================== */
@@ -671,6 +913,86 @@
     };
   }
 
+  /* ---------- GT(ゴールドチケット)とPayPay交換 ---------- */
+
+  var GT_BASE_YEN = 100;              // 基準: 1 GT = 100円 (H-5)
+  var GT_FX_BAND = 0.2;               // 為替による変動は ±20% まで
+  var FX_BASE_RATE = 150;             // 基準の為替(1ドル150円)
+  var PAYPAY_MONTHLY_CAP_YEN = 2000;  // 月間上限。円建てで固定 (H-6)
+
+  /* GTはBPでは絶対に買えない。マイルストーンでのみ発行される。 */
+  var GT_MILESTONES = {
+    weeklyGoal: 1,          // 週の学習目標を達成
+    monthlyGoal: 3,         // 月の学習目標を達成
+    unitMastered: 2,        // 単元を完全制覇
+    mockExamImproved: 5,    // 模試で前回より点数UP
+    allSubjectsMonth: 5,    // 全受験科目を1ヶ月継続
+    gradeUp: 10,            // 志望校の判定がUP
+    weekendSummary: 1,      // 週末のまとめを提出
+    weekendSummary4x: 3     // 週末のまとめ4週連続
+  };
+
+  /**
+   * 1 GT が何円になるかを求める。
+   * 為替が動くのは「1枚あたりの価値」であって、月間上限(円)は動かない。
+   * 円安ほど1枚の価値が上がり、少ない枚数で満額に届く。
+   */
+  function gtToYen(opts) {
+    var o = opts || {};
+    var baseRate = (o.baseFxRate === undefined || o.baseFxRate === null) ? FX_BASE_RATE : o.baseFxRate;
+    assertPositive(baseRate, '基準レート');
+    assertPositive(o.fxRate, '為替レート');
+    var rawRatio = o.fxRate / baseRate;
+    var ratio = Math.min(1 + GT_FX_BAND, Math.max(1 - GT_FX_BAND, rawRatio));
+    var yenPerGT = roundAmount(GT_BASE_YEN * ratio, 0);
+    var gtAmount = (o.gtAmount === undefined || o.gtAmount === null) ? 0 : o.gtAmount;
+    assertWholeCount(gtAmount, 'GT枚数');
+    return {
+      yenPerGT: yenPerGT,
+      gtAmount: gtAmount,
+      totalYen: yenPerGT * gtAmount,
+      fxRatio: roundAmount(ratio, 4),
+      bandCapped: rawRatio !== ratio,
+      trend: yenPerGT > GT_BASE_YEN ? 'weak-yen' : (yenPerGT < GT_BASE_YEN ? 'strong-yen' : 'neutral')
+    };
+  }
+
+  /**
+   * PayPay交換の申請内容を計算する。
+   * 月間上限は円建てで固定。為替がどう動いても親の支出は上限を1円も超えない。
+   * したがって枚数は必ず切り捨てる(端数分は翌月に持ち越さず、GTとして手元に残る)。
+   */
+  function calcPayPayRequest(opts) {
+    var o = opts || {};
+    var availableGT = (o.availableGT === undefined || o.availableGT === null) ? 0 : o.availableGT;
+    assertWholeCount(availableGT, '保有GT');
+    var usedYen = (o.usedYenThisMonth === undefined || o.usedYenThisMonth === null) ? 0 : o.usedYenThisMonth;
+    assertNotNegative(usedYen, '今月の交換済み金額');
+    var capYen = (o.monthlyCapYen === undefined || o.monthlyCapYen === null) ? PAYPAY_MONTHLY_CAP_YEN : o.monthlyCapYen;
+    assertNotNegative(capYen, '月間上限');
+
+    var rate = gtToYen({ fxRate: o.fxRate, baseFxRate: o.baseFxRate, gtAmount: 0 });
+    var remainingCapYen = Math.max(0, capYen - usedYen);
+    var affordableGT = Math.floor(remainingCapYen / rate.yenPerGT);
+    var redeemableGT = Math.min(availableGT, affordableGT);
+    var payoutYen = redeemableGT * rate.yenPerGT;
+
+    return {
+      yenPerGT: rate.yenPerGT,
+      trend: rate.trend,
+      availableGT: availableGT,
+      redeemableGT: redeemableGT,
+      leftoverGT: availableGT - redeemableGT,
+      payoutYen: payoutYen,
+      monthlyCapYen: capYen,
+      usedYenThisMonth: usedYen,
+      remainingCapYen: remainingCapYen - payoutYen,
+      capReached: redeemableGT < availableGT,
+      /* 円高のときは「待つ」判断が得になる。それを画面で伝えるための材料。 */
+      advice: rate.trend === 'strong-yen' ? 'wait-recommended' : 'ok'
+    };
+  }
+
   /** 旧パイロット版(ibuki_beat_state)からの移行 */
   function migrateOldPilot(oldParsed, subjects) {
     if (!oldParsed || !Array.isArray(oldParsed.sessionLog)) return [];
@@ -723,6 +1045,35 @@
     defaultState: defaultState,
     sanitizeState: sanitizeState,
     migrateOldPilot: migrateOldPilot,
+    /* --- ポイント獲得 (ver.4) --- */
+    BP_PER_MINUTE: BP_PER_MINUTE,
+    DAILY_BP_CAP: DAILY_BP_CAP,
+    NON_EXAM_DAILY_BP_CAP: NON_EXAM_DAILY_BP_CAP,
+    ACTION_BONUS_BP: ACTION_BONUS_BP,
+    HABIT_BP: HABIT_BP,
+    MULTIPLIER_LIMITS: MULTIPLIER_LIMITS,
+    MULTIPLIER_CAP: MULTIPLIER_CAP,
+    FEVER_MULTIPLIER: FEVER_MULTIPLIER,
+    conditionBonusFromHabits: conditionBonusFromHabits,
+    composeMultiplier: composeMultiplier,
+    isPlanAchieved: isPlanAchieved,
+    calcActionBonusBP: calcActionBonusBP,
+    calcStudyBP: calcStudyBP,
+    /* --- 時事ニュース (ver.4) --- */
+    NEWS_GENRES: NEWS_GENRES,
+    NEWS_DAILY_LIMIT: NEWS_DAILY_LIMIT,
+    NEWS_ALL_GENRES_BONUS_BP: NEWS_ALL_GENRES_BONUS_BP,
+    newsGenreById: newsGenreById,
+    calcNewsBP: calcNewsBP,
+    calcAllGenresBonus: calcAllGenresBonus,
+    /* --- GT / PayPay (ver.4) --- */
+    GT_BASE_YEN: GT_BASE_YEN,
+    GT_FX_BAND: GT_FX_BAND,
+    FX_BASE_RATE: FX_BASE_RATE,
+    PAYPAY_MONTHLY_CAP_YEN: PAYPAY_MONTHLY_CAP_YEN,
+    GT_MILESTONES: GT_MILESTONES,
+    gtToYen: gtToYen,
+    calcPayPayRequest: calcPayPayRequest,
     /* --- 金融シミュレーション (ver.4) --- */
     INTEREST_SPEED_MULTIPLIER: INTEREST_SPEED_MULTIPLIER,
     DEPOSIT_LOCK_WEEKS: DEPOSIT_LOCK_WEEKS,
