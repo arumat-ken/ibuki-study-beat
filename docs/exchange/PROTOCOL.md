@@ -68,6 +68,7 @@ https://raw.githubusercontent.com/arumat-ken/ibuki-study-beat/main/<パス>
 | モック用スターター | `docs/mockups/_starter.html` | Claude |
 | 進行状況ボード | `docs/exchange/STATUS.md` | **両者が更新** |
 | レビュー・申し送り | `docs/exchange/REVIEW.md` | Claude → Codex |
+| **用語集** | `docs/GLOSSARY.md` | **Codex・Claudeが更新** |
 
 **パスは変えないこと。** 相手はこのパスを見に来る。
 
@@ -101,6 +102,8 @@ https://raw.githubusercontent.com/arumat-ken/ibuki-study-beat/main/<パス>
    グラフ画面の構造、黒×ゴールドの世界観、外部通信ゼロ、5画面の役割。
 5. **`main` に直接 push しない**(PR経由。ただし親の判断による例外は可)
 6. **確定していない仕様を推測で埋めない**。「要確認」と明記して親に判断を仰ぐ。
+7. **新しい専門用語・略語・記号を使う時は、`docs/GLOSSARY.md`を先に更新する**
+   意味、このアプリでの役割、具体例、誤解しやすい点を一項目で説明する。別の資料を読まないと分からない説明にしない。
 
 ---
 
