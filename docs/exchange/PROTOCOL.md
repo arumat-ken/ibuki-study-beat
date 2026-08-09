@@ -1,5 +1,7 @@
 # AI連携プロトコル — Codex × Claude
 
+> **2026-08-09更新:** 状態管理・担当ロック・引き渡しの正本は [`AUTONOMOUS_HANDOFF.md`](AUTONOMOUS_HANDOFF.md) と `TASK_BOARD.md` / `tasks/` です。本書の役割境界と保護条件は有効ですが、旧来の人間によるコピー&ペースト・zip経路は廃止しました。矛盾時は自律引き渡し文書を優先します。
+
 このリポジトリで複数のAIが役割分担して開発するための取り決め。
 **AIも人間も、このファイルのルールに従うこと。**
 
@@ -18,16 +20,17 @@
 
 ---
 
-## 2. 受け渡しの方法(3つのルート)
+## 2. 受け渡しの方法
 
-### ルートA: Codex が直接コミットする 【推奨・自動】
+### Git worktree + Pull Request 【必須】
 
 ```
-Codex が codex/* ブランチを作成
-   → 成果物をコミット
-   → main 宛の Pull Request を作成
-   → Claude が PR を購読していれば自動的に気づく
-   → Claude がレビュー・コメント・修正を push
+`ai-task.mjs` で ready → claim
+   → 専用worktree・専用ブランチで作業
+   → checkpoint + snapshot
+   → commit + Pull Request
+   → handoff + snapshot
+   → 受け手がreview
    → 親が承認してマージ
 ```
 
@@ -36,23 +39,7 @@ Codex が codex/* ブランチを作成
 2. Codex の GitHub App に、本リポジトリへの **write 権限**を付与
 3. 対象リポジトリとして `arumat-ken/ibuki-study-beat` を選択
 
-### ルートB: チャット版ChatGPTの出力を、人が保存する 【手動】
-
-チャット版ChatGPTには**書き込み権限が構造的にありません**(読み取り専用)。
-出力は人が次のいずれかで運びます。
-
-- GitHubのWeb画面から貼り付けてコミット
-- Claudeとのチャットに貼り付け(Claudeが代わりにコミットする)
-- ファイルとしてClaudeのチャットに添付
-
-### ルートC: 読み取りだけ共有する 【常時有効】
-
-本リポジトリは公開されているため、**どのAIでも読める**。
-URLを渡すだけで前提知識を共有できる(設定不要)。
-
-```
-https://raw.githubusercontent.com/arumat-ken/ibuki-study-beat/main/<パス>
-```
+人がコード・長文・zipを相手AIにコピーして渡す方法は使わない。PR、コミット、台帳が唯一の引き渡し経路である。
 
 ---
 
