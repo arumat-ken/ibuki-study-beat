@@ -74,6 +74,21 @@ node tests/e2e/acceptance.mjs
 - 試験結果: [TEST_RESULTS.md](TEST_RESULTS.md)
 - 画面スクリーンショット: [docs/screenshots/](docs/screenshots/)
 
+### Codex × Claude Code の引き渡し
+
+AI間でコード本文をコピー&ペーストしません。ローカルの共有Git管理領域にWIPロックを置き、状態・checkpoint・引き渡し履歴はGit追跡の台帳に残します。
+
+```bash
+# 初回のみ: 同じMacに安全なCodex/Claude用worktreeを用意（再実行は検証のみ）
+node scripts/setup-ai-worktrees.mjs --repo "$(git rev-parse --show-toplevel)" --base main
+
+# 作業開始前の確認
+node scripts/ai-task.mjs audit
+node scripts/ai-task.mjs list
+```
+
+詳しい状態遷移と復旧手順は [docs/exchange/AUTONOMOUS_HANDOFF.md](docs/exchange/AUTONOMOUS_HANDOFF.md) を参照してください。
+
 ## ファイル構成
 
 ```
