@@ -22,6 +22,7 @@
       <span class="brand-wrap">
         <span class="brand">IBUKI STUDY BEAT</span>
         <span class="version-badge" id="app-version">ver. -</span>
+        <span class="build-badge" id="app-build"></span>
       </span>
       <button class="head-btn" id="btn-rename-char" aria-label="キャラクター名を変更">✏️</button>
     </div>
@@ -48,6 +49,15 @@
       </div>
       <button class="btn primary big block" id="btn-start-study" style="margin-top:10px">学習を開始する ▶</button>
     </div>
+
+    <button class="card boost-card" id="btn-boost-card" type="button">
+      <div class="boost-top">
+        <span>今日のブースト</span>
+        <span class="boost-mult" id="boost-mult">1.00倍</span>
+        <span class="boost-arrow">›</span>
+      </div>
+      <div class="boost-sub" id="boost-sub">装備+0.00 / 条件+0.00 / BP 0</div>
+    </button>
 
     <div class="card">
       <h2>今日の積み上げ</h2>
@@ -196,6 +206,24 @@
       <button class="btn" id="btn-chat"><span class="ico">💬</span>メッセージ</button>
       <button class="btn" id="btn-coach-rename"><span class="ico">✏️</span>名前変更</button>
     </div>
+    <div class="card" id="equip-card">
+      <div class="equip-head">
+        <h2 style="margin-bottom:0">装備</h2>
+        <span class="equip-total" id="equip-total-mult">合計+0.00</span>
+      </div>
+      <div class="equip-slots" id="equip-slots"></div>
+      <button class="btn block" id="btn-equip-change" style="margin-top:10px">装備を変更する</button>
+    </div>
+    <button class="settings-item" id="btn-open-shop">
+      <span class="ico">🛍️</span>ショップ
+      <span class="muted small" id="shop-summary" style="margin-left:auto; margin-right:6px">BP 0 / 所持0</span>
+      <span class="chev">›</span>
+    </button>
+    <div class="card" id="focus-mode-card" style="display:none">
+      <h2>集中モード</h2>
+      <p class="muted small">受験が近づいてきたので、装備・ショップはお休み中。学習記録とカウントダウンに集中しよう。</p>
+    </div>
+    <div style="height:12px"></div>
     <div class="card" id="pose-panel" style="display:none">
       <h2>ポーズコレクション</h2>
       <div class="pose-grid" id="pose-grid"></div>
@@ -224,6 +252,7 @@
       <button class="settings-item" data-panel="exam"><span class="ico">🏫</span>受験情報<span class="chev">›</span></button>
       <button class="settings-item" data-panel="faculty"><span class="ico">🌍</span>志望学部<span class="chev">›</span></button>
       <button class="settings-item" data-panel="subjects"><span class="ico">📚</span>科目設定<span class="chev">›</span></button>
+      <button class="settings-item" data-panel="condition"><span class="ico">🌙</span>コンディション記録<span class="chev">›</span></button>
       <button class="settings-item" data-panel="ai"><span class="ico">🤖</span>AI連携設定<span class="chev">›</span></button>
       <button class="settings-item" data-panel="axis"><span class="ico">📈</span>グラフ・Y軸設定<span class="chev">›</span></button>
       <button class="settings-item" data-panel="data"><span class="ico">💾</span>データ管理<span class="chev">›</span></button>
@@ -280,6 +309,7 @@
   <div class="beat-wrap" id="celebrate-beat"></div>
   <div class="c-msg" id="celebrate-msg">ナイスビート！</div>
   <div class="c-sub" id="celebrate-sub"></div>
+  <div class="c-bp" id="celebrate-bp" style="display:none"></div>
   <button class="btn primary" id="celebrate-close" style="margin-top:18px">閉じる</button>
 </div>
 

@@ -16,12 +16,12 @@
   var MAX_MIN_PER_RECORD = 720; // 1レコードあたりの上限(12時間)
 
   var DEFAULT_SUBJECTS = [
-    { id: 'eng', name: '英語', color: '#4A90D9', visible: true },
-    { id: 'math', name: '数学', color: '#58B368', visible: true },
-    { id: 'jpn', name: '国語', color: '#F5A623', visible: true },
-    { id: 'sci', name: '理科', color: '#9B59B6', visible: true },
-    { id: 'soc', name: '社会', color: '#E8604C', visible: true },
-    { id: 'other', name: 'その他', color: '#9AA0A6', visible: true }
+    { id: 'eng', name: '英語', color: '#4A90D9', visible: true, examSubject: true },
+    { id: 'math', name: '数学', color: '#58B368', visible: true, examSubject: true },
+    { id: 'jpn', name: '国語', color: '#F5A623', visible: true, examSubject: true },
+    { id: 'sci', name: '理科', color: '#9B59B6', visible: true, examSubject: true },
+    { id: 'soc', name: '社会', color: '#E8604C', visible: true, examSubject: true },
+    { id: 'other', name: 'その他', color: '#9AA0A6', visible: true, examSubject: false }
   ];
 
   var STUDY_KINDS = ['暗記', '演習', '読解', '講義', '復習', 'テスト', 'その他'];
@@ -99,6 +99,19 @@
     return typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= min && v <= max;
   }
 
+  /** 配列から重複を除く(順序は保持)。 */
+  function uniqueList(ids) {
+    var seen = {}, out = [];
+    ids.forEach(function (id) { if (!seen[id]) { seen[id] = true; out.push(id); } });
+    return out;
+  }
+  /** 重複を除いた上で、defaultId が含まれていなければ先頭に補う(ステージの'street'用)。 */
+  function uniqueWithDefault(ids, defaultId) {
+    var out = uniqueList(ids);
+    if (out.indexOf(defaultId) === -1) out.unshift(defaultId);
+    return out;
+  }
+
   function validateEvent(ev) {
     var errors = [];
     if (!ev || typeof ev !== 'object') return { ok: false, errors: ['イベントデータが不正です'] };
@@ -162,11 +175,15 @@
     };
   }
 
-  /** 連続記録日数(今日または昨日を終端とした実績>0の連続日数) */
-  function streakDays(records, todayStr_) {
+  /**
+   * 連続記録日数(今日または昨日を終端とした実績>0の連続日数)。
+   * guardedDates(消費アイテム「リカバリー」を使った日)は実績0でも連続扱いにする。
+   */
+  function streakDays(records, todayStr_, guardedDates) {
     var recs = activeRecords(records).filter(function (r) { return r.actualMin > 0; });
     var dates = {};
     recs.forEach(function (r) { dates[r.date] = true; });
+    (guardedDates || []).forEach(function (d) { dates[d] = true; });
     var start = dates[todayStr_] ? todayStr_ : addDays(todayStr_, -1);
     if (!dates[start]) return 0;
     var n = 0, d = start;
@@ -267,7 +284,7 @@
         examDate: null,
         ai: defaultAI(),
         axis: defaultAxis(),
-        subjects: DEFAULT_SUBJECTS.map(function (s) { return { id: s.id, name: s.name, color: s.color, visible: s.visible }; }),
+        subjects: DEFAULT_SUBJECTS.map(function (s) { return { id: s.id, name: s.name, color: s.color, visible: s.visible, examSubject: s.examSubject }; }),
         faculties: defaultFaculties()
       },
       records: [],
@@ -279,6 +296,9 @@
       },
       activeSession: null,
       poseUnlocks: [],
+      shop: defaultShopState(),
+      habits: {},
+      dailyBonuses: {},
       seq: 1
     };
   }
@@ -334,7 +354,8 @@
           id: x.id,
           name: x.name.slice(0, 12),
           color: /^#[0-9a-fA-F]{6}$/.test(x.color) ? x.color : '#9AA0A6',
-          visible: x.visible !== false
+          visible: x.visible !== false,
+          examSubject: x.examSubject !== false
         };
       });
       if (subs.length > 0) out.settings.subjects = subs;
@@ -365,7 +386,8 @@
           reflection: typeof r.reflection === 'string' ? r.reflection.slice(0, 300) : '',
           createdAt: typeof r.createdAt === 'number' ? r.createdAt : 0,
           updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : 0,
-          deletedAt: typeof r.deletedAt === 'number' ? r.deletedAt : null
+          deletedAt: typeof r.deletedAt === 'number' ? r.deletedAt : null,
+          bp: isIntInRange(r.bp, 0, DAILY_BP_CAP) ? r.bp : 0
         };
       });
     }
@@ -419,6 +441,78 @@
     }
     if (Array.isArray(parsed.poseUnlocks)) {
       out.poseUnlocks = parsed.poseUnlocks.filter(function (p) { return typeof p === 'string'; });
+    }
+    var sh = parsed.shop || {};
+    var shOwned = sh.owned || {};
+    ['costume', 'skill', 'stage'].forEach(function (cat) {
+      if (Array.isArray(shOwned[cat])) {
+        var validIds = { costume: COSTUME_ITEMS, skill: SKILL_ITEMS, stage: STAGE_ITEMS }[cat].map(function (x) { return x.id; });
+        var ids = shOwned[cat].filter(function (id) { return typeof id === 'string' && validIds.indexOf(id) !== -1; });
+        out.shop.owned[cat] = cat === 'stage' ? uniqueWithDefault(ids, 'street') : uniqueList(ids);
+      }
+    });
+    if (shOwned.consumable && typeof shOwned.consumable === 'object') {
+      var consOwned = {};
+      Object.keys(shOwned.consumable).forEach(function (id) {
+        if (consumableById(id) && isIntInRange(shOwned.consumable[id], 0, 999)) consOwned[id] = shOwned.consumable[id];
+      });
+      out.shop.owned.consumable = consOwned;
+    }
+    var shUsed = (sh.used && sh.used.consumable) || {};
+    if (shUsed && typeof shUsed === 'object') {
+      var consUsed = {};
+      Object.keys(shUsed).forEach(function (id) {
+        if (consumableById(id) && isIntInRange(shUsed[id], 0, 999)) consUsed[id] = shUsed[id];
+      });
+      out.shop.used.consumable = consUsed;
+    }
+    var shEq = sh.equipped || {};
+    if (shEq.costume === null || (typeof shEq.costume === 'string' && out.shop.owned.costume.indexOf(shEq.costume) !== -1)) {
+      out.shop.equipped.costume = shEq.costume;
+    }
+    if (shEq.skill === null || (typeof shEq.skill === 'string' && out.shop.owned.skill.indexOf(shEq.skill) !== -1)) {
+      out.shop.equipped.skill = shEq.skill;
+    }
+    if (typeof shEq.stage === 'string' && out.shop.owned.stage.indexOf(shEq.stage) !== -1) {
+      out.shop.equipped.stage = shEq.stage;
+    }
+    if (Array.isArray(sh.activeBoosts)) {
+      out.shop.activeBoosts = sh.activeBoosts.filter(function (b) {
+        return b && typeof b === 'object' && typeof b.itemId === 'string' && consumableById(b.itemId) &&
+          typeof b.expiresAt === 'number';
+      }).map(function (b) {
+        return { id: typeof b.id === 'string' ? b.id : 'ab' + Math.random().toString(36).slice(2, 10), itemId: b.itemId, kind: typeof b.kind === 'string' ? b.kind : '', expiresAt: b.expiresAt };
+      });
+    }
+    if (isDateStr(sh.feverLastUsedDate)) out.shop.feverLastUsedDate = sh.feverLastUsedDate;
+    if (Array.isArray(sh.streakGuardDates)) {
+      out.shop.streakGuardDates = uniqueList(sh.streakGuardDates.filter(function (d) { return isDateStr(d); }));
+    }
+    if (parsed.habits && typeof parsed.habits === 'object') {
+      var habits = {};
+      Object.keys(parsed.habits).forEach(function (date) {
+        if (!isDateStr(date)) return;
+        var entry = parsed.habits[date];
+        if (!entry || typeof entry !== 'object') return;
+        var clean = {};
+        HABIT_KEYS.forEach(function (k) { if (typeof entry[k] === 'boolean') clean[k] = entry[k]; });
+        habits[date] = clean;
+      });
+      out.habits = habits;
+    }
+    if (parsed.dailyBonuses && typeof parsed.dailyBonuses === 'object') {
+      var dailyBonuses = {};
+      Object.keys(parsed.dailyBonuses).forEach(function (date) {
+        if (!isDateStr(date)) return;
+        var entry = parsed.dailyBonuses[date];
+        if (!entry || typeof entry !== 'object') return;
+        var clean = {};
+        Object.keys(entry).forEach(function (k) {
+          if (Object.prototype.hasOwnProperty.call(ACTION_BONUS_BP, k) && entry[k] === true) clean[k] = true;
+        });
+        if (Object.keys(clean).length > 0) dailyBonuses[date] = clean;
+      });
+      out.dailyBonuses = dailyBonuses;
     }
     if (typeof parsed.createdAt === 'string') out.createdAt = parsed.createdAt;
     out.seq = isIntInRange(parsed.seq, 1, 1e9) ? parsed.seq : (out.records.length + out.events.length + 10);
@@ -501,20 +595,24 @@
         multiplier: FEVER_MULTIPLIER,
         feverActive: true,
         capped: false,
-        breakdown: { base: FEVER_MULTIPLIER, costume: 0, skill: 0, stage: 0, condition: 0 }
+        breakdown: { base: FEVER_MULTIPLIER, costume: 0, skill: 0, stage: 0, condition: 0, consumable: 0 }
       };
     }
     var costume = clampBonus(o.costumeBonus, MULTIPLIER_LIMITS.costume);
     var skill = clampBonus(o.skillBonus, MULTIPLIER_LIMITS.skill);
     var stage = clampBonus(o.stageBonus, MULTIPLIER_LIMITS.stage);
     var condition = clampBonus(o.conditionBonus, MULTIPLIER_LIMITS.condition);
-    var raw = 1.0 + costume + skill + stage + condition;
+    /* 消費アイテム(エナジードリンク・スポットライト)はスロットの上限とは別に加算する。
+     * カテゴリ別の上限は持たないが、全体は他の加算分と同じく3.0倍の上限に従う。 */
+    var consumable = (o.consumableBonus === undefined || o.consumableBonus === null) ? 0 : o.consumableBonus;
+    assertNotNegative(consumable, '消費アイテムの倍率');
+    var raw = 1.0 + costume + skill + stage + condition + consumable;
     var multiplier = Math.min(raw, MULTIPLIER_CAP);
     return {
       multiplier: roundAmount(multiplier, 2),
       feverActive: false,
       capped: raw > MULTIPLIER_CAP,
-      breakdown: { base: 1.0, costume: costume, skill: skill, stage: stage, condition: condition }
+      breakdown: { base: 1.0, costume: costume, skill: skill, stage: stage, condition: condition, consumable: consumable }
     };
   }
 
@@ -1032,6 +1130,207 @@
     };
   }
 
+  /* ==================================================================
+   * 装備とショップ (ver.4)
+   * 仕様: docs/design/FEATURE_SPEC_v4.md B章 / 決定事項 H-4
+   * ================================================================== */
+
+  /* 👕 衣装。スロット1。買い集めても同時装備は1個だけ。 */
+  var COSTUME_ITEMS = [
+    { id: 'socks', name: '白いソックス', bonus: 0.1, price: 500 },
+    { id: 'gloves', name: 'スパンコールのグローブ', bonus: 0.2, price: 1500 },
+    { id: 'fedora', name: 'フェドーラハット', bonus: 0.3, price: 3000 },
+    { id: 'belt', name: 'ゴールドベルト', bonus: 0.4, price: 6000 },
+    { id: 'jacket', name: 'ライトアップジャケット', bonus: 0.5, price: 12000 }
+  ];
+
+  /* 💫 スキル。スロット2。学習パターンに応じた条件付きボーナス
+   * (rhythm_keep のみ例外で、倍率ではなく連続日数ボーナスBPを2倍にする)。 */
+  var SKILL_ITEMS = [
+    { id: 'rhythm_keep', name: 'リズムキープ', desc: '連続日数ボーナスが2倍', bonus: 0, price: 2000 },
+    { id: 'moonwalk', name: 'ムーンウォーク', desc: '最も遅れている科目のポイント +0.5倍', bonus: 0.5, price: 4000 },
+    { id: 'spin_turn', name: 'スピンターン', desc: '1日に3科目以上やると +0.3倍', bonus: 0.3, price: 5000 },
+    { id: 'zero_gravity', name: 'ゼロ・グラビティ', desc: '90分以上連続学習で +0.5倍', bonus: 0.5, price: 8000 },
+    { id: 'anti_gravity_lean', name: 'アンチグラビティ・リーン', desc: '早朝(6〜8時)の学習 +1.0倍', bonus: 1.0, price: 10000 }
+  ];
+
+  /* 🎤 ステージ。スロット3。ストリートは初期装備・無料。 */
+  var STAGE_ITEMS = [
+    { id: 'street', name: 'ストリート', bonus: 0, price: 0 },
+    { id: 'live_house', name: 'ライブハウス', bonus: 0.2, price: 3000 },
+    { id: 'budokan', name: '武道館', bonus: 0.4, price: 10000 },
+    { id: 'dome_tour', name: 'ドームツアー', bonus: 0.6, price: 25000 },
+    { id: 'world_stage', name: 'ワールドステージ', bonus: 1.0, price: 50000 }
+  ];
+
+  /* ⚡ 消費アイテム。kind: 'timed'=分単位の期限 / 'day'=その日いっぱい /
+   * 'fever'=10倍(週1回まで) / 'streak-guard'=連続記録の保険 */
+  var CONSUMABLE_ITEMS = [
+    { id: 'energy_drink', name: 'エナジードリンク', desc: '60分間 +1.0倍', price: 300, kind: 'timed', durationMin: 60, bonus: 1.0 },
+    { id: 'spotlight', name: 'スポットライト', desc: 'その日1日 +0.5倍', price: 800, kind: 'day', bonus: 0.5 },
+    { id: 'fever_time', name: 'フィーバータイム', desc: '30分間10倍(週1回まで)', price: 3000, kind: 'fever', durationMin: 30 },
+    { id: 'recovery', name: 'リカバリー', desc: '連続記録を1日だけ守る(体調不良の日の保険)', price: 1000, kind: 'streak-guard' }
+  ];
+
+  function findById(list, id) {
+    for (var i = 0; i < list.length; i++) { if (list[i].id === id) return list[i]; }
+    return null;
+  }
+  function costumeById(id) { return findById(COSTUME_ITEMS, id); }
+  function skillById(id) { return findById(SKILL_ITEMS, id); }
+  function stageById(id) { return findById(STAGE_ITEMS, id); }
+  function consumableById(id) { return findById(CONSUMABLE_ITEMS, id); }
+
+  /** カテゴリを問わずアイテムIDから {item, category} を探す。 */
+  function shopItemById(id) {
+    var c = costumeById(id); if (c) return { item: c, category: 'costume' };
+    var s = skillById(id); if (s) return { item: s, category: 'skill' };
+    var g = stageById(id); if (g) return { item: g, category: 'stage' };
+    var m = consumableById(id); if (m) return { item: m, category: 'consumable' };
+    return null;
+  }
+
+  function defaultShopState() {
+    return {
+      owned: { costume: [], skill: [], stage: ['street'], consumable: {} },
+      used: { consumable: {} },
+      equipped: { costume: null, skill: null, stage: 'street' },
+      activeBoosts: [],        // {id, itemId, kind, expiresAt(ms)}
+      feverLastUsedDate: null, // 週1回制限の判定に使う日付文字列
+      streakGuardDates: []     // リカバリーを使って連続記録を守った日付
+    };
+  }
+
+  /* 安全装置(FEATURE_SPEC_v4.md「受験直前の集中モード」): 受験日の30日前になったら
+   * 装備・ショップ・消費アイテムを自動でOFFにし、シンプルな学習記録に戻す。 */
+  var FOCUS_MODE_DAYS_BEFORE_EXAM = 30;
+
+  /** 集中モード(受験直前で装備・ショップを止める期間)かどうか。 */
+  function isFocusModeActive(examDate, todayStr_) {
+    if (!isDateStr(examDate) || !isDateStr(todayStr_)) return false;
+    var dd = diffDays(todayStr_, examDate);
+    return dd >= 0 && dd <= FOCUS_MODE_DAYS_BEFORE_EXAM;
+  }
+
+  /** 所持している消費アイテムのうち、まだ使っていない残数。 */
+  function consumableAvailable(shop, itemId) {
+    var owned = (shop.owned.consumable && shop.owned.consumable[itemId]) || 0;
+    var used = (shop.used.consumable && shop.used.consumable[itemId]) || 0;
+    return Math.max(0, owned - used);
+  }
+
+  /**
+   * 購入できるか検証する(実際の残高減算・所持追加はapp.js側で行う)。
+   * 衣装・スキル・ステージは同じアイテムを二重購入できない。消費アイテムは何個でも買える。
+   */
+  function validatePurchase(shop, itemId, balanceBP) {
+    var found = shopItemById(itemId);
+    if (!found) return { ok: false, errors: ['不明なアイテムです'] };
+    assertNotNegative(balanceBP, 'BP残高');
+    if (found.category !== 'consumable') {
+      var owned = shop.owned[found.category] || [];
+      if (owned.indexOf(itemId) !== -1) return { ok: false, errors: ['すでに所持しています'] };
+    }
+    if (balanceBP < found.item.price) return { ok: false, errors: ['BPが足りません'] };
+    return { ok: true, errors: [], item: found.item, category: found.category };
+  }
+
+  /** 装備できるか検証する(所持していないものは装備できない)。 */
+  function validateEquip(shop, category, itemId) {
+    if (category !== 'costume' && category !== 'skill' && category !== 'stage') {
+      return { ok: false, errors: ['不明なスロットです'] };
+    }
+    if (itemId !== null) {
+      var owned = shop.owned[category] || [];
+      if (owned.indexOf(itemId) === -1) return { ok: false, errors: ['そのアイテムは所持していません'] };
+    } else if (category === 'stage') {
+      return { ok: false, errors: ['ステージは未装備にできません'] };
+    }
+    return { ok: true, errors: [] };
+  }
+
+  /** その週の月曜日(YYYY-MM-DD)を求める。フィーバーの週1回制限に使う。 */
+  function weekStartStr(dateStr) {
+    var d = parseDate(dateStr);
+    var day = d.getDay(); // 0=日 .. 6=土
+    var diff = (day === 0 ? -6 : 1) - day;
+    d.setDate(d.getDate() + diff);
+    return toDateStr(d);
+  }
+
+  /** フィーバータイムを今週まだ使っていないか。 */
+  function canUseFever(feverLastUsedDate, todayStr_) {
+    if (!feverLastUsedDate) return true;
+    return weekStartStr(feverLastUsedDate) !== weekStartStr(todayStr_);
+  }
+
+  /**
+   * 学習記録・ニュースに蓄積されたBPから現在の残高を求める(購入分は差し引く)。
+   * 残高は保存済みのbpフィールドから毎回導出するため、購入・削除と矛盾しない。
+   */
+  function calcBpBalance(state) {
+    var earned = 0;
+    activeRecords(state.records).forEach(function (r) { earned += (r.bp | 0); });
+    (state.news || []).forEach(function (n) { earned += (n.bp | 0); });
+    var spent = 0;
+    var shop = state.shop || defaultShopState();
+    (shop.owned.costume || []).forEach(function (id) { var it = costumeById(id); if (it) spent += it.price; });
+    (shop.owned.skill || []).forEach(function (id) { var it = skillById(id); if (it) spent += it.price; });
+    (shop.owned.stage || []).forEach(function (id) { var it = stageById(id); if (it) spent += it.price; });
+    var cons = shop.owned.consumable || {};
+    Object.keys(cons).forEach(function (id) {
+      var it = consumableById(id);
+      if (it) spent += it.price * (cons[id] | 0);
+    });
+    return Math.max(0, earned - spent);
+  }
+
+  /* ---------- 生活習慣・コンディション ---------- */
+
+  var HABIT_KEYS = Object.keys(HABIT_BP);
+
+  /** 1日分の生活習慣フラグからその日のコンディションBPを求める。 */
+  function calcHabitBP(habitFlags) {
+    var h = habitFlags || {};
+    var total = 0;
+    HABIT_KEYS.forEach(function (k) { if (h[k]) total += HABIT_BP[k]; });
+    return total;
+  }
+
+  /* ---------- スキルの発動条件 ---------- */
+
+  /**
+   * 装備中のスキルが、その学習記録の状況(ctx)で発動するか判定し、倍率加算を返す。
+   * rhythm_keep は倍率ではなく行動ボーナスBPを2倍にするため、ここでは常に0を返す
+   * (呼び出し側が別途、連続日数ボーナスの扱いを変える)。
+   */
+  function evaluateSkillBonus(skillId, ctx) {
+    var skill = skillById(skillId);
+    if (!skill) return 0;
+    var c = ctx || {};
+    switch (skillId) {
+      case 'moonwalk': return c.isLaggingSubject ? skill.bonus : 0;
+      case 'spin_turn': return (c.distinctSubjectsToday || 0) >= 3 ? skill.bonus : 0;
+      case 'zero_gravity': return (c.actualMin || 0) >= 90 ? skill.bonus : 0;
+      case 'anti_gravity_lean': return (c.hour !== undefined && c.hour >= 6 && c.hour < 8) ? skill.bonus : 0;
+      default: return 0;
+    }
+  }
+
+  /** 記録済み時間が最も少ない科目のIDを返す(ムーンウォークの判定に使う)。 */
+  function laggingSubjectId(records, subjects) {
+    var totals = {};
+    (subjects || []).forEach(function (s) { totals[s.id] = 0; });
+    activeRecords(records).forEach(function (r) {
+      if (Object.prototype.hasOwnProperty.call(totals, r.subjectId)) totals[r.subjectId] += r.actualMin;
+    });
+    var minId = null, minVal = Infinity;
+    (subjects || []).forEach(function (s) {
+      if (totals[s.id] < minVal) { minVal = totals[s.id]; minId = s.id; }
+    });
+    return minId;
+  }
+
   /** 旧パイロット版(ibuki_beat_state)からの移行 */
   function migrateOldPilot(oldParsed, subjects) {
     if (!oldParsed || !Array.isArray(oldParsed.sessionLog)) return [];
@@ -1130,6 +1429,29 @@
     creditScoreStatus: creditScoreStatus,
     calculateInstallmentPlan: calculateInstallmentPlan,
     compareInstallmentPlans: compareInstallmentPlans,
-    applyCreditEvents: applyCreditEvents
+    applyCreditEvents: applyCreditEvents,
+    /* --- 装備・ショップ (ver.4) --- */
+    COSTUME_ITEMS: COSTUME_ITEMS,
+    SKILL_ITEMS: SKILL_ITEMS,
+    STAGE_ITEMS: STAGE_ITEMS,
+    CONSUMABLE_ITEMS: CONSUMABLE_ITEMS,
+    costumeById: costumeById,
+    skillById: skillById,
+    stageById: stageById,
+    consumableById: consumableById,
+    shopItemById: shopItemById,
+    defaultShopState: defaultShopState,
+    consumableAvailable: consumableAvailable,
+    validatePurchase: validatePurchase,
+    validateEquip: validateEquip,
+    weekStartStr: weekStartStr,
+    canUseFever: canUseFever,
+    calcBpBalance: calcBpBalance,
+    HABIT_KEYS: HABIT_KEYS,
+    calcHabitBP: calcHabitBP,
+    evaluateSkillBonus: evaluateSkillBonus,
+    laggingSubjectId: laggingSubjectId,
+    FOCUS_MODE_DAYS_BEFORE_EXAM: FOCUS_MODE_DAYS_BEFORE_EXAM,
+    isFocusModeActive: isFocusModeActive
   };
 });
