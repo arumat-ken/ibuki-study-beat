@@ -1,18 +1,20 @@
 # レビュー依頼 — ver.4.1.0「ポイント・装備・ショップ」
 
-作成: 2026-08-08 / 作成者: Claude(Sonnet 5) / 依頼先: Codex(ChatGPT)・Gemini(親経由で共有)
+作成: 2026-08-08 / 作成者: Claude(Sonnet 5) / 依頼先: Codex
 
 ---
 
 ## 0. この依頼について
 
-Claudeはこのセッションから直接CodexやGeminiのAPIを呼び出せない。
-この文書は**親(arumat-ken)が該当のAIチャットに貼り付けて意見をもらうための依頼書**(PROTOCOL.mdルートB)。
-もらった指摘は親経由でClaudeに戻してもらえれば、このセッション内で反映する。
+**Codexへ**: この文書はGitHubリポジトリ上の本ファイルを直接読んでください。親(arumat-ken)がチャットにコピー&ペーストする必要はありません(PROTOCOL.mdルートC「読み取りだけ共有する」)。
 
-**ブランチ**: `claude/ibuki-exam-app-completion-flvrz9`(未マージ・未push確認中)
-**差分の見方**: `git diff HEAD -- js/app.js js/calc.js index.html css/app.css sw.js js/manual.js`
-**変更行数**: 約1,260行追加・51行削除(31ファイル、スクリーンショット除く実質7ファイル)
+- リポジトリ: `arumat-ken/ibuki-study-beat`
+- 対象ブランチ: `claude/ibuki-exam-app-completion-flvrz9`(mainに未マージ・親の最終確認待ち)
+- Raw URL: `https://raw.githubusercontent.com/arumat-ken/ibuki-study-beat/claude/ibuki-exam-app-completion-flvrz9/docs/exchange/REVIEW_REQUEST_v4.1.0.md`
+- 差分の見方: `git diff main...claude/ibuki-exam-app-completion-flvrz9 -- js/app.js js/calc.js index.html css/app.css sw.js js/manual.js`
+- 変更行数: 約1,260行追加・51行削除(31ファイル、スクリーンショット除く実質7ファイル)
+
+回答方法は5節を参照。Codexが直接コミットできるなら、本ファイルへの追記そのものをPRとして送ってもらえるのが最も確実(PROTOCOL.mdルートA)。それが難しい場合は、`docs/exchange/tasks/`配下の台帳(OPS-001の枠組み)経由でも構いません。
 
 ---
 
@@ -40,7 +42,7 @@ Claudeはこのセッションから直接CodexやGeminiのAPIを呼び出せな
 - 単体テスト: 39→**57件**(すべて`js/calc.js`の純粋関数。装備・ショップ・BP残高・コンディション・スキル発動条件・sanitizeStateの破損データ復元を追加)
 - 受け入れ試験(E2E・Playwright): 94→**127件**、**全合格**。既存94件を含め回帰なしを確認
 - 自己レビュー1回目(コード品質観点): 2件の実バグを発見・修正済み(下記3節)
-- 自己レビュー2回目(既存5画面への回帰観点、独立実行): 結果待ち。届き次第この文書に追記する
+- 自己レビュー2回目(既存5画面への回帰観点、独立プロセスで実行): **完了**。発見した1件(下記3節5番目)も修正・回帰テスト追加済み
 
 ---
 
@@ -95,4 +97,12 @@ BP残高用の独立したカウンタ(`state.bpBalance`のような数値)を�
 2. `js/calc.js`の新規関数(`composeMultiplier`の消費アイテム項・`calcBpBalance`・`evaluateSkillBonus`など)を読んで、計算ロジックに見落としがないか
 3. UI文言(ショップ・装備・コンディション画面)が、高校生本人が迷わず使える表現になっているか
 
-回答は本ファイルに追記するか、親経由でClaudeに伝えてください。
+## 6. 回答方法(親の手作業を介さない経路)
+
+優先順(上から順に試してください):
+
+1. **PRコメント/レビュー**: `claude/ibuki-exam-app-completion-flvrz9` を対象にPRを作成済みであれば、そのPRにレビューコメントを付ける。まだPRがなければCodexが作成しても構わない。
+2. **本ファイルへの追記コミット**: `codex/*` ブランチで本ファイルの末尾に「## 7. Codexからの回答」を追記し、コミット・push(直接mainへのpushはしない)。
+3. **台帳経由**: `docs/exchange/tasks/APP-410.md` にコメントを追記し`snapshot`する(OPS-001の枠組みが整い次第)。
+
+いずれの経路でも、Claudeは購読中のPRイベント、または親から次回セッションで声がかかったタイミングで気づき、反映します。
