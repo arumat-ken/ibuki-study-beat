@@ -6,6 +6,12 @@
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
   var APP_VERSION = '4.1.0';
+  /* リリース表示用(画面右上)。更新のたびに日付を上げる。
+   * モデル名は「未記録」固定とする(実行時のモデル識別子を断定してリポジトリの
+   * 成果物に書き出さない方針のため。推測での記載はしない)。 */
+  var BUILD_DATE = '2026-08-09';
+  var BUILD_UPDATER = 'Claude Code';
+  var BUILD_MODEL = '未記録';
 
   /* ================= ストレージ ================= */
   var KEY = 'ibukiStudyBeat.v3';
@@ -2722,6 +2728,7 @@
     save();
     checkPoseUnlocks();
     $('app-version').textContent = 'ver. ' + APP_VERSION;
+    $('app-build').textContent = '更新日 ' + BUILD_DATE + ' ・ 更新 ' + BUILD_UPDATER + ' ・ モデル ' + BUILD_MODEL;
     $('rf-date').value = todayStr();
     $('rf-kind').innerHTML = kindOptions('暗記');
     $('rf-subject').innerHTML = subjectOptions();

@@ -463,6 +463,20 @@ async function test9_versionAndUpdate() {
   ok('画面上にソフトバージョンを表示', /^ver\. \d+\.\d+\.\d+$/.test(ver.trim()), ver);
   const version = ver.trim().replace('ver. ', '');
 
+  // リリース表示(更新日・更新AI・モデル)。モデル名は断定せず「未記録」を許容する。
+  const build = (await page.textContent('#app-build')).trim();
+  ok('画面右上に更新日が表示される', /\d{4}-\d{2}-\d{2}/.test(build), build);
+  ok('画面右上に更新したAI(Claude Code)が表示される', build.includes('Claude Code'), build);
+  ok('画面右上にモデル欄が表示される(未記録も許容)', /モデル\s*(未記録|\S+)/.test(build), build);
+  await page.setViewportSize({ width: 320, height: 680 });
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  if (await page.isVisible('#center-msg.open')) await page.click('#cm-btn');
+  const buildOverflow = await page.evaluate(() => document.documentElement.scrollWidth > 330);
+  ok('320px幅でもリリース表示が横スクロールを起こさない', !buildOverflow);
+  await shot('61-build-badge-320');
+  await page.setViewportSize({ width: 390, height: 844 });
+
   // 起動時のあいさつ(画面中央)
   await page.reload();
   await page.waitForSelector('#screen-today.active');

@@ -72,6 +72,10 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
   font-size: 0.6rem; letter-spacing: 0.1em; color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
+.build-badge {
+  font-size: 0.52rem; letter-spacing: 0.02em; color: var(--dim);
+  opacity: 0.8; white-space: normal; line-height: 1.3;
+}
 .screen-head .brand {
   font-size: 1.15rem; font-weight: 900; letter-spacing: 0.04em;
   background: linear-gradient(120deg, var(--gold-bright), #fff2c9 40%, var(--gold));
