@@ -1039,6 +1039,73 @@ async function test13_codexReviewFixes() {
   const feverRec = st.records.find(r => r.content === 'fever-120min');
   ok('120分記録のBPが「30分×10倍+90分×1倍+行動ボーナス」で計算される(記録全体が10倍にならない)', feverRec.bp === 440, `bp=${feverRec.bp}`);
 
+  // フィーバー(残30分)とエナジー(残60分)が重なる場合: 「残り時間で平均配分」ではなく、
+  // フィーバー優先で実際の時間区間ごとに正しく計算されることを確認する(Codex再レビュー指摘)
+  await freshPage(true);
+  await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const p = n => (n < 10 ? '0' : '') + n;
+    const d = (o) => { const x = new Date(); x.setDate(x.getDate() + o); return `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}`; };
+    for (let i = 0; i < 4; i++) s.records.push({ id: 'seed' + i, date: d(-1), subjectId: 'eng', content: 'seed', kind: '暗記', planMin: 30, actualMin: 30, reflection: '', deletedAt: null, bp: 1000, createdAt: 1, updatedAt: 1, score: null, maxScore: null });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(s));
+  });
+  await reload();
+  await nav('coach');
+  await page.click('#btn-open-shop');
+  await page.click('[data-tab="consumable"]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("フィーバータイム") [data-buy]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("フィーバータイム") [data-use]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("エナジードリンク") [data-buy]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("エナジードリンク") [data-use]');
+  await page.waitForTimeout(150);
+  await page.click('#m-close');
+  await nav('record');
+  await page.selectOption('#rf-subject', { label: '英語' });
+  await page.fill('#rf-content', 'fever-energy-overlap');
+  await page.fill('#rf-plan', '120');
+  await page.fill('#rf-actual', '120');
+  await page.click('#rf-save');
+  await page.waitForTimeout(200);
+  const overlapBpText = await page.textContent('#celebrate-bp');
+  ok('フィーバー(残30分)とエナジー(残60分)が重なる区間は、フィーバー優先(30分×10倍)→エナジー継続(30分×2倍)→通常(60分×1倍)に正しく分割される',
+    overlapBpText.includes('30分') && overlapBpText.includes('10.00倍') && overlapBpText.includes('2.00倍') && overlapBpText.includes('60分') && overlapBpText.includes('1.00倍'), overlapBpText);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  st = await getState();
+  const overlapRec = st.records.find(r => r.content === 'fever-energy-overlap');
+  ok('フィーバー×エナジー重なり時のBPが期待値470(30×10+30×2+60×1+行動ボーナス50)と一致する(以前は平均配分で499になっていた)', overlapRec.bp === 470, `bp=${overlapRec.bp}`);
+
+  // エナジードリンクを2本使った場合、効果が加算される(1本ずつの上限で頭打ちにならない)ことも確認する
+  await freshPage(true);
+  await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const p = n => (n < 10 ? '0' : '') + n;
+    const d = (o) => { const x = new Date(); x.setDate(x.getDate() + o); return `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}`; };
+    for (let i = 0; i < 2; i++) s.records.push({ id: 'seed' + i, date: d(-1), subjectId: 'eng', content: 'seed', kind: '暗記', planMin: 30, actualMin: 30, reflection: '', deletedAt: null, bp: 700, createdAt: 1, updatedAt: 1, score: null, maxScore: null });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(s));
+  });
+  await reload();
+  await nav('coach');
+  await page.click('#btn-open-shop');
+  await page.click('[data-tab="consumable"]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("エナジードリンク") [data-buy]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("エナジードリンク") [data-buy]');
+  await page.waitForTimeout(150);
+  const useButtons = page.locator('.shop-item:has-text("エナジードリンク") [data-use]');
+  await useButtons.click();
+  await page.waitForTimeout(150);
+  await useButtons.click();
+  await page.waitForTimeout(150);
+  await page.click('#m-close');
+  await nav('today');
+  const doubleEnergyMult = await page.textContent('#boost-mult');
+  ok('エナジードリンクを2本使うと倍率が加算される(1.0+1.0+1.0=3.00倍)', doubleEnergyMult.includes('3.00'), doubleEnergyMult);
+
   // --- 修正3: 受験30日前に装備・ショップが自動でOFFになる ---
   await freshPage(true);
   await nav('settings');
@@ -1103,6 +1170,17 @@ async function test13_codexReviewFixes() {
   ok('通常モードでは装備の倍率がBPに反映される(50分×1.10倍=55)', st.records.find(r => r.content === 'normal-with-gear').bp === 55, `bp=${st.records.find(r => r.content === 'normal-with-gear').bp}`);
 
   await setExamDate(10);
+  await nav('today');
+  const focusBoostMult = await page.textContent('#boost-mult');
+  const focusBoostSub = await page.textContent('#boost-sub');
+  ok('集中モード中は今日のブースト表示も1.00倍になる(実際のBP計算と一致させる)', focusBoostMult.includes('1.00'), focusBoostMult);
+  ok('集中モード中は今日のブースト内訳も装備+0.00と表示される(表示と計算の食い違いを防ぐ)', focusBoostSub.includes('装備+0.00'), focusBoostSub);
+  await page.click('#btn-boost-card');
+  await page.waitForTimeout(150);
+  const focusModalText = await page.textContent('#modal-body');
+  ok('集中モード中のブースト内訳モーダルにも装備の倍率が表示されない', focusModalText.includes('衣装+0.00倍'), focusModalText);
+  await page.click('#m-close');
+
   await nav('record');
   await page.selectOption('#rf-subject', { label: '英語' });
   await page.fill('#rf-content', 'focus-with-gear');

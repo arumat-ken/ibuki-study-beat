@@ -628,6 +628,14 @@
    * 効果は、rec.date が本当の今日のときだけ適用する。
    */
   function studyMultiplierForRecord(rec) {
+    var prevDay = C.addDays(rec.date, -1);
+    var conditionBonus = C.conditionBonusFromHabits(C.calcHabitBP(state.habits[prevDay]));
+    /* 集中モード中は装備・消費アイテムの表示も実際のBP計算(buildStudyBPSegments)と一致させる。
+     * ここで表示だけ+0.10倍のように出て、保存すると1.00倍になる、という食い違いを防ぐ。 */
+    if (focusModeActive()) {
+      return C.composeMultiplier({ conditionBonus: conditionBonus });
+    }
+
     var shop = state.shop;
     var costumeItem = shop.equipped.costume ? C.costumeById(shop.equipped.costume) : null;
     var stageItem = shop.equipped.stage ? C.stageById(shop.equipped.stage) : null;
@@ -650,8 +658,6 @@
       isLaggingSubject: isLagging
     }) : 0;
 
-    var prevDay = C.addDays(rec.date, -1);
-    var conditionBonus = C.conditionBonusFromHabits(C.calcHabitBP(state.habits[prevDay]));
     var cons = isToday ? activeConsumableEffect() : { bonus: 0, feverActive: false };
 
     return C.composeMultiplier({
@@ -767,35 +773,53 @@
 
     pruneActiveBoosts();
     var now = Date.now();
-    var feverRemainMin = 0, dayBonus = 0, timedRemainMin = 0, timedBonus = 0;
+    var actualMin = rec.actualMin;
+    /* 実績時間を「今から経過した分」の並びとみなし、各アイテムの残り有効時間(今からの
+     * 分数)を境界として区切る。フィーバーが効いている区間は他の倍率を無視して10倍(H-4)。
+     * それ以外の区間は、まだ有効なエナジードリンクの倍率を(複数使用時は合算して)適用する。
+     * 「残り時間で平均配分」ではなく実際の区間ごとに計算することで、フィーバーとエナジーが
+     * 重なる場合や複数のエナジードリンクを使った場合でも正しい時間だけに効かせる。 */
+    var feverRemains = [], timedBoosts = [], dayBonus = 0;
     state.shop.activeBoosts.forEach(function (b) {
       var item = C.consumableById(b.itemId);
       if (!item) return;
       var remain = Math.max(0, (b.expiresAt - now) / 60000);
-      if (b.kind === 'fever') { feverRemainMin = Math.max(feverRemainMin, remain); }
-      else if (b.kind === 'day') { dayBonus += item.bonus; }
-      else if (b.kind === 'timed') { timedRemainMin = Math.max(timedRemainMin, remain); timedBonus = Math.max(timedBonus, item.bonus); }
+      if (remain <= 0) return;
+      if (b.kind === 'fever') feverRemains.push(remain);
+      else if (b.kind === 'day') dayBonus += item.bonus;
+      else if (b.kind === 'timed') timedBoosts.push({ remain: remain, bonus: item.bonus });
     });
 
-    var feverMinutes = Math.min(rec.actualMin, feverRemainMin);
-    var restMinutes = rec.actualMin - feverMinutes;
+    var boundaries = [0, actualMin];
+    feverRemains.forEach(function (r) { if (r > 0 && r < actualMin) boundaries.push(r); });
+    timedBoosts.forEach(function (t) { if (t.remain > 0 && t.remain < actualMin) boundaries.push(t.remain); });
+    boundaries.sort(function (a, b) { return a - b; });
+    boundaries = boundaries.filter(function (v, i) { return i === 0 || v !== boundaries[i - 1]; });
+
     var segments = [];
-    if (feverMinutes > 0) {
-      /* フィーバー中は他の倍率をすべて無視して10倍(H-4)。この区間だけに適用する。 */
-      segments.push({ minutes: feverMinutes, multiplier: C.FEVER_MULTIPLIER });
+    for (var i = 0; i < boundaries.length - 1; i++) {
+      var segStart = boundaries[i], segEnd = boundaries[i + 1];
+      var segMinutes = segEnd - segStart;
+      if (segMinutes <= 0) continue;
+      var feverHere = feverRemains.some(function (r) { return r > segStart; });
+      var mult;
+      if (feverHere) {
+        mult = C.FEVER_MULTIPLIER;
+      } else {
+        var timedBonusHere = 0;
+        timedBoosts.forEach(function (t) { if (t.remain > segStart) timedBonusHere += t.bonus; });
+        mult = C.composeMultiplier({
+          costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus, conditionBonus: conditionBonus,
+          consumableBonus: dayBonus + timedBonusHere
+        }).multiplier;
+      }
+      segments.push({ minutes: segMinutes, multiplier: mult });
     }
-    if (restMinutes > 0) {
-      var energyFraction = timedRemainMin > 0 ? Math.min(1, timedRemainMin / restMinutes) : 0;
-      var restMult = C.composeMultiplier({
-        costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus, conditionBonus: conditionBonus,
-        consumableBonus: dayBonus + timedBonus * energyFraction
-      }).multiplier;
-      segments.push({ minutes: restMinutes, multiplier: restMult });
-    }
-    if (segments.length === 0) segments.push({ minutes: rec.actualMin, multiplier: 1 });
+    /* boundariesは常に[0, actualMin]を含み(isToday && actualMin>0はここまでに保証済み)、
+     * ループは必ず1つ以上のセグメントを生成するため空になることはない。 */
     /* 端数丸めで合計が実績時間とズレないよう、最後のセグメントで吸収する。 */
     var sumMin = segments.reduce(function (s, seg) { return s + seg.minutes; }, 0);
-    segments[segments.length - 1].minutes += (rec.actualMin - sumMin);
+    segments[segments.length - 1].minutes += (actualMin - sumMin);
     return segments;
   }
 
