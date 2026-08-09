@@ -7,14 +7,16 @@
 | [`PROTOCOL.md`](PROTOCOL.md) | **取り決め**。役割分担・ブランチ規則・受け渡し方法・守るべき境界 |
 | [`STATUS.md`](STATUS.md) | **進行状況ボード**。今どこまで進んでいるか、何で止まっているか |
 | [`REVIEW.md`](REVIEW.md) | ClaudeからCodex/GPTへの申し送り・レビュー結果(必要時に作成) |
+| [`../GLOSSARY.md`](../GLOSSARY.md) | **用語集**。略語・記号・役割・公開手順を一度で分かるように説明 |
 
 ## AIへ — このリポジトリで作業を始める前に
 
 1. [`PROTOCOL.md`](PROTOCOL.md) を読み、自分の担当範囲とブランチを確認する
 2. [`STATUS.md`](STATUS.md) で現在の状況を把握する
-3. [`../design/APP_CONTEXT.md`](../design/APP_CONTEXT.md) で既存アプリの仕様と**凍結仕様**を確認する
-4. [`../design/FEATURE_SPEC_v4.md`](../design/FEATURE_SPEC_v4.md) で追加機能の確定設計を確認する
-5. 作業後は `STATUS.md` を更新し、PRを作成するか `[handoff]` を付けてコミットする
+3. [`../GLOSSARY.md`](../GLOSSARY.md) で分からない略語・記号・作業の流れを確認する
+4. [`../design/APP_CONTEXT.md`](../design/APP_CONTEXT.md) で既存アプリの仕様と**凍結仕様**を確認する
+5. [`../design/FEATURE_SPEC_v4.md`](../design/FEATURE_SPEC_v4.md) で追加機能の確定設計を確認する
+6. 作業後は `STATUS.md` を更新し、PRを作成するか `[handoff]` を付けてコミットする。新しい用語を使った場合は `../GLOSSARY.md` も更新する
 
 ## 各AIが読めるURL(公開リポジトリのため設定不要)
 
