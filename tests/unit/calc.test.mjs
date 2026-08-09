@@ -674,3 +674,28 @@ test('defaultState: 科目にexamSubjectが正しく含まれる(「その他」
   assert.equal(eng.examSubject, true, '「英語」はデフォルトで受験科目');
   st.settings.subjects.forEach(s => assert.equal(typeof s.examSubject, 'boolean', s.id + 'のexamSubjectはboolean'));
 });
+
+/* ==================================================================
+ * バグ修正(Codex独立レビュー・ver.4.1.0)
+ * ================================================================== */
+
+test('isFocusModeActive: 受験30日前(境界含む)〜当日はtrue、31日以上前・受験後はfalse', () => {
+  assert.equal(C.isFocusModeActive('2026-09-08', '2026-08-08'), false, '31日前はまだ通常モード');
+  assert.equal(C.isFocusModeActive('2026-09-07', '2026-08-08'), true, '30日前は集中モード(境界含む)');
+  assert.equal(C.isFocusModeActive('2026-08-09', '2026-08-08'), true, '前日');
+  assert.equal(C.isFocusModeActive('2026-08-08', '2026-08-08'), true, '当日');
+  assert.equal(C.isFocusModeActive('2026-08-07', '2026-08-08'), false, '受験日を過ぎたら通常モードに戻る');
+  assert.equal(C.isFocusModeActive(null, '2026-08-08'), false, '受験日未設定なら常に通常モード');
+});
+
+test('sanitizeState: dailyBonusesは既知の行動ボーナスキーだけを日付ごとに保持する', () => {
+  const st = C.defaultState('2026-08-08');
+  st.dailyBonuses['2026-08-08'] = { streak3: true, bogus: true, allExamSubjects: 'not-a-bool' };
+  st.dailyBonuses['bad-date'] = { streak3: true };
+  st.dailyBonuses['2026-08-07'] = { reflection: true };
+  const out = C.sanitizeState(JSON.parse(JSON.stringify(st)), '2026-08-08');
+  assert.ok(out);
+  assert.deepEqual(out.dailyBonuses['2026-08-08'], { streak3: true }, '不正なキー・値は除外される');
+  assert.equal(out.dailyBonuses['bad-date'], undefined, '不正な日付キーは除外される');
+  assert.deepEqual(out.dailyBonuses['2026-08-07'], { reflection: true });
+});

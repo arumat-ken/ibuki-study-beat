@@ -669,43 +669,147 @@
     return studyMultiplierForRecord({ id: '__preview__', date: todayStr(), subjectId: null, actualMin: 0 });
   }
 
+  /* 連続日数・全受験科目ボーナスは「その日1回だけ」の仕様。同じ日に複数回保存しても
+   * 再付与されないよう、付与済みかをstate.dailyBonusesで記録する(Codexレビュー指摘)。 */
+  function dailyBonusGranted(date, key) {
+    return !!(state.dailyBonuses[date] && state.dailyBonuses[date][key]);
+  }
+  function markDailyBonusGranted(date, key) {
+    if (!state.dailyBonuses[date]) state.dailyBonuses[date] = {};
+    state.dailyBonuses[date][key] = true;
+  }
+
   function buildActionsForRecord(rec) {
     var actions = [];
     if (C.isPlanAchieved(rec.planMin, rec.actualMin)) actions.push('planAchieved');
     if (rec.reflection && rec.reflection.trim()) actions.push('reflection');
 
     var streak = C.streakDays(state.records, rec.date, state.shop.streakGuardDates);
-    if (streak === 3) actions.push('streak3');
-    else if (streak === 7) actions.push('streak7');
-    else if (streak === 30) actions.push('streak30');
+    var streakKey = streak === 3 ? 'streak3' : streak === 7 ? 'streak7' : streak === 30 ? 'streak30' : null;
+    var streakNewlyGranted = streakKey && !dailyBonusGranted(rec.date, streakKey);
+    if (streakNewlyGranted) actions.push(streakKey);
 
     var examIds = subjectExamIds();
-    if (examIds.length > 0) {
+    var allExamNewlyGranted = false;
+    if (examIds.length > 0 && !dailyBonusGranted(rec.date, 'allExamSubjects')) {
       var covered = {};
       C.activeRecords(state.records).forEach(function (r) {
         if (r.date === rec.date && r.actualMin > 0) covered[r.subjectId] = true;
       });
-      if (examIds.every(function (id) { return covered[id]; })) actions.push('allExamSubjects');
+      if (examIds.every(function (id) { return covered[id]; })) {
+        actions.push('allExamSubjects');
+        allExamNewlyGranted = true;
+      }
     }
 
     if (rec.kind === 'テスト' && typeof rec.score === 'number' && typeof rec.maxScore === 'number') {
       actions.push('mockExamTaken');
     }
 
-    if (state.shop.equipped.skill === 'rhythm_keep') {
-      ['streak3', 'streak7', 'streak30'].forEach(function (k) {
-        if (actions.indexOf(k) !== -1) actions.push(k); // リズムキープ: 連続日数ボーナスBPを2倍に
-      });
+    /* リズムキープ: 連続日数ボーナスBPを2倍に。その日初めて付与される時だけ倍にする
+     * (2回目以降の記録では既にdailyBonusGrantedがtrueになりactionsに入らない)。 */
+    if (streakNewlyGranted && state.shop.equipped.skill === 'rhythm_keep') {
+      actions.push(streakKey);
     }
+
+    if (streakNewlyGranted) markDailyBonusGranted(rec.date, streakKey);
+    if (allExamNewlyGranted) markDailyBonusGranted(rec.date, 'allExamSubjects');
     return actions;
+  }
+
+  /**
+   * 記録の実績時間を、消費アイテムの残り有効時間で区切ってセグメント化する。
+   * フィーバー(30分)・エナジードリンク(60分)は「発動中に保存した記録の全体」ではなく
+   * 「発動している時間帯だけ」に効くべきなので、ここで実績時間を分割する(Codexレビュー指摘)。
+   * 過去日の記録・実績0分には消費アイテムを適用しない(既存仕様どおり)。
+   */
+  function buildStudyBPSegments(rec) {
+    var prevDay = C.addDays(rec.date, -1);
+    var conditionBonus = C.conditionBonusFromHabits(C.calcHabitBP(state.habits[prevDay]));
+
+    /* 集中モード(受験30日前)は「金融・ショップ機能を自動でOFF」(FEATURE_SPEC_v4.md安全装置)。
+     * 装備・消費アイテムは B章(ショップ)由来なのでここでは無効化する。
+     * コンディション(生活習慣, A章)はショップ機能ではないためそのまま適用する。 */
+    if (focusModeActive()) {
+      var focusMult = C.composeMultiplier({ conditionBonus: conditionBonus }).multiplier;
+      return [{ minutes: rec.actualMin, multiplier: focusMult }];
+    }
+
+    var shop = state.shop;
+    var costumeItem = shop.equipped.costume ? C.costumeById(shop.equipped.costume) : null;
+    var stageItem = shop.equipped.stage ? C.stageById(shop.equipped.stage) : null;
+    var skillId = shop.equipped.skill;
+    var isToday = rec.date === todayStr();
+
+    var distinct = {};
+    C.activeRecords(state.records).forEach(function (r) {
+      if (r.date === rec.date && r.id !== rec.id && r.actualMin > 0) distinct[r.subjectId] = true;
+    });
+    if (rec.actualMin > 0) distinct[rec.subjectId] = true;
+
+    var isLagging = skillId === 'moonwalk' &&
+      C.laggingSubjectId(state.records, state.settings.subjects) === rec.subjectId;
+
+    var skillBonus = skillId ? C.evaluateSkillBonus(skillId, {
+      actualMin: rec.actualMin,
+      distinctSubjectsToday: Object.keys(distinct).length,
+      hour: isToday ? new Date().getHours() : -1,
+      isLaggingSubject: isLagging
+    }) : 0;
+
+    var costumeBonus = costumeItem ? costumeItem.bonus : 0;
+    var stageBonus = stageItem ? stageItem.bonus : 0;
+
+    if (!isToday || rec.actualMin <= 0) {
+      var plainMult = C.composeMultiplier({ costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus, conditionBonus: conditionBonus }).multiplier;
+      return [{ minutes: rec.actualMin, multiplier: plainMult }];
+    }
+
+    pruneActiveBoosts();
+    var now = Date.now();
+    var feverRemainMin = 0, dayBonus = 0, timedRemainMin = 0, timedBonus = 0;
+    state.shop.activeBoosts.forEach(function (b) {
+      var item = C.consumableById(b.itemId);
+      if (!item) return;
+      var remain = Math.max(0, (b.expiresAt - now) / 60000);
+      if (b.kind === 'fever') { feverRemainMin = Math.max(feverRemainMin, remain); }
+      else if (b.kind === 'day') { dayBonus += item.bonus; }
+      else if (b.kind === 'timed') { timedRemainMin = Math.max(timedRemainMin, remain); timedBonus = Math.max(timedBonus, item.bonus); }
+    });
+
+    var feverMinutes = Math.min(rec.actualMin, feverRemainMin);
+    var restMinutes = rec.actualMin - feverMinutes;
+    var segments = [];
+    if (feverMinutes > 0) {
+      /* フィーバー中は他の倍率をすべて無視して10倍(H-4)。この区間だけに適用する。 */
+      segments.push({ minutes: feverMinutes, multiplier: C.FEVER_MULTIPLIER });
+    }
+    if (restMinutes > 0) {
+      var energyFraction = timedRemainMin > 0 ? Math.min(1, timedRemainMin / restMinutes) : 0;
+      var restMult = C.composeMultiplier({
+        costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus, conditionBonus: conditionBonus,
+        consumableBonus: dayBonus + timedBonus * energyFraction
+      }).multiplier;
+      segments.push({ minutes: restMinutes, multiplier: restMult });
+    }
+    if (segments.length === 0) segments.push({ minutes: rec.actualMin, multiplier: 1 });
+    /* 端数丸めで合計が実績時間とズレないよう、最後のセグメントで吸収する。 */
+    var sumMin = segments.reduce(function (s, seg) { return s + seg.minutes; }, 0);
+    segments[segments.length - 1].minutes += (rec.actualMin - sumMin);
+    return segments;
   }
 
   /**
    * 記録1件のBPを計算してrec.bpに確定する。呼び出し前にrecはstate.recordsに
    * 入っている必要がある(今日の他の記録との合算・上限判定のため)。
+   * セグメントごとに倍率が異なる場合があるため、日次上限はcalcStudyBPを連鎖呼び出しして
+   * 正しく累積させる(1セグメント目のtodayTotalAfterを2セグメント目の入力にする)。
    */
   function grantStudyBP(rec) {
-    var mult = studyMultiplierForRecord(rec);
+    var segments = buildStudyBPSegments(rec);
+    var subj = subjectById(rec.subjectId);
+    var isExamSubject = subj ? subj.examSubject : true;
+    var actions = buildActionsForRecord(rec);
     var todayTotalBP = 0, todayNonExamBP = 0;
     C.activeRecords(state.records).forEach(function (r) {
       if (r.date !== rec.date || r.id === rec.id) return;
@@ -713,26 +817,46 @@
       var s = subjectById(r.subjectId);
       if (s && !s.examSubject) todayNonExamBP += (r.bp || 0);
     });
-    var subj = subjectById(rec.subjectId);
-    var result = C.calcStudyBP({
-      minutes: rec.actualMin,
-      multiplier: mult.multiplier,
-      actions: buildActionsForRecord(rec),
-      todayTotalBP: todayTotalBP,
-      todayNonExamBP: todayNonExamBP,
-      isExamSubject: subj ? subj.examSubject : true
+
+    var granted = 0, baseBP = 0, multipliedBP = 0, bonusBP = 0;
+    var nonExamCapped = false, dailyCapped = false;
+    segments.forEach(function (seg, i) {
+      var segActions = (i === segments.length - 1) ? actions : []; // 行動ボーナスは最後のセグメントにまとめて重複計上を防ぐ
+      var segResult = C.calcStudyBP({
+        minutes: seg.minutes, multiplier: seg.multiplier, actions: segActions,
+        todayTotalBP: todayTotalBP, todayNonExamBP: todayNonExamBP, isExamSubject: isExamSubject
+      });
+      granted += segResult.grantedBP;
+      baseBP += segResult.baseBP;
+      multipliedBP += segResult.multipliedBP;
+      bonusBP += segResult.bonusBP;
+      nonExamCapped = nonExamCapped || segResult.nonExamCapped;
+      dailyCapped = dailyCapped || segResult.dailyCapped;
+      todayTotalBP = segResult.todayTotalAfter;
+      todayNonExamBP = segResult.todayNonExamAfter;
     });
-    rec.bp = result.grantedBP;
-    return { result: result, multiplier: mult };
+    rec.bp = granted;
+    return {
+      result: {
+        baseBP: baseBP, multipliedBP: multipliedBP, bonusBP: bonusBP, grantedBP: granted,
+        nonExamCapped: nonExamCapped, dailyCapped: dailyCapped
+      },
+      segments: segments
+    };
   }
 
   function showBpResult(grant) {
     if (!grant || grant.result.grantedBP <= 0) { $('celebrate-bp').style.display = 'none'; return; }
     var r = grant.result;
     var lines = ['<b>+' + r.grantedBP + ' BP</b> 獲得！'];
-    lines.push('基本 ' + r.baseBP + 'BP × 倍率 ' + r.multiplierApplied.toFixed(2) + '倍 = ' + r.multipliedBP + 'BP');
+    var feverUsed = false;
+    grant.segments.forEach(function (seg) {
+      if (seg.minutes <= 0) return;
+      lines.push(Math.round(seg.minutes) + '分 × ' + seg.multiplier.toFixed(2) + '倍');
+      if (seg.multiplier === C.FEVER_MULTIPLIER) feverUsed = true;
+    });
     if (r.bonusBP > 0) lines.push('行動ボーナス +' + r.bonusBP + 'BP');
-    if (grant.multiplier.feverActive) lines.push('🔥 フィーバータイム発動中！');
+    if (feverUsed) lines.push('🔥 フィーバータイムが一部の時間に適用されたよ');
     if (r.nonExamCapped) lines.push('非受験科目の1日上限(100BP)に到達したよ');
     if (r.dailyCapped) lines.push('1日の獲得上限(1,500BP)に到達したよ');
     $('celebrate-bp').innerHTML = lines.join('<br>');
@@ -1707,7 +1831,17 @@
     return n;
   }
 
+  /* 安全装置(FEATURE_SPEC_v4.md): 受験30日前になったら装備・ショップを自動でOFFにする。 */
+  function focusModeActive() {
+    return C.isFocusModeActive(state.settings.examDate, todayStr());
+  }
+
   function renderEquipCard() {
+    var focus = focusModeActive();
+    $('equip-card').style.display = focus ? 'none' : '';
+    $('btn-open-shop').style.display = focus ? 'none' : '';
+    $('focus-mode-card').style.display = focus ? '' : 'none';
+    if (focus) return;
     var shop = state.shop;
     var costume = shop.equipped.costume ? C.costumeById(shop.equipped.costume) : null;
     var skill = shop.equipped.skill ? C.skillById(shop.equipped.skill) : null;
@@ -1725,6 +1859,7 @@
   $('btn-open-shop').addEventListener('click', function () { openShopModal('costume'); });
 
   function openShopModal(tab) {
+    if (focusModeActive()) { toast('受験が近いので、ショップは今お休み中だよ', true); return; }
     var html = '<h3>ショップ<button class="icon-btn" id="m-close">✕</button></h3>' +
       '<p class="small muted">BP残高 <b id="shop-balance" style="color:var(--gold-bright)">' + C.calcBpBalance(state).toLocaleString('ja-JP') + '</b></p>' +
       '<div class="shop-tabs" id="shop-tabs">' + SHOP_TABS.map(function (t) {
@@ -1782,6 +1917,7 @@
   }
 
   function buyShopItem(itemId, category) {
+    if (focusModeActive()) { toast('受験が近いので、ショップは今お休み中だよ', true); return; }
     var balance = C.calcBpBalance(state);
     var v = C.validatePurchase(state.shop, itemId, balance);
     if (!v.ok) { toast(v.errors[0], true); return; }
@@ -1798,6 +1934,7 @@
   }
 
   function equipShopItem(category, itemId, tabCategory) {
+    if (focusModeActive()) { toast('受験が近いので、ショップは今お休み中だよ', true); return; }
     var v = C.validateEquip(state.shop, category, itemId);
     if (!v.ok) { toast(v.errors[0], true); return; }
     state.shop.equipped[category] = itemId;
@@ -1809,6 +1946,7 @@
   }
 
   function useConsumable(itemId, category) {
+    if (focusModeActive()) { toast('受験が近いので、ショップは今お休み中だよ', true); return; }
     var avail = C.consumableAvailable(state.shop, itemId);
     if (avail <= 0) { toast('所持していません', true); return; }
     var item = C.consumableById(itemId);
@@ -1825,7 +1963,10 @@
       endOfDay.setHours(23, 59, 59, 999);
       state.shop.activeBoosts.push({ id: nextId('ab'), itemId: itemId, kind: 'day', expiresAt: endOfDay.getTime() });
     } else if (item.kind === 'streak-guard') {
-      if (state.shop.streakGuardDates.indexOf(todayStr()) === -1) state.shop.streakGuardDates.push(todayStr());
+      if (state.shop.streakGuardDates.indexOf(todayStr()) !== -1) {
+        toast('今日はすでに連続記録を守っているよ', true); return;
+      }
+      state.shop.streakGuardDates.push(todayStr());
     }
     state.shop.used.consumable[itemId] = (state.shop.used.consumable[itemId] || 0) + 1;
     save();

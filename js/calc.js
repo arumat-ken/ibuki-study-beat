@@ -298,6 +298,7 @@
       poseUnlocks: [],
       shop: defaultShopState(),
       habits: {},
+      dailyBonuses: {},
       seq: 1
     };
   }
@@ -498,6 +499,20 @@
         habits[date] = clean;
       });
       out.habits = habits;
+    }
+    if (parsed.dailyBonuses && typeof parsed.dailyBonuses === 'object') {
+      var dailyBonuses = {};
+      Object.keys(parsed.dailyBonuses).forEach(function (date) {
+        if (!isDateStr(date)) return;
+        var entry = parsed.dailyBonuses[date];
+        if (!entry || typeof entry !== 'object') return;
+        var clean = {};
+        Object.keys(entry).forEach(function (k) {
+          if (Object.prototype.hasOwnProperty.call(ACTION_BONUS_BP, k) && entry[k] === true) clean[k] = true;
+        });
+        if (Object.keys(clean).length > 0) dailyBonuses[date] = clean;
+      });
+      out.dailyBonuses = dailyBonuses;
     }
     if (typeof parsed.createdAt === 'string') out.createdAt = parsed.createdAt;
     out.seq = isIntInRange(parsed.seq, 1, 1e9) ? parsed.seq : (out.records.length + out.events.length + 10);
@@ -1186,6 +1201,17 @@
     };
   }
 
+  /* 安全装置(FEATURE_SPEC_v4.md「受験直前の集中モード」): 受験日の30日前になったら
+   * 装備・ショップ・消費アイテムを自動でOFFにし、シンプルな学習記録に戻す。 */
+  var FOCUS_MODE_DAYS_BEFORE_EXAM = 30;
+
+  /** 集中モード(受験直前で装備・ショップを止める期間)かどうか。 */
+  function isFocusModeActive(examDate, todayStr_) {
+    if (!isDateStr(examDate) || !isDateStr(todayStr_)) return false;
+    var dd = diffDays(todayStr_, examDate);
+    return dd >= 0 && dd <= FOCUS_MODE_DAYS_BEFORE_EXAM;
+  }
+
   /** 所持している消費アイテムのうち、まだ使っていない残数。 */
   function consumableAvailable(shop, itemId) {
     var owned = (shop.owned.consumable && shop.owned.consumable[itemId]) || 0;
@@ -1424,6 +1450,8 @@
     HABIT_KEYS: HABIT_KEYS,
     calcHabitBP: calcHabitBP,
     evaluateSkillBonus: evaluateSkillBonus,
-    laggingSubjectId: laggingSubjectId
+    laggingSubjectId: laggingSubjectId,
+    FOCUS_MODE_DAYS_BEFORE_EXAM: FOCUS_MODE_DAYS_BEFORE_EXAM,
+    isFocusModeActive: isFocusModeActive
   };
 });
