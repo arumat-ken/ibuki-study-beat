@@ -1,0 +1,17 @@
+{
+  "name": "IBUKI STUDY BEAT 用語集",
+  "short_name": "用語集",
+  "description": "IBUKI STUDY BEAT の用語集。検索してすぐ引ける。",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0b10",
+  "theme_color": "#0b0b10",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
