@@ -35,8 +35,8 @@ iPhoneのSafariで開き、共有メニュー →「ホーム画面に追加」�
 
 | ファイル | 変数 | 例 |
 |---|---|---|
-| `js/app.js` | `APP_VERSION` | `'4.1.0'` |
-| `sw.js` | `CACHE` | `'isb-v4.1.0'` |
+| `js/app.js` | `APP_VERSION` | `'4.1.2'` |
+| `sw.js` | `CACHE` | `'isb-v4.1.2'` |
 
 **絶対に変えないもの:** `js/app.js` の保存キー `ibukiStudyBeat.v3`。ここを変えると過去の学習記録が読めなくなります。
 
