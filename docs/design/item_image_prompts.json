@@ -31,7 +31,7 @@
       "file": "gloves.png",
       "category": "costume",
       "nameJa": "スパンコールのグローブ",
-      "status": "pending",
+      "status": "generated",
       "prompt": "A costume accessory densely covered in thousands of tiny reflective sequins, shaped like an empty flat mitten laid on a dark surface, glittering gold and white, scattered light particles around it."
     },
     {
@@ -39,7 +39,7 @@
       "file": "fedora.png",
       "category": "costume",
       "nameJa": "フェドーラハット",
-      "status": "pending",
+      "status": "generated",
       "prompt": "A black wide-brimmed hat with a gold ribbon band, tilted slightly, floating in mid-air, a thin gold light tracing the curve of the brim."
     },
     {
@@ -47,7 +47,7 @@
       "file": "belt.png",
       "category": "costume",
       "nameJa": "ゴールドベルト",
-      "status": "pending",
+      "status": "generated",
       "prompt": "A leather belt with a large ornate gold buckle, curving gracefully in mid-air, the buckle gleaming brightly, trophy-like craftsmanship."
     },
     {
@@ -55,7 +55,7 @@
       "file": "jacket.png",
       "category": "costume",
       "nameJa": "ライトアップジャケット",
-      "status": "pending",
+      "status": "generated",
       "prompt": "An empty black stage jacket on an invisible form, with glowing gold light strips running along its seams and collar, the whole garment softly illuminated from within."
     },
     {
@@ -63,7 +63,7 @@
       "file": "rhythm_keep.png",
       "category": "skill",
       "nameJa": "リズムキープ",
-      "status": "pending",
+      "status": "generated",
       "prompt": "Evenly spaced golden sound waves pulsing in a steady regular rhythm, with an abstract golden pendulum shape at the center. Stable, unbroken, metronomic composition."
     },
     {
@@ -71,7 +71,7 @@
       "file": "moonwalk.png",
       "category": "skill",
       "nameJa": "ムーンウォーク",
-      "status": "pending",
+      "status": "generated",
       "prompt": "A trail of glowing gold footprint shapes receding from right to left, each one fainter than the last, with a soft silver moonlight reflection on a dark floor. Only footprints and light trails."
     },
     {
@@ -79,7 +79,7 @@
       "file": "spin_turn.png",
       "category": "skill",
       "nameJa": "スピンターン",
-      "status": "pending",
+      "status": "generated",
       "prompt": "Concentric golden light rings spinning at high speed with motion-blur afterimages, forming a spiral vortex converging toward a bright center point."
     },
     {
@@ -87,7 +87,7 @@
       "file": "zero_gravity.png",
       "category": "skill",
       "nameJa": "ゼロ・グラビティ",
-      "status": "pending",
+      "status": "generated",
       "prompt": "A tall golden pillar of light frozen at an impossible diagonal tilt, with small luminous particles floating weightlessly around it, suggesting suspended gravity."
     },
     {
@@ -103,7 +103,7 @@
       "file": "street.png",
       "category": "stage",
       "nameJa": "ストリート",
-      "status": "pending",
+      "status": "generated",
       "prompt": "A night street corner with cracked asphalt lit by one golden streetlamp, a simple portable radio at the edge. Humble and quiet. Completely empty of people."
     },
     {
