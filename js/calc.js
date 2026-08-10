@@ -24,7 +24,59 @@
     { id: 'other', name: 'その他', color: '#9AA0A6', visible: true, examSubject: false }
   ];
 
+  /* 学習種別。科目ごとに、その科目で実際にやる勉強の言い方を出す。
+   * 全科目で同じ7つを出していたため、社会に「読解」、数学に「暗記」といった
+   * 噛み合わない語が並び、始める前に気持ちが削がれていた(APP-460)。
+   *
+   * STUDY_KINDS は「その他」と自作科目の既定であり、旧データの値でもある。
+   * 過去の記録を無効にしないため、検証は全リストの和集合で行う。 */
   var STUDY_KINDS = ['暗記', '演習', '読解', '講義', '復習', 'テスト', 'その他'];
+
+  var SUBJECT_STUDY_KINDS = {
+    eng:  ['単語・熟語', '文法', '長文読解', 'リスニング', '英作文', '音読', '復習・解き直し', 'テスト'],
+    math: ['公式・定理の確認', '例題で解法を確認', '問題演習', '解き直し', '計算練習', 'テスト'],
+    jpn:  ['漢字・語彙', '現代文読解', '古文', '漢文', '記述練習', '復習・解き直し', 'テスト'],
+    sci:  ['用語・原理の暗記', '計算問題', '実験・図表の読み取り', '問題演習', '解き直し', 'テスト'],
+    soc:  ['用語の暗記', '流れ・つながりの整理', '資料・地図・グラフ', '一問一答', '論述練習', '解き直し', 'テスト']
+  };
+
+  /* 科目を選んだときの初期値。いちばんよくやる勉強を置く。 */
+  var DEFAULT_STUDY_KINDS = {
+    eng:  '単語・熟語',
+    math: '問題演習',
+    jpn:  '現代文読解',
+    sci:  '問題演習',
+    soc:  '用語の暗記'
+  };
+
+  /* 点数入力欄の出し分けに使うため、どの科目にも必ず含める。 */
+  var TEST_KIND = 'テスト';
+
+  function studyKindsFor(subjectId) {
+    var list = SUBJECT_STUDY_KINDS[subjectId];
+    return (list ? list : STUDY_KINDS).slice();
+  }
+
+  function defaultStudyKindFor(subjectId) {
+    var d = DEFAULT_STUDY_KINDS[subjectId];
+    if (d) return d;
+    return studyKindsFor(subjectId)[0];
+  }
+
+  /* 検証用の和集合。旧データの値も、科目を変えた記録も無効にしない。 */
+  var ALL_STUDY_KINDS = (function () {
+    var seen = {}, out = [];
+    function add(k) { if (!seen[k]) { seen[k] = true; out.push(k); } }
+    STUDY_KINDS.forEach(add);
+    Object.keys(SUBJECT_STUDY_KINDS).forEach(function (id) {
+      SUBJECT_STUDY_KINDS[id].forEach(add);
+    });
+    return out;
+  })();
+
+  function isValidStudyKind(kind) {
+    return ALL_STUDY_KINDS.indexOf(kind) !== -1;
+  }
 
   /* ---------- 日付ユーティリティ ---------- */
 
@@ -86,7 +138,7 @@
     if (isIntInRange(plan, 0, MAX_MIN_PER_RECORD) && isIntInRange(actual, 0, MAX_MIN_PER_RECORD) && plan === 0 && actual === 0) {
       errors.push('計画時間か実績時間のどちらかを入力してください');
     }
-    if (rec.kind !== undefined && rec.kind !== '' && STUDY_KINDS.indexOf(rec.kind) === -1) errors.push('学習種別が不正です');
+    if (rec.kind !== undefined && rec.kind !== '' && !isValidStudyKind(rec.kind)) errors.push('学習種別が不正です');
     if (rec.kind === 'テスト' && (rec.score !== null && rec.score !== undefined && rec.score !== '')) {
       var score = rec.score, max = rec.maxScore;
       if (!isIntInRange(max, 1, 10000)) errors.push('満点は1以上で入力してください');
@@ -378,7 +430,7 @@
           date: r.date,
           subjectId: r.subjectId,
           content: r.content.slice(0, 100),
-          kind: STUDY_KINDS.indexOf(r.kind) !== -1 ? r.kind : 'その他',
+          kind: isValidStudyKind(r.kind) ? r.kind : 'その他',
           planMin: r.planMin | 0,
           actualMin: r.actualMin | 0,
           score: isIntInRange(r.score, 0, 10000) ? r.score : null,
@@ -1362,6 +1414,12 @@
     MAX_MIN_PER_RECORD: MAX_MIN_PER_RECORD,
     DEFAULT_SUBJECTS: DEFAULT_SUBJECTS,
     STUDY_KINDS: STUDY_KINDS,
+    SUBJECT_STUDY_KINDS: SUBJECT_STUDY_KINDS,
+    ALL_STUDY_KINDS: ALL_STUDY_KINDS,
+    TEST_KIND: TEST_KIND,
+    studyKindsFor: studyKindsFor,
+    defaultStudyKindFor: defaultStudyKindFor,
+    isValidStudyKind: isValidStudyKind,
     AI_APPS: AI_APPS,
     aiAppById: aiAppById,
     pad2: pad2,

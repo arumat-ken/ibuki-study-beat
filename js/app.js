@@ -5,11 +5,11 @@
 
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
-  var APP_VERSION = '4.1.0';
+  var APP_VERSION = '4.1.1';
   /* リリース表示用(画面右上)。更新のたびに日付を上げる。
    * モデル名は「未記録」固定とする(実行時のモデル識別子を断定してリポジトリの
    * 成果物に書き出さない方針のため。推測での記載はしない)。 */
-  var BUILD_DATE = '2026-08-09';
+  var BUILD_DATE = '2026-08-10';
   var BUILD_UPDATER = 'Claude Code';
   var BUILD_MODEL = '未記録';
 
@@ -399,25 +399,48 @@
       return '<option value="' + esc(s.id) + '"' + (s.id === selectedId ? ' selected' : '') + '>' + esc(s.name) + '</option>';
     }).join('');
   }
-  function kindOptions(selected) {
-    return C.STUDY_KINDS.map(function (k) {
-      return '<option value="' + k + '"' + (k === selected ? ' selected' : '') + '>' + k + '</option>';
+  /* 学習種別は科目ごとに変える(APP-460)。
+   * 選択中の値がその科目の一覧に無い場合(科目を変えた・旧データを編集した)は、
+   * 一覧の末尾にそのまま残して選択状態にする。過去の記録の値を勝手に書き換えない。 */
+  function firstSubjectId() {
+    var visible = state.settings.subjects.filter(function (s) { return s.visible; });
+    return visible.length ? visible[0].id : '';
+  }
+
+  function kindOptions(selected, subjectId) {
+    var kinds = C.studyKindsFor(subjectId);
+    if (selected && kinds.indexOf(selected) === -1) kinds = kinds.concat([selected]);
+    return kinds.map(function (k) {
+      return '<option value="' + esc(k) + '"' + (k === selected ? ' selected' : '') + '>' + esc(k) + '</option>';
     }).join('');
+  }
+
+  /* 科目を変えたら、その科目の学習種別に入れ替える。
+   * 入れ替え後の値で点数欄の出し分けも更新する。 */
+  function bindKindToSubject(subjectSelId, kindSelId, scoreRowId) {
+    var subjEl = $(subjectSelId), kindEl = $(kindSelId);
+    if (!subjEl || !kindEl) return;
+    subjEl.addEventListener('change', function () {
+      kindEl.innerHTML = kindOptions(C.defaultStudyKindFor(subjEl.value), subjEl.value);
+      if (scoreRowId && $(scoreRowId)) {
+        $(scoreRowId).style.display = kindEl.value === C.TEST_KIND ? '' : 'none';
+      }
+    });
   }
 
   $('btn-add-plan').addEventListener('click', function () { openPlanModal(null); });
   function openPlanModal(thenStart) {
     openModal(
       '<h3>今日の予定を追加<button class="icon-btn" id="m-close">✕</button></h3>' +
-      '<div class="field-row">' +
       '<div class="field"><label>科目</label><select id="m-subject">' + subjectOptions() + '</select></div>' +
-      '<div class="field"><label>学習種別</label><select id="m-kind">' + kindOptions('暗記') + '</select></div>' +
-      '</div>' +
+      '<div class="field"><label>学習種別</label><select id="m-kind">' +
+        kindOptions(C.defaultStudyKindFor(firstSubjectId()), firstSubjectId()) + '</select></div>' +
       '<div class="field"><label>内容</label><input type="text" id="m-content" placeholder="例: 英単語 20語" maxlength="100"></div>' +
       '<div class="field"><label>計画時間(分)</label><input type="number" id="m-plan" min="1" max="720" inputmode="numeric" value="30"></div>' +
       '<button class="btn primary block big" id="m-save">' + (thenStart ? 'この内容で開始する ▶' : '予定に追加する') + '</button>'
     );
     $('m-close').onclick = closeModal;
+    bindKindToSubject('m-subject', 'm-kind', null);
     $('m-save').onclick = function () {
       var rec = {
         id: nextId('r'),
@@ -899,15 +922,18 @@
     var subjSel = $('rf-subject');
     var cur = subjSel.value;
     subjSel.innerHTML = subjectOptions(cur);
-    if ($('rf-kind').options.length === 0) $('rf-kind').innerHTML = kindOptions('暗記');
+    if ($('rf-kind').options.length === 0) {
+      $('rf-kind').innerHTML = kindOptions(C.defaultStudyKindFor(subjSel.value), subjSel.value);
+    }
     if (!$('rf-date').value) $('rf-date').value = todayStr();
     $('rf-score-row').style.display = $('rf-kind').value === 'テスト' ? '' : 'none';
     renderRecordList();
   }
 
   $('rf-kind').addEventListener('change', function () {
-    $('rf-score-row').style.display = this.value === 'テスト' ? '' : 'none';
+    $('rf-score-row').style.display = this.value === C.TEST_KIND ? '' : 'none';
   });
+  bindKindToSubject('rf-subject', 'rf-kind', 'rf-score-row');
 
   $('record-form').addEventListener('submit', function (e) {
     e.preventDefault();
@@ -988,8 +1014,8 @@
       '<div class="field"><label>科目</label><select id="m-subject">' + subjectOptions(rec.subjectId) + '</select></div>' +
       '</div>' +
       '<div class="field"><label>内容</label><input type="text" id="m-content" maxlength="100" value="' + esc(rec.content) + '"></div>' +
+      '<div class="field"><label>学習種別</label><select id="m-kind">' + kindOptions(rec.kind, rec.subjectId) + '</select></div>' +
       '<div class="field-row">' +
-      '<div class="field"><label>学習種別</label><select id="m-kind">' + kindOptions(rec.kind) + '</select></div>' +
       '<div class="field"><label>計画(分)</label><input type="number" id="m-plan" min="0" max="720" inputmode="numeric" value="' + rec.planMin + '"></div>' +
       '<div class="field"><label>実績(分)</label><input type="number" id="m-actual" min="0" max="720" inputmode="numeric" value="' + rec.actualMin + '"></div>' +
       '</div>' +
@@ -1002,7 +1028,11 @@
     );
     $('m-close').onclick = closeModal;
     $('m-kind').onchange = function () {
-      $('m-score-row').style.display = this.value === 'テスト' ? 'flex' : 'none';
+      $('m-score-row').style.display = this.value === C.TEST_KIND ? 'flex' : 'none';
+    };
+    $('m-subject').onchange = function () {
+      $('m-kind').innerHTML = kindOptions(C.defaultStudyKindFor(this.value), this.value);
+      $('m-score-row').style.display = $('m-kind').value === C.TEST_KIND ? 'flex' : 'none';
     };
     $('m-save').onclick = function () {
       var kind = $('m-kind').value;
@@ -2730,8 +2760,9 @@
     $('app-version').textContent = 'ver. ' + APP_VERSION;
     $('app-build').textContent = '更新日 ' + BUILD_DATE + ' ・ 更新 ' + BUILD_UPDATER + ' ・ モデル ' + BUILD_MODEL;
     $('rf-date').value = todayStr();
-    $('rf-kind').innerHTML = kindOptions('暗記');
     $('rf-subject').innerHTML = subjectOptions();
+    $('rf-kind').innerHTML = kindOptions(
+      C.defaultStudyKindFor($('rf-subject').value), $('rf-subject').value);
     renderToday();
     showWelcomeMessage();
     if (storageWarning) toast(storageWarning, true);

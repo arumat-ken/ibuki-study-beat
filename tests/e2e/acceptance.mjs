@@ -81,12 +81,13 @@ async function nav(screen) {
   await page.waitForSelector(`#screen-${screen}.active`);
 }
 
-async function addRecord({ date, subjectLabel, content, kind = '暗記', plan = '', actual = '', score = '', maxScore = '' }) {
+async function addRecord({ date, subjectLabel, content, kind = null, plan = '', actual = '', score = '', maxScore = '' }) {
   await nav('record');
   if (date) await page.fill('#rf-date', date);
   if (subjectLabel) await page.selectOption('#rf-subject', { label: subjectLabel });
   await page.fill('#rf-content', content);
-  await page.selectOption('#rf-kind', kind);
+  // 学習種別は科目ごとに変わる(APP-460)。指定が無ければ科目の初期値のまま使う。
+  if (kind) await page.selectOption('#rf-kind', kind);
   await page.fill('#rf-plan', String(plan));
   await page.fill('#rf-actual', String(actual));
   if (kind === 'テスト') {
@@ -127,7 +128,7 @@ async function test1_firstStudy() {
   await page.click('#btn-start-study');
   await page.waitForSelector('#modal-back.open');
   await page.selectOption('#m-subject', { label: '英語' });
-  await page.selectOption('#m-kind', '暗記');
+  await page.selectOption('#m-kind', '単語・熟語');
   await page.fill('#m-content', '英単語 20語');
   await page.fill('#m-plan', '30');
   await page.click('#m-save');
@@ -182,8 +183,8 @@ async function test2_sevenDays() {
 
 async function test3_multiSubject() {
   console.log('\n■ 試験3: 複数科目の積み上げと凡例の色一致');
-  await addRecord({ date: localDate(0), subjectLabel: '国語', content: '現代文 読解', kind: '読解', plan: 40, actual: 35 });
-  await addRecord({ date: localDate(0), subjectLabel: '社会', content: '世界史 通史', kind: '復習', plan: 50, actual: 60 });
+  await addRecord({ date: localDate(0), subjectLabel: '国語', content: '現代文 読解', kind: '現代文読解', plan: 40, actual: 35 });
+  await addRecord({ date: localDate(0), subjectLabel: '社会', content: '世界史 通史', kind: '解き直し', plan: 50, actual: 60 });
   await nav('graph');
   await page.waitForSelector('#chart-svg');
   await shot('06-graph-multi-subject');
@@ -1237,6 +1238,127 @@ async function test13_codexReviewFixes() {
   ok('拒否された2回目はstreakGuardDatesも増えない', st.shop.streakGuardDates.length === 1);
 }
 
+async function test14_subjectStudyKinds() {
+  console.log('\n■ 試験14: 科目ごとの学習種別(APP-460)');
+  await freshPage(true);
+
+  const kinds = async (sel) => page.$$eval(sel + ' option', (os) => os.map((o) => o.textContent));
+
+  /* --- 記録画面: 科目を変えると学習種別が入れ替わる --- */
+  await nav('record');
+
+  await page.selectOption('#rf-subject', 'soc');
+  await page.waitForTimeout(150);
+  let list = await kinds('#rf-kind');
+  ok('14-1 社会を選ぶと社会の学習種別になる', list.includes('一問一答') && list.includes('用語の暗記'), list.join('/'));
+  ok('14-2 社会に「読解」「演習」が出ない', !list.includes('読解') && !list.includes('演習'), list.join('/'));
+  ok('14-3 社会の初期値が「用語の暗記」', await page.inputValue('#rf-kind') === '用語の暗記');
+
+  await page.selectOption('#rf-subject', 'math');
+  await page.waitForTimeout(150);
+  list = await kinds('#rf-kind');
+  ok('14-4 数学に「公式・定理の確認」がある', list.includes('公式・定理の確認'), list.join('/'));
+  ok('14-5 数学に素の「暗記」「読解」が出ない', !list.includes('暗記') && !list.includes('読解'), list.join('/'));
+  ok('14-6 数学の初期値が「問題演習」', await page.inputValue('#rf-kind') === '問題演習');
+
+  await page.selectOption('#rf-subject', 'eng');
+  await page.waitForTimeout(150);
+  list = await kinds('#rf-kind');
+  ok('14-7 英語に「リスニング」がある', list.includes('リスニング'), list.join('/'));
+
+  await page.selectOption('#rf-subject', 'other');
+  await page.waitForTimeout(150);
+  list = await kinds('#rf-kind');
+  ok('14-8 その他は共通の選択肢に戻る', list.includes('暗記') && list.includes('演習'), list.join('/'));
+
+  /* --- テストは全科目に残り、点数欄の出し分けが動く --- */
+  for (const sid of ['eng', 'math', 'jpn', 'sci', 'soc', 'other']) {
+    await page.selectOption('#rf-subject', sid);
+    await page.waitForTimeout(120);
+    const l = await kinds('#rf-kind');
+    if (!l.includes('テスト')) { ok('14-9 全科目に「テスト」がある', false, sid + ': ' + l.join('/')); break; }
+  }
+  ok('14-9 全科目に「テスト」がある', true, '6科目すべて');
+
+  await page.selectOption('#rf-subject', 'soc');
+  await page.waitForTimeout(120);
+  await page.selectOption('#rf-kind', 'テスト');
+  await page.waitForTimeout(150);
+  ok('14-10 テストを選ぶと点数欄が出る', await page.isVisible('#rf-score-row'));
+  await page.selectOption('#rf-subject', 'math');
+  await page.waitForTimeout(150);
+  ok('14-11 科目を変えると点数欄が閉じる(種別が入れ替わるため)', !(await page.isVisible('#rf-score-row')));
+
+  /* --- 保存できる --- */
+  await page.selectOption('#rf-subject', 'soc');
+  await page.waitForTimeout(120);
+  await page.fill('#rf-content', '世界史 一問一答');
+  await page.selectOption('#rf-kind', '一問一答');
+  await page.fill('#rf-plan', '20');
+  await page.fill('#rf-actual', '20');
+  await page.click('#rf-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  const saved = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return st.records.filter((r) => !r.deletedAt).map((r) => r.kind);
+  });
+  ok('14-12 科目別の種別で保存できる', saved.includes('一問一答'), saved.join('/'));
+
+  /* --- 予定追加モーダルでも連動する --- */
+  await nav('today');
+  await page.click('#btn-add-plan');
+  await page.waitForTimeout(250);
+  await page.selectOption('#m-subject', 'jpn');
+  await page.waitForTimeout(150);
+  list = await kinds('#m-kind');
+  ok('14-13 予定追加でも科目に連動する(国語に「古文」)', list.includes('古文'), list.join('/'));
+  await page.click('#m-close');
+  await page.waitForTimeout(200);
+
+  /* --- 旧データの値を持つ記録を編集しても値が消えない --- */
+  await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    st.records.push({
+      id: 'r_legacy', date: st.records[0] ? st.records[0].date : new Date().toISOString().slice(0, 10),
+      subjectId: 'soc', content: '旧データ', kind: '暗記',
+      planMin: 30, actualMin: 30, score: null, maxScore: null, reflection: '',
+      createdAt: 1, updatedAt: 1, deletedAt: null
+    });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await nav('record');
+  await page.waitForTimeout(300);
+  const keptLegacy = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const r = st.records.find((x) => x.id === 'r_legacy');
+    return r ? r.kind : null;
+  });
+  ok('14-14 旧データの「暗記」が読み込みで消えない', keptLegacy === '暗記', String(keptLegacy));
+
+  /* --- 長い選択肢が途中で切れない(320pxでも) --- */
+  await nav('record');
+  await page.selectOption('#rf-subject', 'math');
+  await page.waitForTimeout(150);
+  await page.selectOption('#rf-kind', '公式・定理の確認');
+  await page.waitForTimeout(150);
+  const fits = await page.$eval('#rf-kind', (el) => el.scrollWidth <= el.clientWidth + 1);
+  ok('14-15 長い学習種別が枠内に収まる(390px)', fits);
+  await shot('60-subject-study-kinds');
+
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.waitForTimeout(250);
+  const fits320 = await page.$eval('#rf-kind', (el) => el.scrollWidth <= el.clientWidth + 1);
+  ok('14-16 長い学習種別が枠内に収まる(320px)', fits320);
+  const noHScroll = await page.evaluate(() =>
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1);
+  ok('14-17 320px幅の記録画面で横スクロールが発生しない', noHScroll);
+  await shot('62-subject-study-kinds-320');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(200);
+}
+
 async function extra_screens() {
   console.log('\n■ 追加: 全画面スクリーンショットとコーチ・320px幅・横向き');
   await freshPage(true);
@@ -1322,6 +1444,7 @@ try {
   await test11_worldNews();
   await test12_pointsEquipShop();
   await test13_codexReviewFixes();
+  await test14_subjectStudyKinds();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);
