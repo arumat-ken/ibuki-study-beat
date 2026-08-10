@@ -95,7 +95,7 @@
       "file": "anti_gravity_lean.png",
       "category": "skill",
       "nameJa": "アンチグラビティ・リーン",
-      "status": "pending",
+      "status": "generated",
       "prompt": "A dawn sky gradient from deep black to pale gold. A single beam of light rising diagonally from the horizon, with the soft glow of a just-rising sun. Quiet early-morning atmosphere."
     },
     {
@@ -111,7 +111,7 @@
       "file": "live_house.png",
       "category": "stage",
       "nameJa": "ライブハウス",
-      "status": "pending",
+      "status": "generated",
       "prompt": "Interior of a small music venue with a low ceiling, a compact empty stage, and a few golden spotlights cutting through haze. Intimate and warm. Empty floor."
     },
     {
@@ -119,7 +119,7 @@
       "file": "budokan.png",
       "category": "stage",
       "nameJa": "武道館",
-      "status": "pending",
+      "status": "generated",
       "prompt": "Interior of a large octagonal hall, golden light radiating down from a high ceiling onto an empty central stage. Traditional East Asian architectural silhouette. Solemn and grand. Empty seats."
     },
     {
@@ -127,7 +127,7 @@
       "file": "dome_tour.png",
       "category": "stage",
       "nameJa": "ドームツアー",
-      "status": "pending",
+      "status": "generated",
       "prompt": "Interior of a massive domed stadium viewed from above, circular tiers surrounding a glowing golden stage at the center. Countless tiny points of light fill the stands, rendered purely as light particles."
     },
     {
@@ -135,7 +135,7 @@
       "file": "world_stage.png",
       "category": "stage",
       "nameJa": "ワールドステージ",
-      "status": "pending",
+      "status": "generated",
       "prompt": "Earth seen from space, golden pillars of light rising from continents around the globe, connected by arcing golden lines across the surface. Epic planetary scale."
     },
     {
