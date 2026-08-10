@@ -798,3 +798,38 @@ test('学習種別に重複した文言が無い(同じ意味の語を並べな�
     assert.equal(new Set(list).size, list.length, id + ' に重複が無い');
   });
 });
+
+/* ==================================================================
+ * APP-460/461: 第三者レビューで見つかった不具合の再発防止
+ * ================================================================== */
+
+test('studyKindsFor: プロトタイプ由来のキーでも落ちない(toString / constructor / __proto__)', () => {
+  ['toString', 'constructor', '__proto__', 'hasOwnProperty', 'valueOf'].forEach((id) => {
+    const list = C.studyKindsFor(id);
+    assert.ok(Array.isArray(list), id + ' で配列が返る');
+    assert.deepEqual(list, C.STUDY_KINDS, id + ' は共通の選択肢になる');
+    assert.equal(typeof C.defaultStudyKindFor(id), 'string', id + ' の初期値が文字列');
+  });
+});
+
+test('studyKindsFor: 科目idが空・null・数値でも落ちない', () => {
+  ['', null, undefined, 0, 123].forEach((id) => {
+    assert.ok(Array.isArray(C.studyKindsFor(id)), String(id) + ' で配列が返る');
+  });
+});
+
+test('テストはすべての科目の選択肢に含まれる(科目を変えても得点が消えない前提)', () => {
+  // 「テスト」がどの科目にもあるため、科目変更時に種別を保てる。
+  // 1つでも欠けると、科目を変えた瞬間に得点欄が閉じて保存時にscoreがnullになる。
+  const ids = ['eng', 'math', 'jpn', 'sci', 'soc', 'other', '自作科目'];
+  ids.forEach((id) => {
+    assert.ok(C.studyKindsFor(id).indexOf(C.TEST_KIND) !== -1, id + ' に ' + C.TEST_KIND);
+  });
+  // 科目をまたいで同じ種別を保てるか(実装側 refreshKindForSubject の前提)
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = 0; j < ids.length; j++) {
+      assert.ok(C.studyKindsFor(ids[j]).indexOf(C.TEST_KIND) !== -1,
+        ids[i] + ' → ' + ids[j] + ' でテストを保てる');
+    }
+  }
+});

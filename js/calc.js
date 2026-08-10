@@ -52,14 +52,21 @@
   /* 点数入力欄の出し分けに使うため、どの科目にも必ず含める。 */
   var TEST_KIND = 'テスト';
 
+  /* 科目idは利用者が作った科目や、読み込んだバックアップ由来の任意の文字列でありうる。
+   * 'toString' や 'constructor' のようなキーで Object.prototype の中身を掴まないよう、
+   * 自分自身が持つキーかどうかを必ず確かめる。 */
+  function ownList(map, key) {
+    return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null;
+  }
+
   function studyKindsFor(subjectId) {
-    var list = SUBJECT_STUDY_KINDS[subjectId];
-    return (list ? list : STUDY_KINDS).slice();
+    var list = ownList(SUBJECT_STUDY_KINDS, subjectId);
+    return (Array.isArray(list) ? list : STUDY_KINDS).slice();
   }
 
   function defaultStudyKindFor(subjectId) {
-    var d = DEFAULT_STUDY_KINDS[subjectId];
-    if (d) return d;
+    var d = ownList(DEFAULT_STUDY_KINDS, subjectId);
+    if (typeof d === 'string' && d) return d;
     return studyKindsFor(subjectId)[0];
   }
 

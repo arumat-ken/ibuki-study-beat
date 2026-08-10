@@ -86,13 +86,24 @@ async function addRecord({ date, subjectLabel, content, kind = null, plan = '', 
   if (date) await page.fill('#rf-date', date);
   if (subjectLabel) await page.selectOption('#rf-subject', { label: subjectLabel });
   await page.fill('#rf-content', content);
-  // 学習種別は科目ごとに変わる(APP-460)。指定が無ければ科目の初期値のまま使う。
-  if (kind) await page.selectOption('#rf-kind', kind);
+  // 学習種別は科目ごとに変わる(APP-460)。指定が無ければ、その科目の初期値へ明示的に戻す。
+  // 前回の呼び出しの種別・得点が残ると、別の試験の結果を汚す。
+  if (kind) {
+    await page.selectOption('#rf-kind', kind);
+  } else {
+    const def = await page.$eval('#rf-kind', (el) => el.options.length ? el.options[0].value : '');
+    const subjId = await page.inputValue('#rf-subject');
+    const want = await page.evaluate((sid) => {
+      const C = window.ISBCalc; return C ? C.defaultStudyKindFor(sid) : null;
+    }, subjId);
+    await page.selectOption('#rf-kind', want || def);
+  }
   await page.fill('#rf-plan', String(plan));
   await page.fill('#rf-actual', String(actual));
-  if (kind === 'テスト') {
-    if (score !== '') await page.fill('#rf-score', String(score));
-    if (maxScore !== '') await page.fill('#rf-maxscore', String(maxScore));
+  // 得点欄は前回の値が残るため、テスト以外では必ず空にする
+  if (await page.isVisible('#rf-score-row')) {
+    await page.fill('#rf-score', kind === 'テスト' && score !== '' ? String(score) : '');
+    await page.fill('#rf-maxscore', kind === 'テスト' && maxScore !== '' ? String(maxScore) : '');
   }
   await page.click('#rf-save');
   await page.waitForTimeout(250);
@@ -1272,13 +1283,14 @@ async function test14_subjectStudyKinds() {
   ok('14-8 その他は共通の選択肢に戻る', list.includes('暗記') && list.includes('演習'), list.join('/'));
 
   /* --- テストは全科目に残り、点数欄の出し分けが動く --- */
+  let missingTest = null;
   for (const sid of ['eng', 'math', 'jpn', 'sci', 'soc', 'other']) {
     await page.selectOption('#rf-subject', sid);
     await page.waitForTimeout(120);
     const l = await kinds('#rf-kind');
-    if (!l.includes('テスト')) { ok('14-9 全科目に「テスト」がある', false, sid + ': ' + l.join('/')); break; }
+    if (!l.includes('テスト')) { missingTest = sid + ': ' + l.join('/'); break; }
   }
-  ok('14-9 全科目に「テスト」がある', true, '6科目すべて');
+  ok('14-9 全科目に「テスト」がある', missingTest === null, missingTest || '6科目すべて');
 
   await page.selectOption('#rf-subject', 'soc');
   await page.waitForTimeout(120);
@@ -1287,7 +1299,11 @@ async function test14_subjectStudyKinds() {
   ok('14-10 テストを選ぶと点数欄が出る', await page.isVisible('#rf-score-row'));
   await page.selectOption('#rf-subject', 'math');
   await page.waitForTimeout(150);
-  ok('14-11 科目を変えると点数欄が閉じる(種別が入れ替わるため)', !(await page.isVisible('#rf-score-row')));
+  // 「テスト」はどの科目にもあるため、科目を変えても保たれる。
+  // ここで既定値へ戻すと、入力済みの得点が保存時に消える(15-17〜20 で検証)。
+  ok('14-11 科目を変えても「テスト」は保たれ点数欄が開いたまま',
+    (await page.inputValue('#rf-kind')) === 'テスト' && (await page.isVisible('#rf-score-row')),
+    await page.inputValue('#rf-kind'));
 
   /* --- 保存できる --- */
   await page.selectOption('#rf-subject', 'soc');
@@ -1442,6 +1458,60 @@ async function test15_coachPanelsAndReport() {
   await page.waitForTimeout(200);
   const cleared = await page.$eval('.nav-btn[data-screen="settings"]', (el) => el.className);
   ok('15-16 更新すると赤い点が消える', !cleared.includes('has-update'), cleared);
+
+  /* --- 第三者レビュー指摘1: 科目を変えてもテストの得点が消えない --- */
+  await nav('record');
+  await page.selectOption('#rf-subject', 'soc');
+  await page.waitForTimeout(200);
+  await page.selectOption('#rf-kind', 'テスト');
+  await page.waitForTimeout(200);
+  await page.fill('#rf-content', '模試(科目変更の検証)');
+  await page.fill('#rf-plan', '60');
+  await page.fill('#rf-actual', '60');
+  await page.fill('#rf-score', '80');
+  await page.fill('#rf-maxscore', '100');
+  await page.selectOption('#rf-subject', 'math');       // ここで種別が既定値へ戻ると得点が消える
+  await page.waitForTimeout(300);
+  ok('15-17 科目を変えても学習種別「テスト」が保たれる',
+    (await page.inputValue('#rf-kind')) === 'テスト', await page.inputValue('#rf-kind'));
+  ok('15-18 科目を変えても得点欄が開いたまま', await page.isVisible('#rf-score-row'));
+  ok('15-19 入力済みの得点が残っている', (await page.inputValue('#rf-score')) === '80');
+  await page.click('#rf-save');
+  await page.waitForTimeout(400);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  const savedScore = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const r = st.records.filter((x) => !x.deletedAt).find((x) => (x.content || '').includes('科目変更の検証'));
+    return r ? { kind: r.kind, score: r.score, max: r.maxScore, subject: r.subjectId } : null;
+  });
+  ok('15-20 保存後も得点が消えていない', savedScore && savedScore.score === 80 && savedScore.kind === 'テスト',
+    JSON.stringify(savedScore));
+
+  /* --- 科目を変えたとき、その科目に無い種別は既定値へ切り替わる --- */
+  await page.selectOption('#rf-subject', 'soc');
+  await page.waitForTimeout(200);
+  await page.selectOption('#rf-kind', '一問一答');
+  await page.selectOption('#rf-subject', 'math');       // 数学に「一問一答」は無い
+  await page.waitForTimeout(300);
+  ok('15-21 その科目に無い種別は既定値へ切り替わる',
+    (await page.inputValue('#rf-kind')) === '問題演習', await page.inputValue('#rf-kind'));
+
+  /* --- 第三者レビュー指摘2: 壊れた科目idでも起動する --- */
+  await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    st.settings.subjects.push({ id: 'toString', name: '壊れid', color: '#888', visible: true, examSubject: false });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+  });
+  const errsBefore = consoleErrors.length;
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(500);
+  await nav('record');
+  await page.selectOption('#rf-subject', 'toString');
+  await page.waitForTimeout(300);
+  const kindsForBroken = await page.$$eval('#rf-kind option', (os) => os.map((o) => o.textContent));
+  ok('15-22 科目idが toString でもアプリが起動し操作できる', kindsForBroken.length > 0, kindsForBroken.join('/'));
+  ok('15-23 壊れた科目idでJSエラーが増えない', consoleErrors.length === errsBefore,
+    consoleErrors.slice(errsBefore).join(' | '));
 }
 
 async function extra_screens() {

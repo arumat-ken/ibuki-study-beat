@@ -417,14 +417,31 @@
 
   /* 科目を変えたら、その科目の学習種別に入れ替える。
    * 入れ替え後の値で点数欄の出し分けも更新する。 */
+  /* 記録画面の学習種別が、どの科目のものとして作られているか。
+   * 設定で科目を消した・並べ替えたときに一覧を作り直す判定に使う。 */
+  var rfKindSubjectId = null;
+
+  /* 科目を変えたときの学習種別の入れ替え。
+   * いま選んでいる種別が新しい科目にもあるなら、それを保つ。
+   * 「テスト」はどの科目にもあるため、科目を変えても得点欄が閉じず、
+   * 入力済みの得点が保存時に消えることがない。 */
+  function refreshKindForSubject(kindEl, subjectId, scoreRowEl, openStyle) {
+    var keep = kindEl.value;
+    var next = C.studyKindsFor(subjectId).indexOf(keep) !== -1
+      ? keep
+      : C.defaultStudyKindFor(subjectId);
+    kindEl.innerHTML = kindOptions(next, subjectId);
+    if (scoreRowEl) {
+      scoreRowEl.style.display = kindEl.value === C.TEST_KIND ? (openStyle || '') : 'none';
+    }
+  }
+
   function bindKindToSubject(subjectSelId, kindSelId, scoreRowId) {
     var subjEl = $(subjectSelId), kindEl = $(kindSelId);
     if (!subjEl || !kindEl) return;
     subjEl.addEventListener('change', function () {
-      kindEl.innerHTML = kindOptions(C.defaultStudyKindFor(subjEl.value), subjEl.value);
-      if (scoreRowId && $(scoreRowId)) {
-        $(scoreRowId).style.display = kindEl.value === C.TEST_KIND ? '' : 'none';
-      }
+      refreshKindForSubject(kindEl, subjEl.value, scoreRowId ? $(scoreRowId) : null, '');
+      if (subjectSelId === 'rf-subject') rfKindSubjectId = subjEl.value;
     });
   }
 
@@ -922,11 +939,14 @@
     var subjSel = $('rf-subject');
     var cur = subjSel.value;
     subjSel.innerHTML = subjectOptions(cur);
-    if ($('rf-kind').options.length === 0) {
+    // 設定で科目を消した・並べ替えたときは選択が別の科目へ移る。
+    // その場合は学習種別の一覧も作り直す(古い科目の一覧が残らないように)。
+    if ($('rf-kind').options.length === 0 || rfKindSubjectId !== subjSel.value) {
       $('rf-kind').innerHTML = kindOptions(C.defaultStudyKindFor(subjSel.value), subjSel.value);
+      rfKindSubjectId = subjSel.value;
     }
     if (!$('rf-date').value) $('rf-date').value = todayStr();
-    $('rf-score-row').style.display = $('rf-kind').value === 'テスト' ? '' : 'none';
+    $('rf-score-row').style.display = $('rf-kind').value === C.TEST_KIND ? '' : 'none';
     renderRecordList();
   }
 
@@ -1031,8 +1051,7 @@
       $('m-score-row').style.display = this.value === C.TEST_KIND ? 'flex' : 'none';
     };
     $('m-subject').onchange = function () {
-      $('m-kind').innerHTML = kindOptions(C.defaultStudyKindFor(this.value), this.value);
-      $('m-score-row').style.display = $('m-kind').value === C.TEST_KIND ? 'flex' : 'none';
+      refreshKindForSubject($('m-kind'), this.value, $('m-score-row'), 'flex');
     };
     $('m-save').onclick = function () {
       var kind = $('m-kind').value;
@@ -2723,6 +2742,7 @@
    * 使える場合だけ静かに付ける(許可は求めない)。 */
 
   var updateWaiting = false;
+  var pendingUpdateWorker = null;
 
   function setUpdateBadge(on) {
     updateWaiting = !!on;
@@ -2738,15 +2758,26 @@
         about.insertBefore(d, about.querySelector('.chev'));
       }
     }
+    /* setAppBadge は Promise を返す。許可の無い環境では拒否されるため、
+     * 同期の try だけでは拾えない。両方で握りつぶす。 */
     try {
-      if (updateWaiting && navigator.setAppBadge) navigator.setAppBadge(1);
-      else if (navigator.clearAppBadge) navigator.clearAppBadge();
-    } catch (e) { /* 許可が無い環境では何もしない */ }
+      var op = updateWaiting
+        ? (navigator.setAppBadge && navigator.setAppBadge(1))
+        : (navigator.clearAppBadge && navigator.clearAppBadge());
+      if (op && typeof op.catch === 'function') op.catch(function () { /* 許可なし */ });
+    } catch (e) { /* 使えない環境では何もしない */ }
   }
 
   function openAboutPanel() {
+    var updateBlock = updateWaiting
+      ? '<div class="field" style="margin-bottom:12px">' +
+        '<button class="btn primary block" id="ab-update">🔄 いますぐ更新する</button>' +
+        '<div class="small" style="margin-top:6px">新しいバージョンが届いています。学習の記録は消えません。</div>' +
+        '</div>'
+      : '';
     openModal(
       '<h3>サポート・ヘルプ<button class="icon-btn" id="m-close">✕</button></h3>' +
+      updateBlock +
       '<div class="small" style="line-height:1.9">' +
       '<b>IBUKI STUDY BEAT</b> ver. ' + APP_VERSION + '<br>' +
       '一歩一歩が、未来のステージをつくる。<br><br>' +
@@ -2759,6 +2790,23 @@
       '</div>'
     );
     $('m-close').onclick = closeModal;
+    if (updateWaiting && $('ab-update')) {
+      $('ab-update').onclick = function () {
+        if (!pendingUpdateWorker) { toast('更新の準備ができていないよ。少し待ってね', true); return; }
+        // 待機していた版が失効していることがある。その場合は赤い点を残し、
+        // 画面を閉じずに次の手順を伝える(更新できないまま行き止まりにしない)。
+        try {
+          pendingUpdateWorker.postMessage({ type: 'SKIP_WAITING' });
+        } catch (e) {
+          pendingUpdateWorker = null;
+          toast('更新できなかったよ。アプリを閉じてもう一度開いてね', true);
+          return;
+        }
+        toast('更新中…少し待ってね');
+        setUpdateBadge(false);
+        closeModal();
+      };
+    }
   }
 
   /* ================= 起動 ================= */
@@ -2816,7 +2864,6 @@
   }
 
   /* --- アップデート検知(Service Worker) --- */
-  var pendingUpdateWorker = null;
 
   /* 受け入れ試験から更新バッジの表示を確認するための入口。
    * Service Workerの更新は試験環境で再現しづらいため、ここだけ公開する。 */
@@ -2880,6 +2927,10 @@
     $('rf-subject').innerHTML = subjectOptions();
     $('rf-kind').innerHTML = kindOptions(
       C.defaultStudyKindFor($('rf-subject').value), $('rf-subject').value);
+    rfKindSubjectId = $('rf-subject').value;
+    /* 前回の更新通知が残っていることがあるため、起動時にいったん消す。
+     * 本当に待機中の版があれば、この直後の setupServiceWorker が付け直す。 */
+    setUpdateBadge(false);
     renderToday();
     showWelcomeMessage();
     if (storageWarning) toast(storageWarning, true);

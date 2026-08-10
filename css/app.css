@@ -55,7 +55,8 @@ select { appearance: none; -webkit-appearance: none; background-image: linear-gr
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-dim); border-color: var(--gold); }
 input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; }
 
-.app { max-width: 520px; margin: 0 auto; position: relative; z-index: 1; padding-bottom: calc(var(--nav-h) + var(--safe-b) + 12px); }
+/* 一番下の項目が下部ナビに詰まって見えないよう、ナビの高さ+余白を空ける。 */
+.app { max-width: 520px; margin: 0 auto; position: relative; z-index: 1; padding-bottom: calc(var(--nav-h) + var(--safe-b) + 28px); }
 
 /* ---------- 画面共通 ---------- */
 .screen { display: none; padding: 0 14px 8px; }
