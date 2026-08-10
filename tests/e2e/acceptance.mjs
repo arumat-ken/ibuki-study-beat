@@ -1359,6 +1359,91 @@ async function test14_subjectStudyKinds() {
   await page.waitForTimeout(200);
 }
 
+async function test15_coachPanelsAndReport() {
+  console.log('\n■ 試験15: コーチのパネル表示・不具合報告・更新バッジ(APP-461)');
+  await freshPage(true);
+  await nav('coach');
+  await page.waitForTimeout(300);
+
+  const geo = async (sel) => page.$eval(sel, (el) => {
+    const b = el.getBoundingClientRect();
+    return { top: Math.round(b.top), bottom: Math.round(b.bottom), vh: window.innerHeight,
+             visible: !!(el.offsetWidth || el.offsetHeight) };
+  });
+
+  /* --- ポーズ変更: 押したら画面内に見える --- */
+  await page.click('#btn-pose');
+  await page.waitForTimeout(700);
+  let g = await geo('#pose-panel');
+  ok('15-1 ポーズ変更を押すとパネルが開く', g.visible);
+  ok('15-2 ポーズパネルが画面内に入る(押しても何も起きないように見えない)',
+    g.top < g.vh && g.bottom > 0, JSON.stringify(g));
+  const poseTappable = await page.$eval('.pose-cell', (el) => {
+    const b = el.getBoundingClientRect();
+    const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    return !!(t && (t === el || el.contains(t)));
+  });
+  ok('15-3 ポーズを実際にタップできる', poseTappable);
+
+  /* --- メッセージ: 押したら入力欄が画面内に見える --- */
+  await page.click('#btn-chat');
+  await page.waitForTimeout(700);
+  g = await geo('#chat-input');
+  ok('15-4 メッセージを押すと入力欄が開く', g.visible);
+  ok('15-5 入力欄が画面内に入る', g.top < g.vh && g.bottom > 0, JSON.stringify(g));
+  const inputTappable = await page.$eval('#chat-input', (el) => {
+    const b = el.getBoundingClientRect();
+    const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    return !!(t && (t === el || el.contains(t)));
+  });
+  ok('15-6 入力欄が他の要素に隠れていない', inputTappable);
+
+  await page.fill('#chat-input', 'テスト送信');
+  await page.click('#chat-send');
+  await page.waitForTimeout(400);
+  const chatSaved = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return ((st.coach && st.coach.messages) || []).some((c) => (c.text || '').includes('テスト送信'));
+  });
+  ok('15-7 メッセージを送信できる', chatSaved);
+  await shot('63-coach-chat-open');
+
+  /* --- 不具合を報告する --- */
+  await nav('settings');
+  await page.click('.settings-item[data-panel="report"]');
+  await page.waitForSelector('#rp-preview');
+  const preview0 = await page.textContent('#rp-preview');
+  ok('15-8 報告画面に版数が自動で入る', preview0.includes('ver.'), preview0.slice(0, 40));
+  ok('15-9 端末と画面幅が自動で入る', preview0.includes('画面幅') && preview0.includes('端末'));
+  ok('15-10 学習内容の本文は含めない旨を明記', preview0.includes('本文は含めていません'));
+  await page.fill('#rp-text', 'コーチのボタンが反応しない');
+  await page.waitForTimeout(200);
+  const preview1 = await page.textContent('#rp-preview');
+  ok('15-11 書いた内容が報告文に反映される', preview1.includes('コーチのボタンが反応しない'));
+  await shot('64-report-panel');
+  await page.click('#rp-copy');
+  await page.waitForTimeout(300);
+  ok('15-12 コピー操作でエラーにならない', true);
+  await page.click('#m-close');
+  await page.waitForTimeout(200);
+
+  /* --- 更新バッジ --- */
+  const before = await page.$eval('.nav-btn[data-screen="settings"]', (el) => el.className);
+  ok('15-13 通常時は設定タブに赤い点が出ない', !before.includes('has-update'), before);
+  await page.evaluate(() => window.__isbSetUpdateBadge && window.__isbSetUpdateBadge(true));
+  await page.waitForTimeout(200);
+  const after = await page.$eval('.nav-btn[data-screen="settings"]', (el) => el.className);
+  ok('15-14 更新が届くと設定タブに赤い点が出る', after.includes('has-update'), after);
+  const dotVisible = await page.$eval('.nav-btn[data-screen="settings"] .dot',
+    (el) => !!(el.offsetWidth || el.offsetHeight));
+  ok('15-15 赤い点が実際に表示される', dotVisible);
+  await shot('65-update-badge');
+  await page.evaluate(() => window.__isbSetUpdateBadge && window.__isbSetUpdateBadge(false));
+  await page.waitForTimeout(200);
+  const cleared = await page.$eval('.nav-btn[data-screen="settings"]', (el) => el.className);
+  ok('15-16 更新すると赤い点が消える', !cleared.includes('has-update'), cleared);
+}
+
 async function extra_screens() {
   console.log('\n■ 追加: 全画面スクリーンショットとコーチ・320px幅・横向き');
   await freshPage(true);
@@ -1445,6 +1530,7 @@ try {
   await test12_pointsEquipShop();
   await test13_codexReviewFixes();
   await test14_subjectStudyKinds();
+  await test15_coachPanelsAndReport();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

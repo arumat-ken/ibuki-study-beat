@@ -5,7 +5,7 @@
 
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
-  var APP_VERSION = '4.1.1';
+  var APP_VERSION = '4.1.2';
   /* リリース表示用(画面右上)。更新のたびに日付を上げる。
    * モデル名は「未記録」固定とする(実行時のモデル識別子を断定してリポジトリの
    * 成果物に書き出さない方針のため。推測での記載はしない)。 */
@@ -2036,15 +2036,31 @@
     renderBoostCard();
   }
 
+  /* 開いたパネルを画面内に送る(APP-461)。
+   * パネルはボタンより下、装備・ショップカードのさらに後ろに置かれているため、
+   * 画面の外で開いていた。ボタンを押しても何も変わらないように見え、
+   * 「ボタンが反応しない」「メッセージが入力できない」という不具合になっていた。 */
+  function revealPanel(el) {
+    if (!el || el.style.display === 'none') return;
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    try {
+      el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    } catch (e) {
+      el.scrollIntoView(true);   // 古いブラウザ向け
+    }
+  }
+
   $('btn-pose').addEventListener('click', function () {
     var p = $('pose-panel');
     p.style.display = p.style.display === 'none' ? '' : 'none';
     $('chat-panel').style.display = 'none';
+    revealPanel(p);
   });
   $('btn-chat').addEventListener('click', function () {
     var p = $('chat-panel');
     p.style.display = p.style.display === 'none' ? '' : 'none';
     $('pose-panel').style.display = 'none';
+    revealPanel(p);
     if (p.style.display !== 'none') {
       renderChatLog();
       renderQuickAsks();
@@ -2302,6 +2318,7 @@
     if (panel === 'ai') return openAIPanel();
     if (panel === 'axis') return openAxisModal();
     if (panel === 'data') return openDataPanel();
+    if (panel === 'report') return openReportPanel();
     if (panel === 'about') return openAboutPanel();
   }
 
@@ -2636,6 +2653,97 @@
     };
   }
 
+  /* ================= 不具合の報告(APP-461) =================
+   * 外部通信ゼロのため、アプリから送信はしない。
+   * 状況が分かる定型文を組み立ててコピーし、親がLINEやGitHubへ貼れるようにする。 */
+
+  function buildReportText(userText) {
+    var lines = [];
+    lines.push('【IBUKI STUDY BEAT 不具合レポート】');
+    lines.push('');
+    lines.push('■ 何が起きたか');
+    lines.push(userText && userText.trim() ? userText.trim() : '(未記入)');
+    lines.push('');
+    lines.push('■ 環境(自動で入ります)');
+    lines.push('アプリ版: ver.' + APP_VERSION + ' (' + BUILD_DATE + ')');
+    lines.push('発生日時: ' + new Date().toLocaleString('ja-JP'));
+    lines.push('画面幅: ' + window.innerWidth + ' x ' + window.innerHeight);
+    lines.push('ホーム画面から起動: ' +
+      (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches ? 'はい' : 'いいえ'));
+    lines.push('端末: ' + (navigator.userAgent || '不明').slice(0, 160));
+    lines.push('オフライン対応: ' + ('serviceWorker' in navigator ? '有効' : '無効'));
+    lines.push('');
+    lines.push('■ データの規模(中身は含みません)');
+    try {
+      lines.push('学習記録: ' + (state.records || []).filter(function (r) { return !r.deletedAt; }).length + '件');
+      lines.push('ニュース: ' + (state.news || []).length + '件');
+      lines.push('受験イベント: ' + (state.events || []).length + '件');
+      lines.push('科目: ' + (state.settings.subjects || []).length + '件');
+      lines.push('保存容量: 約' + Math.round((localStorage.getItem(KEY) || '').length / 1024) + ' KB');
+    } catch (e) {
+      lines.push('(データの読み取りに失敗しました)');
+    }
+    lines.push('');
+    lines.push('※ 学習内容・振り返りの本文は含めていません。');
+    return lines.join('\n');
+  }
+
+  function openReportPanel() {
+    openModal(
+      '<h3>不具合を報告する<button class="icon-btn" id="m-close">✕</button></h3>' +
+      '<div class="small" style="line-height:1.8;margin-bottom:10px">' +
+      'うまく動かないところを書いて「コピーする」を押すと、報告用の文章ができます。' +
+      'LINEやメールに貼って送ってね。<br>' +
+      '<b>学習の内容や振り返りの中身は入りません。</b>' +
+      '</div>' +
+      '<div class="field"><label>どこで、何が起きた?</label>' +
+      '<textarea id="rp-text" maxlength="500" rows="4" ' +
+      'placeholder="例: コーチのメッセージボタンを押しても何も出てこない"></textarea></div>' +
+      '<div class="field"><label>送られる内容(自動)</label>' +
+      '<pre id="rp-preview" class="report-preview"></pre></div>' +
+      '<button class="btn primary block" id="rp-copy">📋 コピーする</button>' +
+      '<div class="small" style="margin-top:10px;line-height:1.8">' +
+      'コピーしたら、LINEで送るか、GitHubの Issues に貼り付けてください。' +
+      '</div>'
+    );
+    $('m-close').onclick = closeModal;
+    function refresh() { $('rp-preview').textContent = buildReportText($('rp-text').value); }
+    $('rp-text').addEventListener('input', refresh);
+    refresh();
+    $('rp-copy').onclick = function () {
+      copyToClipboard(buildReportText($('rp-text').value)).then(function (okCopy) {
+        toast(okCopy ? 'コピーしたよ！LINEなどに貼り付けてね' : 'コピーできなかった。長押しで選んでコピーしてね', !okCopy);
+      });
+    };
+  }
+
+  /* ================= アップデートのお知らせ(APP-461) =================
+   * 新しい版が届いたら、設定タブに赤い点を出す。
+   * ホーム画面のアイコン自体へのバッジは、iOSでは通知の許可が要るため
+   * 使える場合だけ静かに付ける(許可は求めない)。 */
+
+  var updateWaiting = false;
+
+  function setUpdateBadge(on) {
+    updateWaiting = !!on;
+    var btn = document.querySelector('.nav-btn[data-screen="settings"]');
+    if (btn) btn.classList.toggle('has-update', updateWaiting);
+    var item = document.querySelector('.settings-item[data-panel="about"] .dot');
+    if (item) item.remove();
+    if (updateWaiting) {
+      var about = document.querySelector('.settings-item[data-panel="about"]');
+      if (about) {
+        var d = document.createElement('span');
+        d.className = 'dot';
+        about.insertBefore(d, about.querySelector('.chev'));
+      }
+    }
+    try {
+      if (updateWaiting && navigator.setAppBadge) navigator.setAppBadge(1);
+      else if (navigator.clearAppBadge) navigator.clearAppBadge();
+    } catch (e) { /* 許可が無い環境では何もしない */ }
+  }
+
   function openAboutPanel() {
     openModal(
       '<h3>サポート・ヘルプ<button class="icon-btn" id="m-close">✕</button></h3>' +
@@ -2708,6 +2816,12 @@
   }
 
   /* --- アップデート検知(Service Worker) --- */
+  var pendingUpdateWorker = null;
+
+  /* 受け入れ試験から更新バッジの表示を確認するための入口。
+   * Service Workerの更新は試験環境で再現しづらいため、ここだけ公開する。 */
+  window.__isbSetUpdateBadge = setUpdateBadge;
+
   function setupServiceWorker() {
     if (!('serviceWorker' in navigator) || location.protocol !== 'https:') return;
 
@@ -2722,6 +2836,8 @@
     navigator.serviceWorker.register('sw.js').then(function (reg) {
       function offerUpdate(worker) {
         if (!worker) return;
+        setUpdateBadge(true);
+        pendingUpdateWorker = worker;
         showCenterMessage({
           img: 'cele_streak7.png',
           title: '新しいバージョンがあるよ！',
@@ -2730,6 +2846,7 @@
           buttonLabel: '🔄 いますぐ更新する',
           onConfirm: function () {
             toast('更新中…少し待ってね');
+            setUpdateBadge(false);
             worker.postMessage({ type: 'SKIP_WAITING' });
           }
         });
