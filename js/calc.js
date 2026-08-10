@@ -191,6 +191,52 @@
    * 各バケット: {date, plan:{subjectId:分}, actual:{}, planTotal, actualTotal, cumPlan, cumActual}
    * 累積は表示範囲内での積み上げ。
    */
+  /* ポイントの日別集計(APP-470)。
+   * 学習記録のBPとニュースのBPを日ごとに足し、累積も返す。
+   * 学習時間のグラフ(buildSeries)には手を触れず、別系統として用意する。 */
+  function buildBpSeries(records, news, startDate, days) {
+    var byDate = {};
+    function add(date, kind, amount) {
+      if (!isDateStr(date) || !(amount > 0)) return;
+      var b = byDate[date] || (byDate[date] = { study: 0, news: 0 });
+      b[kind] += amount;
+    }
+    activeRecords(records).forEach(function (r) { add(r.date, 'study', r.bp | 0); });
+    (news || []).forEach(function (n) { add(n.date, 'news', n.bp | 0); });
+
+    var series = [];
+    var cum = 0;
+    for (var i = 0; i < days; i++) {
+      var date = addDays(startDate, i);
+      var b = byDate[date] || { study: 0, news: 0 };
+      var total = b.study + b.news;
+      cum += total;
+      series.push({ date: date, study: b.study, news: b.news, total: total, cum: cum });
+    }
+    return series;
+  }
+
+  function summarizeBp(series) {
+    var studyTotal = 0, newsTotal = 0, best = 0, bestDate = null, activeDays = 0;
+    series.forEach(function (d) {
+      studyTotal += d.study;
+      newsTotal += d.news;
+      if (d.total > best) { best = d.total; bestDate = d.date; }
+      if (d.total > 0) activeDays += 1;
+    });
+    var total = studyTotal + newsTotal;
+    return {
+      studyTotal: studyTotal,
+      newsTotal: newsTotal,
+      total: total,
+      best: best,
+      bestDate: bestDate,
+      activeDays: activeDays,
+      average: activeDays > 0 ? Math.round(total / activeDays) : 0,
+      cum: series.length ? series[series.length - 1].cum : 0
+    };
+  }
+
   function buildSeries(records, startDate, days) {
     var recs = activeRecords(records);
     var byDate = {};
@@ -1443,6 +1489,8 @@
     FACULTY_IDS: FACULTY_IDS,
     activeRecords: activeRecords,
     buildSeries: buildSeries,
+    buildBpSeries: buildBpSeries,
+    summarizeBp: summarizeBp,
     summarize: summarize,
     streakDays: streakDays,
     niceMax: niceMax,

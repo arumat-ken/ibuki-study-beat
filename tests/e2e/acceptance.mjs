@@ -1514,6 +1514,112 @@ async function test15_coachPanelsAndReport() {
     consoleErrors.slice(errsBefore).join(' | '));
 }
 
+async function test16_bpChipAndGraph() {
+  console.log('\n■ 試験16: ポイントの常時表示とポイントグラフ(APP-470)');
+  await freshPage(true);
+  await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const d = (o) => { const x = new Date(); x.setDate(x.getDate() + o);
+      return x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0'); };
+    for (let i = 6; i >= 0; i--) {
+      st.records.push({ id: 'bp' + i, date: d(-i), subjectId: 'eng', content: 'BP検証' + i, kind: '単語・熟語',
+        planMin: 60, actualMin: 60, score: null, maxScore: null, reflection: '',
+        bp: 100 * (i + 1), createdAt: 1, updatedAt: 1, deletedAt: null });
+    }
+    st.news.push({ id: 'bpn', date: d(-1), genreId: 'economy', headline: 'N', comment: '', bp: 60, createdAt: 1 });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+
+  /* --- 全画面の上部にポイントが出る --- */
+  const expected = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return window.ISBCalc.calcBpBalance(st).toLocaleString('ja-JP');
+  });
+  let allShown = true, detail = [];
+  for (const sc of ['today', 'record', 'graph', 'world', 'coach', 'settings']) {
+    await nav(sc);
+    await page.waitForTimeout(200);
+    const r = await page.evaluate(() => {
+      const c = document.querySelector('.screen.active .bp-balance');
+      if (!c) return null;
+      const b = c.getBoundingClientRect();
+      return { text: c.textContent.trim(), visible: !!(c.offsetWidth || c.offsetHeight), top: Math.round(b.top) };
+    });
+    if (!r || !r.visible || r.text.indexOf(expected) === -1) { allShown = false; detail.push(sc + ':' + JSON.stringify(r)); }
+  }
+  ok('16-1 6画面すべての上部にポイント残高が出る', allShown, detail.join(' '));
+
+  /* --- タップで内訳が開く --- */
+  await nav('today');
+  await page.click('.screen.active .bp-balance');
+  await page.waitForTimeout(400);
+  ok('16-2 ポイントをタップすると内訳が開く', await page.isVisible('#modal-back.open'));
+  await page.click('#m-close');
+  await page.waitForTimeout(250);
+
+  /* --- 記録を足すと残高が増える --- */
+  const before = await page.textContent('.screen.active .bp-balance');
+  await addRecord({ subjectLabel: '英語', content: 'ポイント増加の検証', plan: 30, actual: 30 });
+  await nav('today');
+  await page.waitForTimeout(300);
+  const after = await page.textContent('.screen.active .bp-balance');
+  ok('16-3 記録を保存すると残高表示が更新される', before !== after, before + ' → ' + after);
+
+  /* --- ポイントグラフ --- */
+  await nav('graph');
+  await page.waitForTimeout(300);
+  const timeBars = await page.locator('#chart-svg-wrap rect').count();
+  ok('16-4 学習時間グラフが従来どおり描かれる', timeBars > 0, 'rect=' + timeBars);
+
+  await page.click('#graph-mode-tabs [data-mode="bp"]');
+  await page.waitForTimeout(500);
+  ok('16-5 ポイントグラフに切り替わる', (await page.locator('#chart-svg-wrap rect').count()) > 0);
+  ok('16-6 累積の線が描かれる', (await page.locator('#chart-svg-wrap polyline').count()) === 1);
+  const stats = (await page.textContent('#graph-stats')).replace(/\s+/g, '');
+  ok('16-7 獲得合計・学習から・ニュースからが出る',
+    stats.includes('獲得合計') && stats.includes('学習から') && stats.includes('ニュースから'), stats.slice(0, 60));
+  const ovBp = await page.evaluate(() =>
+    document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  ok('16-8 ポイントグラフで横スクロールが起きない', ovBp <= 1, 'overflow=' + ovBp);
+  await shot('66-graph-bp');
+
+  /* --- 期間切替がポイント側でも効く --- */
+  await page.click('.range-tab[data-range="month"]');
+  await page.waitForTimeout(400);
+  ok('16-9 期間(月)を変えてもポイントグラフが描かれる',
+    (await page.locator('#chart-svg-wrap rect').count()) > 0);
+
+  /* --- 学習時間グラフへ戻して壊れていないこと --- */
+  await page.click('#graph-mode-tabs [data-mode="time"]');
+  await page.waitForTimeout(400);
+  ok('16-10 学習時間グラフへ戻せる(既存機能を壊していない)',
+    (await page.locator('#chart-svg-wrap rect').count()) > 0);
+  ok('16-11 学習時間の統計が従来どおり出る',
+    (await page.textContent('#graph-stats')).includes('達成率'));
+
+  /* --- 不具合報告のLINE送信 --- */
+  await nav('settings');
+  await page.click('.settings-item[data-panel="report"]');
+  await page.waitForSelector('#rp-send');
+  ok('16-12 不具合報告に「送る」ボタンがある', await page.isVisible('#rp-send'));
+  ok('16-13 コピーするボタンも残っている', await page.isVisible('#rp-copy'));
+  const shared = await page.evaluate(() => {
+    window.__shared = null;
+    navigator.share = (d) => { window.__shared = d; return Promise.resolve(); };
+    document.getElementById('rp-send').click();
+    return new Promise((r) => setTimeout(() => r(window.__shared), 200));
+  });
+  ok('16-14 送るボタンで共有に報告文が渡る',
+    shared && (shared.text || '').includes('IBUKI STUDY BEAT 不具合レポート'),
+    shared ? (shared.text || '').slice(0, 30) : 'null');
+  ok('16-15 共有に学習内容の本文が含まれない',
+    shared && (shared.text || '').includes('本文は含めていません'));
+  await shot('67-report-share');
+  await page.click('#m-close');
+}
+
 async function extra_screens() {
   console.log('\n■ 追加: 全画面スクリーンショットとコーチ・320px幅・横向き');
   await freshPage(true);
@@ -1601,6 +1707,7 @@ try {
   await test13_codexReviewFixes();
   await test14_subjectStudyKinds();
   await test15_coachPanelsAndReport();
+  await test16_bpChipAndGraph();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

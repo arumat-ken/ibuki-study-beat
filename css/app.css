@@ -67,6 +67,21 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
   position: sticky; top: 0; z-index: 20;
   background: linear-gradient(180deg, var(--bg) 82%, transparent);
 }
+/* 獲得ポイントの常時表示(APP-470)。全画面の上部に出す。 */
+.bp-balance {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 5px;
+  background: linear-gradient(180deg, #221d10, #191510);
+  border: 1px solid var(--gold, #d9b24a); border-radius: 999px;
+  padding: 5px 12px; min-height: 32px; cursor: pointer;
+  color: var(--gold-bright, #f0c75e); font-size: 0.82rem; font-weight: 700;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+  box-shadow: 0 0 10px rgba(217, 178, 74, 0.18);
+}
+.bp-balance:active { transform: scale(0.97); }
+.bp-balance-ico { font-size: 0.9rem; line-height: 1; }
+.screen-head .head-btn + .bp-balance, .bp-balance + .head-btn { margin-left: 8px; }
+.brand-wrap + .bp-balance { margin-left: auto; }
+
 .screen-head h1 { font-size: 1.05rem; letter-spacing: 0.06em; font-weight: 800; }
 .brand-wrap { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .version-badge {

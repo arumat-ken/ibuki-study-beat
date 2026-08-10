@@ -833,3 +833,64 @@ test('テストはすべての科目の選択肢に含まれる(科目を変え�
     }
   }
 });
+
+/* ==================================================================
+ * APP-470: ポイントの日別集計(グラフ用)
+ * ================================================================== */
+
+test('buildBpSeries: 学習とニュースのBPを日ごとに分けて集計し、累積も返す', () => {
+  const recs = [
+    { id: 'a', date: '2026-08-08', subjectId: 'eng', bp: 300, actualMin: 60, planMin: 60, deletedAt: null },
+    { id: 'b', date: '2026-08-09', subjectId: 'math', bp: 500, actualMin: 90, planMin: 90, deletedAt: null }
+  ];
+  const news = [{ id: 'n1', date: '2026-08-09', bp: 60 }];
+  const s = C.buildBpSeries(recs, news, '2026-08-08', 3);
+  assert.equal(s.length, 3);
+  assert.deepEqual(s[0], { date: '2026-08-08', study: 300, news: 0, total: 300, cum: 300 });
+  assert.deepEqual(s[1], { date: '2026-08-09', study: 500, news: 60, total: 560, cum: 860 });
+  assert.deepEqual(s[2], { date: '2026-08-10', study: 0, news: 0, total: 0, cum: 860 },
+    '記録が無い日も0として並ぶ(累積は減らない)');
+});
+
+test('buildBpSeries: 削除済みの記録は集計しない', () => {
+  const recs = [
+    { id: 'a', date: '2026-08-08', subjectId: 'eng', bp: 300, actualMin: 60, planMin: 60, deletedAt: null },
+    { id: 'b', date: '2026-08-08', subjectId: 'eng', bp: 999, actualMin: 60, planMin: 60, deletedAt: 12345 }
+  ];
+  const s = C.buildBpSeries(recs, [], '2026-08-08', 1);
+  assert.equal(s[0].study, 300, '削除済みの999は入らない');
+});
+
+test('buildBpSeries: 期間外・不正な日付・BPなしは無視する', () => {
+  const recs = [
+    { id: 'a', date: '2026-07-01', subjectId: 'eng', bp: 500, actualMin: 60, planMin: 60, deletedAt: null },
+    { id: 'b', date: 'こわれた', subjectId: 'eng', bp: 500, actualMin: 60, planMin: 60, deletedAt: null },
+    { id: 'c', date: '2026-08-08', subjectId: 'eng', bp: 0, actualMin: 60, planMin: 60, deletedAt: null }
+  ];
+  const s = C.buildBpSeries(recs, [{ id: 'n', date: null, bp: 60 }], '2026-08-08', 2);
+  assert.equal(s[0].total, 0);
+  assert.equal(s[1].total, 0);
+});
+
+test('summarizeBp: 合計・内訳・最高の1日・記録した日の平均を返す', () => {
+  const s = C.buildBpSeries(
+    [{ id: 'a', date: '2026-08-08', subjectId: 'eng', bp: 300, actualMin: 60, planMin: 60, deletedAt: null },
+     { id: 'b', date: '2026-08-10', subjectId: 'eng', bp: 500, actualMin: 60, planMin: 60, deletedAt: null }],
+    [{ id: 'n', date: '2026-08-10', bp: 60 }], '2026-08-08', 3);
+  const sum = C.summarizeBp(s);
+  assert.equal(sum.studyTotal, 800);
+  assert.equal(sum.newsTotal, 60);
+  assert.equal(sum.total, 860);
+  assert.equal(sum.best, 560);
+  assert.equal(sum.bestDate, '2026-08-10');
+  assert.equal(sum.activeDays, 2, '獲得が0の日は数えない');
+  assert.equal(sum.average, 430, '860 / 2日');
+  assert.equal(sum.cum, 860);
+});
+
+test('summarizeBp: 記録がゼロでも0で割らない', () => {
+  const sum = C.summarizeBp(C.buildBpSeries([], [], '2026-08-08', 3));
+  assert.equal(sum.total, 0);
+  assert.equal(sum.average, 0);
+  assert.equal(sum.bestDate, null);
+});
