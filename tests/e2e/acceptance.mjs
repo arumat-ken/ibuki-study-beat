@@ -804,7 +804,9 @@ async function test12_pointsEquipShop() {
   }
   st = await getState();
   const totalBP = st.records.reduce((s, r) => s + (r.bp || 0), 0);
-  ok('複数回の記録でBPが積み上がる', totalBP >= 720, `total=${totalBP}`);
+  /* APP-440 §6: 行動ボーナスは1日1回になったので、9件ぶんの計画達成50BPは
+   * 積み上がらない。時間ぶん(9件×30分=270)と1回ぶんのボーナスは残る。 */
+  ok('複数回の記録でBPが積み上がる(時間ぶんは記録ごとに加算される)', totalBP >= 270, `total=${totalBP}`);
 
   // --- 受験科目チェック: 初期状態と、トグル操作が保存されることを確認 ---
   st = await getState();
@@ -830,12 +832,15 @@ async function test12_pointsEquipShop() {
   await addRecord({ subjectLabel: 'その他', content: '非受験科目1', plan: 30, actual: 30 });
   st = await getState();
   const nonExam1 = st.records[st.records.length - 1];
-  ok('非受験科目1件目はキャップ未満なら満額もらえる', nonExam1.bp === 80, `bp=${nonExam1.bp}`);
+  /* 計画達成+50 はその日の最初の対象記録へ寄せるため、ここでは時間ぶんだけ。 */
+  ok('非受験科目1件目はキャップ未満なら満額もらえる', nonExam1.bp === 30, `bp=${nonExam1.bp}`);
 
-  await addRecord({ subjectLabel: 'その他', content: '非受験科目2', plan: 30, actual: 30 });
+  /* 行動ボーナスが1日1回になったぶん、上限に届くまでの時間が長くなった。
+   * 30分 + 120分 = 150BP相当だが、非受験科目は1日100BPまで。 */
+  await addRecord({ subjectLabel: 'その他', content: '非受験科目2', plan: 120, actual: 120 });
   st = await getState();
   const nonExam2 = st.records[st.records.length - 1];
-  ok('非受験科目2件目で1日100BPの上限にかかる(80+80→100までしか付かない)', nonExam2.bp === 20, `bp=${nonExam2.bp}`);
+  ok('非受験科目2件目で1日100BPの上限にかかる(30+120→100までしか付かない)', nonExam2.bp === 70, `bp=${nonExam2.bp}`);
   const bpBoxAfterCap = await page.textContent('#celebrate-bp');
   ok('上限到達時にその旨が表示される', bpBoxAfterCap.includes('非受験科目'));
 
@@ -1010,9 +1015,13 @@ async function test13_codexReviewFixes() {
   let st = await getState();
   const first = st.records.find(r => r.content === 'day3-first');
   const second = st.records.find(r => r.content === 'day3-second');
+  /* APP-440 §6: 行動ボーナスは1日1回。担当は bpOrder の先頭(=1件目)に固定する。
+   * 2件目は時間ぶんだけ。合計は「30+30分 + 計画達成50 + streak3の30」= 140。 */
   ok('3日連続達成の当日、1件目にstreak3ボーナス(+30)が付く', first.bp === 110, `bp=${first.bp}`);
-  ok('同じ日の2件目にはstreak3ボーナスが再度付かない', second.bp === 80, `bp=${second.bp}`);
-  ok('dailyBonusesに当日分のstreak3が記録される', st.dailyBonuses[localDate()] && st.dailyBonuses[localDate()].streak3 === true);
+  ok('同じ日の2件目には行動ボーナスが再度付かない(時間ぶんだけ)', second.bp === 30, `bp=${second.bp}`);
+  const dayTotal = st.records.filter(r => r.date === localDate() && !r.deletedAt)
+    .reduce((n, r) => n + (r.bp | 0), 0);
+  ok('APP-440 §6 その日の合計に行動ボーナスは1回ぶんだけ入る', dayTotal === 140, `合計=${dayTotal}`);
 
   // 全受験科目達成ボーナスも同様(全5科目に触れた後、追加の記録では再付与されない)
   await freshPage(true);
@@ -1030,8 +1039,14 @@ async function test13_codexReviewFixes() {
   }
   await addRec('allsub-extra', 10, 10); // 全科目達成後のもう1件
   st = await getState();
-  const withAllExam = st.records.filter(r => r.bp >= 80 && r.content.startsWith('allsub-'));
-  ok('全受験科目達成ボーナス(+80)は1日に1回だけ付与される', withAllExam.length === 1, `count=${withAllExam.length}`);
+  /* APP-440 §6: どの記録に付くかは bpOrder で固定される。
+   * 検証すべきは「その日の合計に1回ぶんだけ入っているか」。
+   * 記録は math1(20分) + 5科目×10分 + 追加10分 = 80分。
+   * 行動ボーナスは 全受験科目80 + 計画達成50 = 130。合計210。 */
+  const allExamDayTotal = st.records.filter(r => r.date === localDate() && !r.deletedAt)
+    .reduce((n, r) => n + (r.bp | 0), 0);
+  ok('全受験科目達成ボーナス(+80)は1日に1回だけ付与される', allExamDayTotal === 210,
+    `合計=${allExamDayTotal}`);
 
   // --- 修正2: 消費アイテムの効果時間が記録全体でなく実際の重なりだけに適用される ---
   await freshPage(true);
@@ -2203,7 +2218,8 @@ async function test20_editRecalcBp() {
   let stBefore = await getState();
   const dayBBefore = stBefore.records.filter(x => x.date === dayB && !x.deletedAt)
     .reduce((n, x) => n + (x.bp | 0), 0);
-  ok('T-4-1 移動先の日は既に日次上限に達している', dayBBefore === 1500, `合計=${dayBBefore}`);
+  /* 700分×2件 + 計画達成50(1日1回) = 1450 */
+  ok('T-4-1 移動先の日は上限近くまで埋まっている', dayBBefore === 1450, `合計=${dayBBefore}`);
 
   await editRecord('移動元', { date: dayB });
   let stAfter = await getState();
@@ -2316,6 +2332,122 @@ async function test20_editRecalcBp() {
   await shot('73-edit-recalc');
 }
 
+async function test21_dailyActionBonuses() {
+  console.log('\n■ 試験21: 行動ボーナスを1日1回に束ねる(APP-440 T-5)');
+  await freshPage(true);
+  await nav('record');
+
+  async function add(content, plan, actual, refl) {
+    await page.selectOption('#rf-subject', { label: '英語' });
+    await page.fill('#rf-content', content);
+    await page.fill('#rf-plan', String(plan));
+    await page.fill('#rf-actual', String(actual));
+    if (refl !== undefined) await page.fill('#rf-reflection', refl);
+    await page.click('#rf-save');
+    await page.waitForTimeout(250);
+    if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  }
+  async function dayTotal() {
+    const st = await getState();
+    return st.records.filter(r => r.date === localDate() && !r.deletedAt)
+      .reduce((n, r) => n + (r.bp | 0), 0);
+  }
+
+  /* --- T-5-1: 1分の記録を10件作っても行動ボーナスは1回ぶん --- */
+  for (let i = 0; i < 10; i++) await add('小分け' + i, 1, 1);
+  const smallTotal = await dayTotal();
+  /* 10分ぶん + 計画達成50 = 60。旧仕様なら 10 + 50×10 = 510 */
+  ok('T-5-1 1分の記録を10件作っても計画達成は1回ぶん', smallTotal <= 60, `合計=${smallTotal}`);
+  ok('T-5-1 旧仕様の510BPにならない', smallTotal < 510, `合計=${smallTotal}`);
+
+  /* --- T-5-6: 15分ちょうどは対象、14分は対象外 --- */
+  await freshPage(true);
+  await nav('record');
+  await add('14分', 14, 14);
+  const t14 = await dayTotal();
+  ok('T-5-6 14分では計画達成ボーナスが付かない', t14 === 14, `合計=${t14}`);
+
+  await freshPage(true);
+  await nav('record');
+  await add('15分', 15, 15);
+  const t15 = await dayTotal();
+  ok('T-5-6 15分ちょうどでは計画達成ボーナスが付く', t15 === 15 + 50, `合計=${t15}`);
+
+  /* --- T-5-2: 振り返りも1日1回 --- */
+  await freshPage(true);
+  await nav('record');
+  await add('振り返り1', 30, 30, 'わかった');
+  await add('振り返り2', 30, 30, 'これもわかった');
+  const reflTotal = await dayTotal();
+  /* 60分 + 計画達成50 + 振り返り10 = 120 */
+  ok('T-5-2 振り返りを2件書いても+10は1回ぶん', reflTotal === 120, `合計=${reflTotal}`);
+
+  /* --- T-5-3: 模試も1日1回 --- */
+  await freshPage(true);
+  await nav('record');
+  for (let i = 0; i < 2; i++) {
+    await page.selectOption('#rf-subject', { label: '英語' });
+    await page.selectOption('#rf-kind', 'テスト');
+    await page.fill('#rf-content', '模試' + i);
+    await page.fill('#rf-plan', '60');
+    await page.fill('#rf-actual', '60');
+    await page.fill('#rf-score', '80');
+    await page.fill('#rf-maxscore', '100');
+    await page.click('#rf-save');
+    await page.waitForTimeout(250);
+    if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  }
+  const mockTotal = await dayTotal();
+  /* 120分 + 計画達成50 + 模試300 = 470。旧仕様なら模試が2回で770 */
+  ok('T-5-3 模試を2件記録しても+300は1回ぶん', mockTotal === 470, `合計=${mockTotal}`);
+
+  /* --- T-5-4: 編集して配り直しても行動ボーナスは1回ぶんのまま --- */
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('.rec-item:has-text("模試0") [data-act="edit"]');
+  await page.waitForSelector('#m-actual');
+  await page.fill('#m-actual', '59');
+  await page.click('#m-save');
+  await page.waitForTimeout(350);
+  const afterEdit = await dayTotal();
+  ok('T-5-4 編集で配り直しても行動ボーナスは1回ぶんのまま', afterEdit === 469, `合計=${afterEdit}`);
+
+  /* --- T-5-5: 更新前からある記録でも1日1回になる --- */
+  await freshPage(true);
+  await page.evaluate(() => {
+    const key = 'ibukiStudyBeat.v3';
+    const s6 = JSON.parse(localStorage.getItem(key));
+    const p6 = n => (n < 10 ? '0' : '') + n;
+    const d6 = new Date();
+    const today = `${d6.getFullYear()}-${p6(d6.getMonth() + 1)}-${p6(d6.getDate())}`;
+    /* 旧仕様で「1件ごとに計画達成50BP」が付いていた状態を再現する */
+    for (let i = 0; i < 3; i++) {
+      s6.records.push({
+        id: 'oldbonus' + i, date: today, subjectId: 'eng', content: '旧ボーナス' + i,
+        kind: '暗記', planMin: 30, actualMin: 30, reflection: '', deletedAt: null,
+        bp: 80, createdAt: 10 + i, updatedAt: 1, score: null, maxScore: null
+      });
+    }
+    localStorage.setItem(key, JSON.stringify(s6));
+  });
+  await reload();
+  const legacyBefore = await dayTotal();
+  ok('T-5-5 旧記録は読み込むだけではBPが変わらない', legacyBefore === 240, `合計=${legacyBefore}`);
+
+  /* 1件編集すると、その日が配り直されて1日1回になる */
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('.rec-item:has-text("旧ボーナス0") [data-act="edit"]');
+  await page.waitForSelector('#m-actual');
+  await page.fill('#m-actual', '30');
+  await page.click('#m-save');
+  await page.waitForTimeout(350);
+  const legacyAfter = await dayTotal();
+  /* 90分 + 計画達成50 = 140 */
+  ok('T-5-5 編集を機に配り直すと行動ボーナスは1回ぶんになる', legacyAfter === 140, `合計=${legacyAfter}`);
+  await shot('74-daily-action-bonus');
+}
+
 /* ============ 実行 ============ */
 browser = await chromium.launch();
 try {
@@ -2339,6 +2471,7 @@ try {
   await test18_itemsOnStudyIntervals();
   await test19_newsSlotOnRestore();
   await test20_editRecalcBp();
+  await test21_dailyActionBonuses();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

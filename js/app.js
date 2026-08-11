@@ -826,6 +826,8 @@
       state.activeSession = null;
       var grant = grantStudyBP(rec);
       rec.bpMinInitial = rec.bpMin;
+      var gmap = recalcBpForDate(rec.date);
+      if (gmap[rec.id]) grant = gmap[rec.id];
       save(); closeModal();
       celebrateAfterSave(rec, grant);
       renderToday();
@@ -943,51 +945,55 @@
     return studyMultiplierForRecord({ id: '__preview__', date: todayStr(), subjectId: null, actualMin: 0 });
   }
 
-  /* 連続日数・全受験科目ボーナスは「その日1回だけ」の仕様。同じ日に複数回保存しても
-   * 再付与されないよう、付与済みかをstate.dailyBonusesで記録する(Codexレビュー指摘)。 */
-  function dailyBonusGranted(date, key) {
-    return !!(state.dailyBonuses[date] && state.dailyBonuses[date][key]);
-  }
-  function markDailyBonusGranted(date, key) {
-    if (!state.dailyBonuses[date]) state.dailyBonuses[date] = {};
-    state.dailyBonuses[date][key] = true;
-  }
+  /* APP-440 §6: 行動ボーナスの付与は state.dailyBonuses のフラグではなく、
+   * その日の記録から毎回導く(buildActionsForRecord)。
+   * フラグは §5 の再計算で「付与済み」のまま残り、配り直したときに
+   * 連続日数ボーナスが消えていた。既存データとの互換のため
+   * state.dailyBonuses の読み書き自体は残すが、判定には使わない。 */
 
+  /**
+   * APP-440 §6: 行動ボーナスを1日1回に束ねる。
+   *
+   * 「その日に付与済みか」をフラグで覚える方式をやめ、**その日の記録から毎回導く**。
+   * フラグ方式には2つの問題があった。
+   *
+   * 1. 小分け記録の水増しを防げていなかった。計画達成+50・振り返り+10・
+   *    模試+300 は記録1件ごとに付いていた。1分の記録を10件作れば+600BP。
+   * 2. §5の再計算と噛み合わない。いったんBPを0にして配り直すとき、
+   *    フラグは立ったままなので連続日数ボーナスが消えた。
+   *    (実測: 編集しただけで 110BP → 79BP に減っていた)
+   *
+   * 導出方式なら、同じ記録集合からは何度計算しても同じ結果になる。
+   * どの記録に付けるかは C.bpOrder で決まる最初の対象記録に固定する。
+   */
   function buildActionsForRecord(rec) {
-    var actions = [];
-    if (C.isPlanAchieved(rec.planMin, rec.actualMin, rec.extendedMin)) actions.push('planAchieved');
-    if (rec.reflection && rec.reflection.trim()) actions.push('reflection');
+    var dayRecords = C.activeRecords(state.records).filter(function (r) {
+      return r.date === rec.date;
+    });
+    /* 記録がまだ state.records に入っていない場合に備えて自分自身を足す。 */
+    if (!dayRecords.some(function (r) { return r.id === rec.id; })) dayRecords = dayRecords.concat([rec]);
 
+    /* 日単位で決まるボーナス(連続日数・全受験科目)は、その日の最初の記録へ寄せる。 */
+    var dayLevel = [];
     var streak = C.streakDays(state.records, rec.date, state.shop.streakGuardDates);
     var streakKey = streak === 3 ? 'streak3' : streak === 7 ? 'streak7' : streak === 30 ? 'streak30' : null;
-    var streakNewlyGranted = streakKey && !dailyBonusGranted(rec.date, streakKey);
-    if (streakNewlyGranted) actions.push(streakKey);
+    if (streakKey) dayLevel.push(streakKey);
 
     var examIds = subjectExamIds();
-    var allExamNewlyGranted = false;
-    if (examIds.length > 0 && !dailyBonusGranted(rec.date, 'allExamSubjects')) {
+    if (examIds.length > 0) {
       var covered = {};
-      C.activeRecords(state.records).forEach(function (r) {
-        if (r.date === rec.date && r.actualMin > 0) covered[r.subjectId] = true;
-      });
-      if (examIds.every(function (id) { return covered[id]; })) {
-        actions.push('allExamSubjects');
-        allExamNewlyGranted = true;
-      }
+      dayRecords.forEach(function (r) { if (r.actualMin > 0) covered[r.subjectId] = true; });
+      if (examIds.every(function (id) { return covered[id]; })) dayLevel.push('allExamSubjects');
     }
 
-    if (rec.kind === 'テスト' && typeof rec.score === 'number' && typeof rec.maxScore === 'number') {
-      actions.push('mockExamTaken');
-    }
+    var assigned = C.resolveDailyActionBonuses(dayRecords, { dayLevelActions: dayLevel });
+    var actions = (assigned.byRecordId[rec.id] || []).slice();
 
-    /* リズムキープ: 連続日数ボーナスBPを2倍に。その日初めて付与される時だけ倍にする
-     * (2回目以降の記録では既にdailyBonusGrantedがtrueになりactionsに入らない)。 */
-    if (streakNewlyGranted && state.shop.equipped.skill === 'rhythm_keep') {
+    /* リズムキープ: 連続日数ボーナスBPを2倍にする。
+     * その日の担当記録に付いているときだけ重ねるので、他の記録では増えない。 */
+    if (streakKey && actions.indexOf(streakKey) !== -1 && state.shop.equipped.skill === 'rhythm_keep') {
       actions.push(streakKey);
     }
-
-    if (streakNewlyGranted) markDailyBonusGranted(rec.date, streakKey);
-    if (allExamNewlyGranted) markDailyBonusGranted(rec.date, 'allExamSubjects');
     return actions;
   }
 
@@ -1217,12 +1223,14 @@
    * 混ざらないようにするため。何度呼んでも同じ結果になる。
    */
   function recalcBpForDate(dateStr) {
-    if (!dateStr) return;
+    var grants = {};
+    if (!dateStr) return grants;
     var list = C.activeRecords(state.records).filter(function (r) {
       return r.date === dateStr;
     }).slice().sort(C.bpOrder);
     list.forEach(function (r) { r.bp = 0; });
-    list.forEach(function (r) { grantStudyBP(r); });
+    list.forEach(function (r) { grants[r.id] = grantStudyBP(r); });
+    return grants;
   }
 
   function showBpResult(grant) {
@@ -1289,7 +1297,14 @@
     var v = C.validateRecord(rec, state.settings.subjects);
     if (!v.ok) { toast(v.errors[0], true); return; }
     state.records.push(rec);
-    var grant = rec.actualMin > 0 ? grantStudyBP(rec) : null;
+    /* APP-440 §6: 日単位のボーナス(全受験科目・連続日数)は、最後の1件を
+     * 保存した時点で初めて成立することがある。その日を配り直さないと、
+     * 担当の記録(bpOrderの先頭)に反映されない。 */
+    var grant = null;
+    if (rec.actualMin > 0) {
+      var grants = recalcBpForDate(rec.date);
+      grant = grants[rec.id] || null;
+    }
     save();
     $('rf-content').value = ''; $('rf-plan').value = ''; $('rf-actual').value = '';
     $('rf-score').value = ''; $('rf-maxscore').value = ''; $('rf-reflection').value = '';
