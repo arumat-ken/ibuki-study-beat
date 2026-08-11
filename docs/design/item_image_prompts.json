@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 1,
+  "task": "APP-430",
+  "updatedAt": "2026-08-10",
+  "updatedBy": "Claude Code",
+  "note": "ショップアイテムの画像生成定義。安全フィルタ対策として、特定人物を連想させる固有名詞(ダンス技名・帽子の型名など)はprompt本文から除外してある。値を書き換えるときは promptVersion を上げること。",
+  "promptVersion": 2,
+  "outputDir": "assets/items",
+  "image": {
+    "width": 512,
+    "height": 512,
+    "format": "png",
+    "aspectRatio": "1:1"
+  },
+  "common": {
+    "stylePrefix": "Icon illustration for a study app. Pure black (#0b0b10) background, gold (#d9b24a to #f0c75e) as the dominant color. Square 1:1, 512x512px. A single subject centered and large with even margins. Glossy metallic finish with a soft golden rim glow. Stylish, slightly stylized illustration, not photorealistic. Readable at small sizes. No text, no logos, no watermarks.",
+    "negative": "no people, no human figures, no faces, no hands, no body parts, no celebrity likeness, no real-world brands, no text, no watermark"
+  },
+  "usage": "final_prompt = common.stylePrefix + ' ' + item.prompt + ' NEGATIVE: ' + common.negative",
+  "items": [
+    {
+      "id": "socks",
+      "file": "socks.png",
+      "category": "costume",
+      "nameJa": "白いソックス",
+      "status": "generated",
+      "prompt": "A pair of crisp white glossy socks floating in mid-air, white standing out against black, a subtle gold rim light, clean and fresh, suggesting a humble first step."
+    },
+    {
+      "id": "gloves",
+      "file": "gloves.png",
+      "category": "costume",
+      "nameJa": "スパンコールのグローブ",
+      "status": "generated",
+      "prompt": "A costume accessory densely covered in thousands of tiny reflective sequins, shaped like an empty flat mitten laid on a dark surface, glittering gold and white, scattered light particles around it."
+    },
+    {
+      "id": "fedora",
+      "file": "fedora.png",
+      "category": "costume",
+      "nameJa": "フェドーラハット",
+      "status": "generated",
+      "prompt": "A black wide-brimmed hat with a gold ribbon band, tilted slightly, floating in mid-air, a thin gold light tracing the curve of the brim."
+    },
+    {
+      "id": "belt",
+      "file": "belt.png",
+      "category": "costume",
+      "nameJa": "ゴールドベルト",
+      "status": "generated",
+      "prompt": "A leather belt with a large ornate gold buckle, curving gracefully in mid-air, the buckle gleaming brightly, trophy-like craftsmanship."
+    },
+    {
+      "id": "jacket",
+      "file": "jacket.png",
+      "category": "costume",
+      "nameJa": "ライトアップジャケット",
+      "status": "generated",
+      "prompt": "An empty black stage jacket on an invisible form, with glowing gold light strips running along its seams and collar, the whole garment softly illuminated from within."
+    },
+    {
+      "id": "rhythm_keep",
+      "file": "rhythm_keep.png",
+      "category": "skill",
+      "nameJa": "リズムキープ",
+      "status": "generated",
+      "prompt": "Evenly spaced golden sound waves pulsing in a steady regular rhythm, with an abstract golden pendulum shape at the center. Stable, unbroken, metronomic composition."
+    },
+    {
+      "id": "moonwalk",
+      "file": "moonwalk.png",
+      "category": "skill",
+      "nameJa": "ムーンウォーク",
+      "status": "generated",
+      "prompt": "A trail of glowing gold footprint shapes receding from right to left, each one fainter than the last, with a soft silver moonlight reflection on a dark floor. Only footprints and light trails."
+    },
+    {
+      "id": "spin_turn",
+      "file": "spin_turn.png",
+      "category": "skill",
+      "nameJa": "スピンターン",
+      "status": "generated",
+      "prompt": "Concentric golden light rings spinning at high speed with motion-blur afterimages, forming a spiral vortex converging toward a bright center point."
+    },
+    {
+      "id": "zero_gravity",
+      "file": "zero_gravity.png",
+      "category": "skill",
+      "nameJa": "ゼロ・グラビティ",
+      "status": "generated",
+      "prompt": "A tall golden pillar of light frozen at an impossible diagonal tilt, with small luminous particles floating weightlessly around it, suggesting suspended gravity."
+    },
+    {
+      "id": "anti_gravity_lean",
+      "file": "anti_gravity_lean.png",
+      "category": "skill",
+      "nameJa": "アンチグラビティ・リーン",
+      "status": "generated",
+      "prompt": "A dawn sky gradient from deep black to pale gold. A single beam of light rising diagonally from the horizon, with the soft glow of a just-rising sun. Quiet early-morning atmosphere."
+    },
+    {
+      "id": "street",
+      "file": "street.png",
+      "category": "stage",
+      "nameJa": "ストリート",
+      "status": "generated",
+      "prompt": "A night street corner with cracked asphalt lit by one golden streetlamp, a simple portable radio at the edge. Humble and quiet. Completely empty of people."
+    },
+    {
+      "id": "live_house",
+      "file": "live_house.png",
+      "category": "stage",
+      "nameJa": "ライブハウス",
+      "status": "generated",
+      "prompt": "Interior of a small music venue with a low ceiling, a compact empty stage, and a few golden spotlights cutting through haze. Intimate and warm. Empty floor."
+    },
+    {
+      "id": "budokan",
+      "file": "budokan.png",
+      "category": "stage",
+      "nameJa": "武道館",
+      "status": "generated",
+      "prompt": "Interior of a large octagonal hall, golden light radiating down from a high ceiling onto an empty central stage. Traditional East Asian architectural silhouette. Solemn and grand. Empty seats."
+    },
+    {
+      "id": "dome_tour",
+      "file": "dome_tour.png",
+      "category": "stage",
+      "nameJa": "ドームツアー",
+      "status": "generated",
+      "prompt": "Interior of a massive domed stadium viewed from above, circular tiers surrounding a glowing golden stage at the center. Countless tiny points of light fill the stands, rendered purely as light particles."
+    },
+    {
+      "id": "world_stage",
+      "file": "world_stage.png",
+      "category": "stage",
+      "nameJa": "ワールドステージ",
+      "status": "generated",
+      "prompt": "Earth seen from space, golden pillars of light rising from continents around the globe, connected by arcing golden lines across the surface. Epic planetary scale."
+    },
+    {
+      "id": "energy_drink",
+      "file": "energy_drink.png",
+      "category": "consumable",
+      "nameJa": "エナジードリンク",
+      "status": "pending",
+      "prompt": "A slim unbranded gold-and-black beverage can, with bursting light effects rising from its opening, contents glowing from within."
+    },
+    {
+      "id": "spotlight",
+      "file": "spotlight.png",
+      "category": "consumable",
+      "nameJa": "スポットライト",
+      "status": "pending",
+      "prompt": "A single stage spotlight fixture casting a golden cone of light downward, forming a circular pool of light on a dark floor. Calm and steady."
+    },
+    {
+      "id": "fever_time",
+      "file": "fever_time.png",
+      "category": "consumable",
+      "nameJa": "フィーバータイム",
+      "status": "pending",
+      "prompt": "A mirror ball spinning wildly, shooting golden and white light rays in every direction, with a flame-like orange-to-gold glow. Explosive screen-filling energy."
+    },
+    {
+      "id": "recovery",
+      "file": "recovery.png",
+      "category": "consumable",
+      "nameJa": "リカバリー",
+      "status": "pending",
+      "prompt": "A shield symbol wrapped in soft golden light, surrounded by gentle floating healing particles. Protective and calm, not aggressive."
+    }
+  ]
+}
