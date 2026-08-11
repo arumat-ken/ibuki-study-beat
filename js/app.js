@@ -632,9 +632,12 @@
               return r.id === discarded.recordId && !r.deletedAt;
             });
             if (!still) { toast('元の予定が見つからないので戻せなかったよ', true); return; }
-            // やめてから戻すまでの時間は勉強していないので、経過に含めない
-            // (Codexレビュー Q6-1)
-            var waitedMs = Math.max(0, Date.now() - discardedAt);
+            /* やめてから戻すまでの時間は勉強していないので経過に含めない。
+             * ただし一時停止中にやめた場合は、pausedAt によって
+             * その時間が最初から除外されている。ここで足すと二重に引かれ、
+             * 戻した瞬間に学習時間が減ってしまう(Codexレビュー Q6-1 再指摘)。 */
+            var wasPaused = !!discarded.pausedAt;
+            var waitedMs = wasPaused ? 0 : Math.max(0, Date.now() - discardedAt);
             state.activeSession = {
               recordId: discarded.recordId,
               startTs: discarded.startTs,

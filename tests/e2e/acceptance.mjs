@@ -1654,7 +1654,20 @@ async function test17_sessionGuards() {
     await page.waitForSelector('#timer-card:visible');
   }
 
+  // 学習中なら破棄して、次の試験の前提を揃える
+  async function endSessionIfAny() {
+    await nav('today');
+    await page.waitForTimeout(200);
+    if (await page.isVisible('#timer-card')) {
+      await page.click('#btn-discard');
+      await page.waitForSelector('#m-ok');
+      await page.click('#m-ok');
+      await page.waitForTimeout(300);
+    }
+  }
+
   async function startAndAge(name, minutes) {
+    await endSessionIfAny();
     await makePlan(name);
     await startPlan(name);
     await ageSession(minutes);
@@ -1770,7 +1783,44 @@ async function test17_sessionGuards() {
   ok('17-19 取り消し後の経過時間が水増しされない',
     afterUndo && afterUndo.elapsedMin === 25, JSON.stringify(afterUndo));
 
+  /* --- Codexレビュー Q6-1(再): 一時停止中にやめて戻しても時間が減らない --- */
+  await startAndAge('一時停止からの復元', 10);
+  await page.click('#btn-pause');                 // 一時停止する
+  await page.waitForTimeout(300);
+  const pausedElapsed = await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession;
+    return Math.floor(((s.pausedAt || Date.now()) - s.startTs - s.pausedAccum) / 60000);
+  });
+  ok('17-22 一時停止で経過が止まる', pausedElapsed === 10, String(pausedElapsed));
+
+  await page.click('#btn-discard');
+  await page.waitForSelector('#m-ok');
+  await page.click('#m-ok');
+  await page.waitForTimeout(2500);                // 2.5秒待ってから戻す
+  await page.click('#toast-action');
+  await page.waitForTimeout(400);
+  const restored = await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession;
+    if (!s) return null;
+    return { elapsedMin: Math.floor(((s.pausedAt || Date.now()) - s.startTs - s.pausedAccum) / 60000),
+             pausedAccum: s.pausedAccum, stillPaused: !!s.pausedAt };
+  });
+  ok('17-23 一時停止中に戻しても学習時間が減らない',
+    restored && restored.elapsedMin === 10, JSON.stringify(restored));
+  ok('17-24 一時停止中は待ち時間を二重に引かない',
+    restored && restored.pausedAccum === 0, JSON.stringify(restored));
+
+  // 再開しても、待ち時間が経過に混ざらない
+  await page.click('#btn-pause');                 // 再開
+  await page.waitForTimeout(600);
+  const resumed = await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession;
+    return Math.floor((Date.now() - s.startTs - s.pausedAccum) / 60000);
+  });
+  ok('17-25 再開後も経過が10分のまま(待ち時間が混ざらない)', resumed === 10, String(resumed));
+
   /* --- Codexレビュー Q6-2: 別の学習が始まっていたら上書きしない --- */
+  await startAndAge('上書き検証のもと', 5);
   const prevRecordId = await page.evaluate(() =>
     JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession.recordId);
   await page.click('#btn-discard');
