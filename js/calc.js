@@ -167,21 +167,51 @@
   }
 
   /* APP-440 §3: 記録に残したアイテム消費の内訳。
-   * これが失われると、再読み込みのたびにBPが減る(倍率だけ消えて時間は残るため)。 */
+   *
+   * 倍率そのものは保存しない。**アイテムIDだけを保存し、倍率は定義から引く。**
+   * 倍率を保存すると、端末内のデータが壊れた(あるいは書き換えられた)ときに
+   * 任意の倍率をBPへ持ち込めてしまう。IDにしておけば、仕様に無い倍率は原理的に作れない。
+   *
+   * 形式: { timed: [{ itemId, minutes }], dayItemIds: [itemId] }
+   *   timed  … 'timed'(エナジードリンク)と 'fever'(フィーバータイム)の消費分
+   *   dayItemIds … その日いっぱい効くアイテム(スポットライト)
+   */
   function sanitizeBpBoost(v) {
     if (!v || typeof v !== 'object') return null;
-    var fever = (typeof v.fever === 'number' && isFinite(v.fever) && v.fever > 0) ? Math.floor(v.fever) : 0;
-    var dayBonus = (typeof v.dayBonus === 'number' && isFinite(v.dayBonus) && v.dayBonus > 0) ? v.dayBonus : 0;
     var timed = [];
     if (Array.isArray(v.timed)) {
-      v.timed.forEach(function (t) {
+      v.timed.slice(0, 50).forEach(function (t) {
         if (!t || typeof t !== 'object') return;
-        if (typeof t.minutes !== 'number' || !isFinite(t.minutes) || t.minutes <= 0) return;
-        if (typeof t.bonus !== 'number' || !isFinite(t.bonus) || t.bonus <= 0) return;
-        timed.push({ minutes: Math.floor(t.minutes), bonus: t.bonus });
+        var item = consumableById(t.itemId);
+        /* 仕様に無いアイテム、時間で効かないアイテムは捨てる。 */
+        if (!item || (item.kind !== 'timed' && item.kind !== 'fever')) return;
+        if (typeof t.minutes !== 'number' || !isFinite(t.minutes)) return;
+        var min = Math.floor(t.minutes);
+        /* 1回の消費が持ち時間を超えることはない。 */
+        if (min <= 0 || min > item.durationMin) return;
+        timed.push({ itemId: item.id, minutes: min });
       });
     }
-    return { fever: fever, timed: timed, dayBonus: dayBonus };
+    var dayItemIds = [];
+    if (Array.isArray(v.dayItemIds)) {
+      v.dayItemIds.slice(0, 20).forEach(function (id) {
+        var item = consumableById(id);
+        if (!item || item.kind !== 'day') return;
+        if (dayItemIds.indexOf(item.id) === -1) dayItemIds.push(item.id);
+      });
+    }
+    return { timed: timed, dayItemIds: dayItemIds };
+  }
+
+  /* 保存された内訳から、その日いっぱい効くアイテムの倍率加算を求める。 */
+  function dayBonusFromBoost(boost) {
+    if (!boost || !Array.isArray(boost.dayItemIds)) return 0;
+    var sum = 0;
+    boost.dayItemIds.forEach(function (id) {
+      var item = consumableById(id);
+      if (item && item.kind === 'day' && typeof item.bonus === 'number') sum += item.bonus;
+    });
+    return sum;
   }
 
   /* 消費アイテムの持ち時間(ミリ秒)。時間で効かないアイテムは0。 */
@@ -1938,6 +1968,7 @@
     createdAtFromId: createdAtFromId,
     sanitizeSegments: sanitizeSegments,
     sanitizeBpBoost: sanitizeBpBoost,
+    dayBonusFromBoost: dayBonusFromBoost,
     consumableDurationMs: consumableDurationMs,
     normalizeSegments: normalizeSegments,
     segmentsOverlapMs: segmentsOverlapMs,

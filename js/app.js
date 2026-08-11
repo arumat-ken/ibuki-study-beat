@@ -672,7 +672,7 @@
     var segments = Array.isArray(ses.segments) ? ses.segments : null;
     /* 区間が無い記録(手入力・移行中の旧セッション)には時間制アイテムを適用しない。 */
     if (!segments || !segments.length) {
-      if (!rec.bpBoost) rec.bpBoost = { fever: 0, timed: [], dayBonus: 0 };
+      if (!rec.bpBoost) rec.bpBoost = { timed: [], dayItemIds: [] };
       return;
     }
     /* 何度呼んでも増えない。二重消費を防いでいるのは rec.bpBoost の有無ではなく
@@ -681,22 +681,18 @@
     rec.bpBoost = mergeBoost(rec.bpBoost, consumeTimedBoosts(segments));
   }
 
-  /* 既に消費した分を上書きせず、追加分を足し込む。 */
+  /* 既に消費した分を上書きせず、追加分を足し込む。
+   * 倍率は保存しない。アイテムIDだけを持ち、倍率は定義から引く。 */
   function mergeBoost(prev, add) {
-    var out = { fever: 0, timed: [], dayBonus: 0 };
+    var out = { timed: [], dayItemIds: [] };
     if (prev) {
-      out.fever = prev.fever || 0;
-      out.dayBonus = prev.dayBonus || 0;
-      (prev.timed || []).forEach(function (t) { out.timed.push({ minutes: t.minutes, bonus: t.bonus }); });
+      (prev.timed || []).forEach(function (t) { out.timed.push({ itemId: t.itemId, minutes: t.minutes }); });
+      (prev.dayItemIds || []).forEach(function (id) { out.dayItemIds.push(id); });
     }
-    out.fever += add.fever || 0;
-    /* その日いっぱいのアイテムは倍率であって持ち時間ではないので、足さずに大きい方を採る。 */
-    out.dayBonus = Math.max(out.dayBonus, add.dayBonus || 0);
-    (add.timed || []).forEach(function (t) {
-      var hit = null;
-      out.timed.forEach(function (x) { if (x.bonus === t.bonus) hit = x; });
-      if (hit) hit.minutes += t.minutes;
-      else out.timed.push({ minutes: t.minutes, bonus: t.bonus });
+    (add.timed || []).forEach(function (t) { out.timed.push({ itemId: t.itemId, minutes: t.minutes }); });
+    /* その日いっぱいのアイテムは倍率であって持ち時間ではないので、重複させない。 */
+    (add.dayItemIds || []).forEach(function (id) {
+      if (out.dayItemIds.indexOf(id) === -1) out.dayItemIds.push(id);
     });
     return out;
   }
@@ -1022,7 +1018,7 @@
    * 記録ごとに一度だけ呼び、結果を rec.bpBoost に残す。
    * 再計算では消費し直さないので、同じアイテム時間を複数の記録へ再利用できない。 */
   function consumeTimedBoosts(segments, nowMs) {
-    var out = { fever: 0, timed: [], dayBonus: 0 };
+    var out = { timed: [], dayItemIds: [] };
     if (focusModeActive()) return out;
     var now = (typeof nowMs === 'number') ? nowMs : Date.now();
     /* ここで pruneActiveBoosts を先に呼んではいけない。
@@ -1032,7 +1028,10 @@
       var item = C.consumableById(b.itemId);
       if (!item) return;
       /* その日いっぱいのアイテムは、保存時点で有効なものだけ数える。 */
-      if (b.kind === 'day') { if (b.expiresAt > now) out.dayBonus += item.bonus; return; }
+      if (b.kind === 'day') {
+        if (b.expiresAt > now && out.dayItemIds.indexOf(item.id) === -1) out.dayItemIds.push(item.id);
+        return;
+      }
       if (b.kind !== 'timed' && b.kind !== 'fever') return;
       if (typeof b.startedAt !== 'number' || typeof b.durationMs !== 'number') return;
       var r = C.applyTimedBoost({
@@ -1041,8 +1040,7 @@
       });
       if (r.boostMinutes <= 0) return;
       b.consumedMs = r.nextConsumedMs;   /* 消費は取り消せない(§3) */
-      if (b.kind === 'fever') out.fever += r.boostMinutes;
-      else out.timed.push({ minutes: r.boostMinutes, bonus: item.bonus });
+      out.timed.push({ itemId: item.id, minutes: r.boostMinutes });
     });
     pruneActiveBoosts();
     return out;
@@ -1093,9 +1091,10 @@
     /* APP-440 §3: 時間制アイテムは「実際に勉強した区間との重なり」だけに効く。
      * 壁時計の残り時間で配るのをやめたので、一時停止して放置しても消費されない。
      * 消費量は確定時に rec.bpBoost へ記録済み。ここでは読むだけで、再計算しても増減しない。 */
-    var boost = rec.bpBoost || { fever: 0, timed: [], dayBonus: 0 };
+    var boost = C.sanitizeBpBoost(rec.bpBoost) || { timed: [], dayItemIds: [] };
     var actualMin = rec.actualMin;
-    var dayBonus = boost.dayBonus || 0;
+    /* 倍率は保存された数値ではなくアイテムの定義から引く。壊れたデータで倍率を作れない。 */
+    var dayBonus = C.dayBonusFromBoost(boost);
     var baseMult = C.composeMultiplier({
       costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus,
       conditionBonus: conditionBonus, consumableBonus: dayBonus
@@ -1105,18 +1104,26 @@
     var remain = actualMin;
 
     /* フィーバー中は他の倍率をすべて無効化して10倍に置き換える(H-4)。 */
-    var feverMin = Math.min(remain, boost.fever || 0);
-    if (feverMin > 0) { segments.push({ minutes: feverMin, multiplier: C.FEVER_MULTIPLIER }); remain -= feverMin; }
+    boost.timed.forEach(function (t) {
+      var item = C.consumableById(t.itemId);
+      if (!item || item.kind !== 'fever') return;
+      var m = Math.min(remain, t.minutes);
+      if (m <= 0) return;
+      segments.push({ minutes: m, multiplier: C.FEVER_MULTIPLIER });
+      remain -= m;
+    });
 
     /* エナジードリンクなどの加算は、重なった分数にだけ乗せる。 */
-    (boost.timed || []).forEach(function (t) {
-      var m = Math.min(remain, t.minutes || 0);
+    boost.timed.forEach(function (t) {
+      var item = C.consumableById(t.itemId);
+      if (!item || item.kind !== 'timed') return;
+      var m = Math.min(remain, t.minutes);
       if (m <= 0) return;
       segments.push({
         minutes: m,
         multiplier: C.composeMultiplier({
           costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus,
-          conditionBonus: conditionBonus, consumableBonus: dayBonus + (t.bonus || 0)
+          conditionBonus: conditionBonus, consumableBonus: dayBonus + (item.bonus || 0)
         }).multiplier
       });
       remain -= m;

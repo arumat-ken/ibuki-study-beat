@@ -1907,7 +1907,7 @@ async function test18_itemsOnStudyIntervals() {
   let st = await getState();
   let rec = st.records.find(r => r.content === '休憩を挟む学習');
   ok('T-2-3 休憩中の時間はアイテム消費に入らない(20分だけ)',
-    rec && rec.bpBoost && rec.bpBoost.timed.length === 1 && rec.bpBoost.timed[0].minutes === 20,
+    rec && rec.bpBoost && rec.bpBoost.timed.length === 1 && rec.bpBoost.timed[0].itemId === 'energy_drink' && rec.bpBoost.timed[0].minutes === 20,
     rec && rec.bpBoost ? JSON.stringify(rec.bpBoost.timed) : 'bpBoostなし');
   ok('T-2-3 実績は実学習の30分', rec && rec.actualMin === 30, rec ? `actual=${rec.actualMin}` : '');
 

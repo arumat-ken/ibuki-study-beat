@@ -1438,21 +1438,55 @@ test('APP-440 §3: rec.bpBoost は読み込みで失われない(消えるとBP�
     schemaVersion: 3,
     records: [{
       id: 'r1', date: '2026-08-01', subjectId: 'eng', content: 'x', planMin: 30, actualMin: 40,
-      bpBoost: { fever: 10, dayBonus: 0.5, timed: [{ minutes: 30, bonus: 1 }, { minutes: -5, bonus: 1 }, null, { minutes: 5 }] }
+      bpBoost: { timed: [{ itemId: 'energy_drink', minutes: 30 }], dayItemIds: ['spotlight'] }
     }]
   }, '2026-08-11');
   const b = s.records[0].bpBoost;
-  assert.equal(b.fever, 10);
-  assert.equal(b.dayBonus, 0.5);
-  assert.deepEqual(b.timed, [{ minutes: 30, bonus: 1 }], '壊れた要素は捨てる');
+  assert.deepEqual(b.timed, [{ itemId: 'energy_drink', minutes: 30 }]);
+  assert.deepEqual(b.dayItemIds, ['spotlight']);
+  assert.equal(C.dayBonusFromBoost(b), 0.5, '倍率は定義から引く');
 
-  // 持っていない記録は null。倍率が乗らない状態として扱える。
+  // 持っていない記録は null
   assert.equal(C.sanitizeState({
     schemaVersion: 3,
     records: [{ id: 'r2', date: '2026-08-01', subjectId: 'eng', content: 'x', planMin: 30, actualMin: 30 }]
   }, '2026-08-11').records[0].bpBoost, null);
-  [null, undefined, 'x', 5, []].forEach((v) => {
+});
+
+test('APP-440 §3: 壊れた bpBoost からはBPを増やせない', () => {
+  // 倍率そのものを保存していないので、仕様に無い倍率は原理的に作れない。
+  const broken = C.sanitizeBpBoost({
+    fever: 999, dayBonus: 99,
+    timed: [
+      { itemId: 'energy_drink', minutes: 999 },   // 持ち時間(60分)超え → 捨てる
+      { itemId: 'fever_time', minutes: 999 },     // 持ち時間(30分)超え → 捨てる
+      { itemId: 'unknown_item', minutes: 30 },    // 仕様に無い → 捨てる
+      { itemId: 'recovery', minutes: 30 },        // 時間で効かない → 捨てる
+      { itemId: 'spotlight', minutes: 30 },       // その日いっぱい。timedではない → 捨てる
+      { minutes: 30, bonus: 99 },                 // itemId が無い → 捨てる
+      { itemId: 'energy_drink', minutes: -5 },    // 負 → 捨てる
+      { itemId: 'energy_drink', minutes: 60 }     // 正当 → 残す
+    ],
+    dayItemIds: ['spotlight', 'spotlight', 'unknown', 'energy_drink', 'recovery']
+  });
+  assert.deepEqual(broken.timed, [{ itemId: 'energy_drink', minutes: 60 }], '正当な分だけ残る');
+  assert.deepEqual(broken.dayItemIds, ['spotlight'], '重複と未知のIDは捨てる');
+  assert.equal(broken.fever, undefined, '倍率を持ち込む項目は残さない');
+  assert.equal(broken.dayBonus, undefined);
+  assert.equal(C.dayBonusFromBoost(broken), 0.5, '定義どおりの倍率にしかならない');
+
+  // 複数アイテムをまとめた正当な時間は失わない
+  const many = C.sanitizeBpBoost({
+    timed: [
+      { itemId: 'energy_drink', minutes: 30 },
+      { itemId: 'energy_drink', minutes: 20 },
+      { itemId: 'fever_time', minutes: 30 }
+    ]
+  });
+  assert.equal(many.timed.length, 3, '同じアイテムの複数回ぶんも残す');
+
+  [null, undefined, 'x', 5, [], { timed: 'x' }].forEach((v) => {
     const out = C.sanitizeBpBoost(v);
-    assert.ok(out === null || (out.fever === 0 && out.timed.length === 0), String(v));
+    assert.ok(out === null || (out.timed.length === 0 && out.dayItemIds.length === 0), String(v));
   });
 });
