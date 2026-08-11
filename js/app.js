@@ -5,7 +5,7 @@
 
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
-  var APP_VERSION = '4.3.0';
+  var APP_VERSION = '4.4.0';
   /* リリース表示用(画面右上)。更新のたびに日付を上げる。
    * モデル名は「未記録」固定とする(実行時のモデル識別子を断定してリポジトリの
    * 成果物に書き出さない方針のため。推測での記載はしない)。 */
@@ -2532,6 +2532,28 @@
     return C.isFocusModeActive(state.settings.examDate, todayStr());
   }
 
+  /* APP-430: アイテム画像。すべてリポジトリ内の assets/items/<id>.png を使う。
+   * 外部URLは使わない(外部通信ゼロの制約)。
+   * 画像が読めなくても、名称・効果・価格・購入・装備の操作は変わらず使える。
+   * onerror で枠ごと隠し、代わりの記号を出す。 */
+  var ITEM_IMAGE_IDS = (function () {
+    var ids = {};
+    [C.COSTUME_ITEMS, C.SKILL_ITEMS, C.STAGE_ITEMS].forEach(function (list) {
+      (list || []).forEach(function (it) { ids[it.id] = true; });
+    });
+    return ids;
+  })();
+
+  function itemImageHtml(itemId, itemName, cls) {
+    if (!itemId || !ITEM_IMAGE_IDS[itemId]) return '';
+    /* 代替説明文は読み上げ用。装飾なので枠は aria-hidden にはしない。 */
+    return '<span class="' + cls + '">' +
+      '<img src="assets/items/' + encodeURIComponent(itemId) + '.png" alt="' + esc(itemName) + 'の絵" ' +
+      'loading="lazy" decoding="async" ' +
+      'onerror="this.parentNode.classList.add(\'img-missing\');this.remove()">' +
+      '</span>';
+  }
+
   function renderEquipCard() {
     var focus = focusModeActive();
     $('equip-card').style.display = focus ? 'none' : '';
@@ -2544,10 +2566,17 @@
     var stage = C.stageById(shop.equipped.stage);
     var total = (costume ? costume.bonus : 0) + (skill ? skill.bonus : 0) + (stage ? stage.bonus : 0);
     $('equip-total-mult').textContent = '合計+' + C.roundAmount(total, 2).toFixed(2);
+    function slot(label, item, suffix) {
+      return '<div class="equip-slot">' +
+        (item ? itemImageHtml(item.id, item.name, 'es-img') : '') +
+        '<span class="es-label">' + label + '</span>' +
+        '<span class="es-val">' + esc(item ? item.name : '未装備') + (item && suffix ? suffix : '') + '</span>' +
+        '</div>';
+    }
     $('equip-slots').innerHTML =
-      '<div class="equip-slot"><span class="es-label">衣装</span><span class="es-val">' + esc(costume ? costume.name : '未装備') + '</span></div>' +
-      '<div class="equip-slot"><span class="es-label">スキル</span><span class="es-val">' + esc(skill ? skill.name : '未装備') + (skill ? '(条件付き)' : '') + '</span></div>' +
-      '<div class="equip-slot"><span class="es-label">ステージ</span><span class="es-val">' + esc(stage.name) + '</span></div>';
+      slot('衣装', costume, '') +
+      slot('スキル', skill, '(条件付き)') +
+      slot('ステージ', stage, '');
     $('shop-summary').textContent = 'BP ' + C.calcBpBalance(state).toLocaleString('ja-JP') + ' / 所持' + ownedItemCount();
   }
 
@@ -2595,6 +2624,7 @@
         else statusHtml = '<button class="btn compact" data-buy="' + item.id + '">購入する</button>';
       }
       html += '<div class="shop-item' + (owned ? ' owned' : '') + '">' +
+        itemImageHtml(item.id, item.name, 'si-img') +
         '<div class="si-main"><div class="si-name">' + esc(item.name) + '</div>' +
         '<div class="si-desc">' + esc(itemBonusLabel(item)) + '</div></div>' +
         '<div class="si-side"><div class="si-price">' + (item.price > 0 ? item.price.toLocaleString('ja-JP') + 'BP' : '') + '</div>' + statusHtml + '</div>' +
@@ -3467,6 +3497,18 @@
   /* --- 起動時のあいさつ(画面中央) --- */
   var LAST_SEEN_VERSION_KEY = 'ibukiStudyBeat.lastSeenVersion';
 
+  /* APP-430: 更新で何が変わったかを一言で伝える。
+   * 版番号だけでは、利用者から見て何が新しいのか分からない。 */
+  var WHATS_NEW = {
+    '4.4.0': 'ショップに15種類の画像プレビューを追加したよ。',
+    '4.3.0': 'ポイント残高がいつも見えるようになって、ポイントのグラフも増えたよ。',
+    '4.2.0': 'タイマーが決めた時間で自動的に止まるようになったよ。'
+  };
+  function whatsNewText() {
+    var t = WHATS_NEW[APP_VERSION];
+    return t ? '\n' + t : '';
+  }
+
   function showWelcomeMessage() {
     var lastSeen = null;
     try { lastSeen = localStorage.getItem(LAST_SEEN_VERSION_KEY); } catch (e) {}
@@ -3477,7 +3519,7 @@
       showCenterMessage({
         img: 'cele_nicebeat.png',
         title: 'アプリが新しくなったよ！',
-        body: 'ver. ' + lastSeen + ' → ' + APP_VERSION + ' に更新できたよ。',
+        body: 'ver. ' + lastSeen + ' → ' + APP_VERSION + ' に更新できたよ。' + whatsNewText(),
         sub: '記録はぜんぶそのまま残っているから安心してね。',
         buttonLabel: '今日も始める ▶',
         onConfirm: function () { showScreen('today'); }

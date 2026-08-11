@@ -1,6 +1,22 @@
 /* IBUKI STUDY BEAT — Service Worker (オフライン対応) */
-var CACHE = 'isb-v4.3.0';
+var CACHE = 'isb-v4.4.0';
 var ASSETS = [
+  /* APP-430: アイテムの絵。オフラインでもショップと装備欄に出す。 */
+  'assets/items/anti_gravity_lean.png',
+  'assets/items/belt.png',
+  'assets/items/budokan.png',
+  'assets/items/dome_tour.png',
+  'assets/items/fedora.png',
+  'assets/items/gloves.png',
+  'assets/items/jacket.png',
+  'assets/items/live_house.png',
+  'assets/items/moonwalk.png',
+  'assets/items/rhythm_keep.png',
+  'assets/items/socks.png',
+  'assets/items/spin_turn.png',
+  'assets/items/street.png',
+  'assets/items/world_stage.png',
+  'assets/items/zero_gravity.png',
   './',
   './index.html',
   './css/app.css',

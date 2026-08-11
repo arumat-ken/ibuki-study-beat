@@ -2989,6 +2989,149 @@ async function test26_bpGraphFollowsRecalc() {
   ok('Q1 グラフの初期表示は学習時間のまま', defaultMode === 'time', `既定=${defaultMode}`);
 }
 
+async function test27_itemImages() {
+  console.log('\n■ 試験27: ショップと装備欄にアイテム画像を表示する(APP-430)');
+
+  async function openShop(tab) {
+    await nav('coach');
+    await page.waitForTimeout(150);
+    await page.click('#btn-open-shop');
+    await page.waitForSelector('#shop-items');
+    await page.click(`[data-tab="${tab}"]`);
+    await page.waitForTimeout(250);
+  }
+
+  for (const width of [320, 390]) {
+    await freshPage(true);
+    await page.setViewportSize({ width, height: 760 });
+
+    for (const tab of ['costume', 'skill', 'stage']) {
+      await openShop(tab);
+      /* 5点すべてに画像が出ていること。読み込み失敗は img が消えるので数が減る。 */
+      const shown = await page.evaluate(() => {
+        const imgs = Array.from(document.querySelectorAll('#shop-items .si-img img'));
+        return { count: imgs.length, loaded: imgs.filter(i => i.complete && i.naturalWidth > 0).length };
+      });
+      ok(`${width}px ${tab}: 5点すべてに画像が出る`, shown.count === 5, `枚数=${shown.count}`);
+      ok(`${width}px ${tab}: 画像が5点とも読み込めている`, shown.loaded === 5, `読込=${shown.loaded}/5`);
+
+      /* 文字・価格・ボタンと重ならず、横スクロールも出さない */
+      const layout = await page.evaluate((w) => {
+        const overflow = document.documentElement.scrollWidth > w + 2;
+        const rows = Array.from(document.querySelectorAll('#shop-items .shop-item'));
+        const clipped = rows.some(r => {
+          const name = r.querySelector('.si-name');
+          const side = r.querySelector('.si-side');
+          if (!name || !side) return true;
+          return name.scrollWidth > name.clientWidth + 1 ||
+                 name.getBoundingClientRect().right > side.getBoundingClientRect().left + 1;
+        });
+        return { overflow, clipped };
+      }, width);
+      ok(`${width}px ${tab}: 横スクロールが出ない`, !layout.overflow);
+      ok(`${width}px ${tab}: 名称と価格・ボタンが重ならない`, !layout.clipped);
+      await page.click('#m-close');
+      await page.waitForTimeout(150);
+    }
+    await shot(width === 320 ? '80-shop-images-320px' : '81-shop-images-390px');
+  }
+
+  /* --- 各画面のヘッダーが狭い幅でくっつかないこと ---
+   * スクリーンショットの目視で、320pxでポイント残高と補足文がくっついて
+   * 重なって見えることに気づいた。scrollWidth の検査だけでは通ってしまう。 */
+  for (const width of [320, 390]) {
+    await freshPage(true);
+    await page.setViewportSize({ width, height: 760 });
+    for (const scr of ['today', 'record', 'graph', 'world', 'coach', 'settings']) {
+      await nav(scr);
+      await page.waitForTimeout(180);
+      const gap = await page.evaluate((s) => {
+        const h = document.querySelector('#screen-' + s + ' .screen-head');
+        if (!h) return { min: 99, n: 0 };
+        const boxes = Array.from(h.children)
+          .filter(e => e.offsetParent !== null)
+          .map(e => e.getBoundingClientRect())
+          .sort((a, b) => a.left - b.left);
+        let min = 99;
+        for (let i = 0; i < boxes.length - 1; i++) min = Math.min(min, boxes[i + 1].left - boxes[i].right);
+        return { min: Math.round(min), n: boxes.length };
+      }, scr);
+      ok(`${width}px ${scr}: ヘッダーの要素が4px以上離れている`, gap.n < 2 || gap.min >= 4,
+        `最小の隙間=${gap.min}px`);
+    }
+  }
+
+  /* --- 装備スロットにも画像が出る --- */
+  await freshPage(true);
+  await nav('coach');
+  await page.waitForTimeout(200);
+  const equipImgs = await page.evaluate(() => {
+    const imgs = Array.from(document.querySelectorAll('#equip-slots .es-img img'));
+    return { count: imgs.length, loaded: imgs.filter(i => i.complete && i.naturalWidth > 0).length };
+  });
+  /* 初期状態はステージ(ストリート)のみ装備。衣装とスキルは未装備で画像を出さない。 */
+  ok('装備スロット: 装備中のアイテムに画像が出る', equipImgs.count >= 1, `枚数=${equipImgs.count}`);
+  ok('装備スロット: 画像が読み込めている', equipImgs.loaded === equipImgs.count, `読込=${equipImgs.loaded}`);
+  await shot('82-equip-images');
+
+  /* --- 購入・装備の操作が従来どおり動く --- */
+  await page.evaluate(() => {
+    const k = 'ibukiStudyBeat.v3';
+    const s = JSON.parse(localStorage.getItem(k));
+    const p = n => (n < 10 ? '0' : '') + n;
+    const d = new Date(); d.setDate(d.getDate() - 1);
+    s.records.push({ id: 'seedimg', date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
+      subjectId: 'eng', content: 'seed', kind: '暗記', planMin: 30, actualMin: 30,
+      reflection: '', deletedAt: null, bp: 1500, createdAt: 1, updatedAt: 1, score: null, maxScore: null });
+    localStorage.setItem(k, JSON.stringify(s));
+  });
+  await reload();
+  await openShop('costume');
+  await page.click('.shop-item:has-text("白いソックス") [data-buy]');
+  await page.waitForTimeout(250);
+  await page.click('.shop-item:has-text("白いソックス") [data-equip]');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#m-close')) { await page.click('#m-close'); await page.waitForTimeout(200); }
+  let st = await getState();
+  ok('APP-430 画像を出しても購入・装備は従来どおり動く',
+    st.shop.owned.costume.indexOf('socks') !== -1 && st.shop.equipped.costume === 'socks',
+    `所持=${JSON.stringify(st.shop.owned.costume)} 装備=${st.shop.equipped.costume}`);
+
+  /* 再起動後も装備が残る */
+  await reload();
+  st = await getState();
+  ok('APP-430 再起動後も装備が残る', st.shop.equipped.costume === 'socks', `装備=${st.shop.equipped.costume}`);
+  await nav('coach');   // 装備カードはコーチ画面にある
+  await page.waitForTimeout(250);
+  const afterReload = await page.evaluate(() =>
+    document.querySelectorAll('#equip-slots .es-img img').length);
+  ok('APP-430 再起動後も装備欄に画像が出る(衣装+ステージ)', afterReload >= 2, `枚数=${afterReload}`);
+
+  /* --- 画像が欠けても操作できる(フォールバック) ---
+   * ここでは画像の読み込みを意図的に失敗させる。出るコンソールエラーは
+   * 試験が起こしたものなので、検証の対象から外す。 */
+  const errsBeforeAbort = consoleErrors.length;
+  await page.route('**/assets/items/*.png', route => route.abort());
+  await reload();
+  await openShop('costume');
+  const fallback = await page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll('#shop-items .shop-item'));
+    return {
+      rows: rows.length,
+      names: rows.filter(r => (r.querySelector('.si-name') || {}).textContent).length,
+      buttons: document.querySelectorAll('#shop-items [data-buy], #shop-items [data-equip], #shop-items .chip').length,
+      hiddenFrames: document.querySelectorAll('#shop-items .si-img.img-missing').length
+    };
+  });
+  ok('APP-430 画像が欠けても名称が出る', fallback.names === 5, `名称=${fallback.names}/5`);
+  ok('APP-430 画像が欠けても購入・装備の操作が残る', fallback.buttons === 5, `操作=${fallback.buttons}/5`);
+  ok('APP-430 読み込めなかった枠は消える', fallback.hiddenFrames === 5, `枠=${fallback.hiddenFrames}/5`);
+  await shot('83-shop-images-fallback');
+  await page.unroute('**/assets/items/*.png');
+  /* 意図的に失敗させたぶんだけを取り除く。それ以外のエラーは残す。 */
+  consoleErrors.length = errsBeforeAbort;
+}
+
 /* ============ 実行 ============ */
 browser = await chromium.launch();
 try {
@@ -3018,6 +3161,7 @@ try {
   await test24_bpChipAndGraph();
   await test25_sessionGuards();
   await test26_bpGraphFollowsRecalc();
+  await test27_itemImages();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);
