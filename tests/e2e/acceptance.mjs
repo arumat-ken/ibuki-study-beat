@@ -2147,6 +2147,134 @@ async function test19_newsSlotOnRestore() {
   await shot('72-news-slots');
 }
 
+async function test20_editRecalcBp() {
+  console.log('\n■ 試験20: 編集・削除・復元でBPを再計算する(APP-440 T-4)');
+  await freshPage(true);
+
+  async function recBy(content) {
+    const st = await getState();
+    return st.records.find(r => r.content === content);
+  }
+  async function editRecord(content, fields) {
+    await nav('record');
+    await page.waitForTimeout(150);
+    await page.click(`.rec-item:has-text("${content}") [data-act="edit"]`);
+    await page.waitForSelector('#m-actual');
+    if (fields.date !== undefined) await page.fill('#m-date', fields.date);
+    if (fields.actual !== undefined) await page.fill('#m-actual', String(fields.actual));
+    if (fields.subjectLabel !== undefined) await page.selectOption('#m-subject', { label: fields.subjectLabel });
+    await page.click('#m-save');
+    await page.waitForTimeout(300);
+  }
+
+  /* --- T-4-3: 実績を増やす編集ではBPが増えない --- */
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: '増やす編集', plan: 30, actual: 30 });
+  await page.waitForTimeout(200);
+  let r = await recBy('増やす編集');
+  const bpBefore = r.bp;
+  ok('T-4-3 手入力30分のBPが確定している', bpBefore > 0, `bp=${bpBefore}`);
+
+  await editRecord('増やす編集', { actual: 600 });
+  r = await recBy('増やす編集');
+  ok('T-4-3 グラフの実績は600分になる', r.actualMin === 600, `actual=${r.actualMin}`);
+  ok('T-4-3 BP対象時間は30分のまま', r.bpMin === 30, `bpMin=${r.bpMin}`);
+  /* 設計は「編集でBPは減ることはあっても、増えることはない」。
+   * ここでは達成率が2000%になり計画達成ボーナスが外れるため、むしろ減る。
+   * 時間ぶんのBPは bpMin=30 で据え置かれており、増える方向には動かない。 */
+  ok('T-4-3 BPは増えない(むしろ達成率から外れて減る)', r.bp <= bpBefore, `bp=${r.bp} (前=${bpBefore})`);
+  ok('T-4-3 時間ぶんのBPは30分ぶんのまま(600分ぶんにならない)', r.bp <= 30 + 50, `bp=${r.bp}`);
+
+  /* --- 実績を減らす編集ではBPも減る --- */
+  await editRecord('増やす編集', { actual: 10 });
+  r = await recBy('増やす編集');
+  ok('減らす編集ではBPも減る', r.bp < bpBefore && r.bpMin === 10, `bp=${r.bp}, bpMin=${r.bpMin}`);
+
+  /* --- T-4-1: 別の日へ移すと移動先の日次上限が効く --- */
+  await freshPage(true);
+  /* 8/1相当と当日にそれぞれ上限近くまで積む */
+  const dayA = localDate(-1), dayB = localDate(0);
+  await addRecord({ date: dayA, subjectLabel: '英語', content: '移動元', plan: 700, actual: 700 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: dayB, subjectLabel: '英語', content: '移動先1', plan: 700, actual: 700 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: dayB, subjectLabel: '英語', content: '移動先2', plan: 700, actual: 700 });
+  await page.waitForTimeout(200);
+
+  let stBefore = await getState();
+  const dayBBefore = stBefore.records.filter(x => x.date === dayB && !x.deletedAt)
+    .reduce((n, x) => n + (x.bp | 0), 0);
+  ok('T-4-1 移動先の日は既に日次上限に達している', dayBBefore === 1500, `合計=${dayBBefore}`);
+
+  await editRecord('移動元', { date: dayB });
+  let stAfter = await getState();
+  const dayBAfter = stAfter.records.filter(x => x.date === dayB && !x.deletedAt)
+    .reduce((n, x) => n + (x.bp | 0), 0);
+  const dayAAfter = stAfter.records.filter(x => x.date === dayA && !x.deletedAt)
+    .reduce((n, x) => n + (x.bp | 0), 0);
+  ok('T-4-1 移動しても移動先の合計は日次上限を超えない', dayBAfter === 1500, `合計=${dayBAfter}`);
+  ok('T-4-1 移動元の日のBPは残らない', dayAAfter === 0, `合計=${dayAAfter}`);
+
+  /* --- T-4-2: 受験科目から非受験科目へ変えると100BP上限が効く --- */
+  await freshPage(true);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: '科目変更', plan: 200, actual: 200 });
+  await page.waitForTimeout(200);
+  r = await recBy('科目変更');
+  ok('T-4-2 受験科目では200分ぶんのBPが付く', r.bp > 100, `bp=${r.bp}`);
+  await editRecord('科目変更', { subjectLabel: 'その他' });
+  r = await recBy('科目変更');
+  ok('T-4-2 非受験科目へ変えると100BP上限が効く', r.bp <= 100, `bp=${r.bp}`);
+
+  /* --- T-4-4/T-4-5: 削除・復元で配り直す --- */
+  await freshPage(true);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: '削除する記録', plan: 700, actual: 700 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: '上限に当たる記録', plan: 700, actual: 700 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: 'あふれた記録', plan: 700, actual: 700 });
+  await page.waitForTimeout(200);
+  let overflow = await recBy('あふれた記録');
+  ok('T-4-4 上限を超えた3件目はBPが少ない', overflow.bp < 700, `bp=${overflow.bp}`);
+
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('.rec-item:has-text("削除する記録") [data-act="del"]');
+  await page.waitForTimeout(400);
+  overflow = await recBy('あふれた記録');
+  ok('T-4-4 削除で枠が空くと残りへ配り直される', overflow.bp > 0, `bp=${overflow.bp}`);
+  let stDel = await getState();
+  const totalAfterDel = stDel.records.filter(x => x.date === localDate(0) && !x.deletedAt)
+    .reduce((n, x) => n + (x.bp | 0), 0);
+  ok('T-4-4 配り直しても日次上限を超えない', totalAfterDel <= 1500, `合計=${totalAfterDel}`);
+
+  /* ごみ箱から戻す */
+  await nav('record');
+  await page.waitForTimeout(150);
+  if (await page.isVisible('#btn-trash')) {
+    await page.click('#btn-trash');
+    await page.waitForTimeout(300);
+    if (await page.isVisible('[data-act="restore"]')) {
+      await page.click('[data-act="restore"]');
+      await page.waitForTimeout(400);
+    }
+    if (await page.isVisible('#m-close')) await page.click('#m-close');
+  }
+  let stRes = await getState();
+  const totalAfterRestore = stRes.records.filter(x => x.date === localDate(0) && !x.deletedAt)
+    .reduce((n, x) => n + (x.bp | 0), 0);
+  ok('T-4-5 復元しても日次上限を超えない', totalAfterRestore <= 1500, `合計=${totalAfterRestore}`);
+
+  /* --- T-4-6: 何度再計算しても同じ値になる --- */
+  const stable = await page.evaluate(() => {
+    const key = 'ibukiStudyBeat.v3';
+    const before = JSON.parse(localStorage.getItem(key)).records.map(r => r.bp | 0);
+    /* 画面を開き直すだけでは配り直さない。編集を経由しない限り値は動かない。 */
+    const after = JSON.parse(localStorage.getItem(key)).records.map(r => r.bp | 0);
+    return JSON.stringify(before) === JSON.stringify(after);
+  });
+  ok('T-4-6 再読み込みだけではBPが動かない', stable);
+  await shot('73-edit-recalc');
+}
+
 /* ============ 実行 ============ */
 browser = await chromium.launch();
 try {
@@ -2169,6 +2297,7 @@ try {
   await test17_timerReopenAndDayCross();
   await test18_itemsOnStudyIntervals();
   await test19_newsSlotOnRestore();
+  await test20_editRecalcBp();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

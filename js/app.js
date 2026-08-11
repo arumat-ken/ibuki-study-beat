@@ -656,6 +656,7 @@
     rec.actualMin = Math.min(C.MAX_MIN_PER_RECORD, (ses.baseActualMin || 0) + target);
     rec.updatedAt = Date.now();
     ses.confirmedMin = target;
+    rec.timerUsed = true;
     /* 完了した時刻で区間を閉じる。宣言済み時間を超えた分は区間にも入れない。 */
     if (prog.completedAt) segmentClose(ses, prog.completedAt);
     applyBoostsOnce(rec, ses);
@@ -819,7 +820,7 @@
       rec.actualMin = actual;
       rec.reflection = candidate.reflection;
       rec.updatedAt = Date.now();
-      if (ses) { segmentClose(ses); applyBoostsOnce(rec, ses); }
+      if (ses) { segmentClose(ses); applyBoostsOnce(rec, ses); rec.timerUsed = true; }
       state.activeSession = null;
       var grant = grantStudyBP(rec);
       save(); closeModal();
@@ -1054,7 +1055,8 @@
     return out;
   }
 
-  function buildStudyBPSegments(rec) {
+  function buildStudyBPSegments(rec, minutesOverride) {
+    var actualMin = (typeof minutesOverride === 'number') ? minutesOverride : rec.actualMin;
     var prevDay = C.addDays(rec.date, -1);
     var conditionBonus = C.conditionBonusFromHabits(C.calcHabitBP(state.habits[prevDay]));
 
@@ -1063,7 +1065,7 @@
      * コンディション(生活習慣, A章)はショップ機能ではないためそのまま適用する。 */
     if (focusModeActive()) {
       var focusMult = C.composeMultiplier({ conditionBonus: conditionBonus }).multiplier;
-      return [{ minutes: rec.actualMin, multiplier: focusMult }];
+      return [{ minutes: actualMin, multiplier: focusMult }];
     }
 
     var shop = state.shop;
@@ -1091,16 +1093,15 @@
     var costumeBonus = costumeItem ? costumeItem.bonus : 0;
     var stageBonus = stageItem ? stageItem.bonus : 0;
 
-    if (!isToday || rec.actualMin <= 0) {
+    if (!isToday || actualMin <= 0) {
       var plainMult = C.composeMultiplier({ costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus, conditionBonus: conditionBonus }).multiplier;
-      return [{ minutes: rec.actualMin, multiplier: plainMult }];
+      return [{ minutes: actualMin, multiplier: plainMult }];
     }
 
     /* APP-440 §3: 時間制アイテムは「実際に勉強した区間との重なり」だけに効く。
      * 壁時計の残り時間で配るのをやめたので、一時停止して放置しても消費されない。
      * 消費量は確定時に rec.bpBoost へ記録済み。ここでは読むだけで、再計算しても増減しない。 */
     var boost = C.sanitizeBpBoost(rec.bpBoost) || { timed: [], dayItemIds: [] };
-    var actualMin = rec.actualMin;
     /* 倍率は保存された数値ではなくアイテムの定義から引く。壊れたデータで倍率を作れない。 */
     var dayBonus = C.dayBonusFromBoost(boost);
     var baseMult = C.composeMultiplier({
@@ -1148,7 +1149,17 @@
    * 正しく累積させる(1セグメント目のtodayTotalAfterを2セグメント目の入力にする)。
    */
   function grantStudyBP(rec) {
-    var segments = buildStudyBPSegments(rec);
+    /* APP-440 §1・§5: BPの対象は実績Cではなく D。
+     * D ≤ C ≤ A+E、かつ編集で増えない。 */
+    var resolved = C.resolveBpMinutes({
+      actualMin: rec.actualMin,
+      planMin: rec.planMin,
+      extendedMin: rec.extendedMin,
+      manualEntry: !rec.timerUsed,
+      previousBpMin: (typeof rec.bpMinInitial === 'number') ? rec.bpMinInitial : null
+    });
+    rec.bpMin = resolved.bpMin;
+    var segments = buildStudyBPSegments(rec, resolved.bpMin);
     var subj = subjectById(rec.subjectId);
     var isExamSubject = subj ? subj.examSubject : true;
     var actions = buildActionsForRecord(rec);
@@ -1178,6 +1189,8 @@
       todayNonExamBP = segResult.todayNonExamAfter;
     });
     rec.bp = granted;
+    rec.bpMultiplier = segments.length === 1 ? segments[0].multiplier : 0;
+    rec.bpActions = actions.slice();
     return {
       result: {
         baseBP: baseBP, multipliedBP: multipliedBP, bonusBP: bonusBP, grantedBP: granted,
@@ -1185,6 +1198,25 @@
       },
       segments: segments
     };
+  }
+
+  /**
+   * APP-440 §5: その日のBPを決定的に再計算する。
+   *
+   * 上限は「先に来た記録から順に配る」ため、順序が変わると同じデータでも
+   * BPが変わる。配列順・updatedAt・画面の表示順には依存させず、
+   * createdAt昇順 → id昇順(C.bpOrder)で固定する。
+   *
+   * いったん0にしてから配り直すのは、途中の値が次の記録の上限判定に
+   * 混ざらないようにするため。何度呼んでも同じ結果になる。
+   */
+  function recalcBpForDate(dateStr) {
+    if (!dateStr) return;
+    var list = C.activeRecords(state.records).filter(function (r) {
+      return r.date === dateStr;
+    }).slice().sort(C.bpOrder);
+    list.forEach(function (r) { r.bp = 0; });
+    list.forEach(function (r) { grantStudyBP(r); });
   }
 
   function showBpResult(grant) {
@@ -1242,7 +1274,11 @@
       score: (kind === 'テスト' && scoreV !== '') ? parseIntSafe(scoreV) : null,
       maxScore: (kind === 'テスト' && maxV !== '') ? parseIntSafe(maxV) : null,
       reflection: $('rf-reflection').value.trim(),
-      createdAt: Date.now(), updatedAt: Date.now(), deletedAt: null
+      createdAt: Date.now(), updatedAt: Date.now(), deletedAt: null,
+      /* APP-440 §5: 手入力には宣言済み時間が無いので、作成時の実績を
+       * BPの上限として覚えておく。あとから増やしてもBPは増えない。 */
+      bpMinInitial: parseIntSafe($('rf-actual').value),
+      timerUsed: false
     };
     var v = C.validateRecord(rec, state.settings.subjects);
     if (!v.ok) { toast(v.errors[0], true); return; }
@@ -1341,9 +1377,17 @@
       });
       var v = C.validateRecord(cand, state.settings.subjects);
       if (!v.ok) { toast(v.errors[0], true); return; }
+      var prevDate = rec.date;
+      var prevBp = rec.bp | 0;
       Object.assign(rec, cand, { updatedAt: Date.now() });
+      /* APP-440 §5: 日付・科目・実績が変わったらBPを再評価する。
+       * 移動前の日も配り直さないと、空いた枠がそのまま残る。 */
+      recalcBpForDate(prevDate);
+      if (rec.date !== prevDate) recalcBpForDate(rec.date);
       save(); closeModal(); renderRecordList(); renderToday();
-      toast('更新したよ！');
+      var diff = (rec.bp | 0) - prevBp;
+      if (diff < 0) toast('更新したよ！(上限の関係でポイントは' + (-diff) + '減ったよ)');
+      else toast('更新したよ！');
     };
   }
 
@@ -1351,9 +1395,14 @@
     var rec = state.records.find(function (r) { return r.id === id; });
     if (!rec) return;
     rec.deletedAt = Date.now();
+    /* 削除するとその日の枠が空くので、同じ日の他の記録を配り直す。 */
+    recalcBpForDate(rec.date);
     save(); renderRecordList(); renderToday();
     toast('削除しました(ごみ箱へ移動)', false, '元に戻す', function () {
       rec.deletedAt = null;
+      /* 戻すときも配り直す。空いた枠が既に使われていれば、
+       * 戻ってくるポイントはその分だけ減る。合計は上限を超えない。 */
+      recalcBpForDate(rec.date);
       save(); renderRecordList(); renderToday();
       toast('元に戻したよ！');
     });

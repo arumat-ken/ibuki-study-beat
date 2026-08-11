@@ -546,6 +546,11 @@
           bpMultiplier: (typeof r.bpMultiplier === 'number' && isFinite(r.bpMultiplier) && r.bpMultiplier >= 0)
             ? r.bpMultiplier : 1,
           bpBoost: sanitizeBpBoost(r.bpBoost),
+          /* APP-440 §5: 編集でBPを増やせないようにするための上限。
+           * タイマー記録は宣言済み時間(計画+延長)が上限になるので持たない。
+           * 手入力は宣言済み時間が無いため、作成時の実績を上限として覚えておく。 */
+          bpMinInitial: isIntInRange(r.bpMinInitial, 0, MAX_MIN_PER_RECORD) ? r.bpMinInitial : null,
+          timerUsed: r.timerUsed === true,
           bpActions: Array.isArray(r.bpActions)
             ? r.bpActions.filter(function (k) {
               return typeof k === 'string' && Object.prototype.hasOwnProperty.call(ACTION_BONUS_BP, k);
