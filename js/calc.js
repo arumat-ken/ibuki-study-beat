@@ -554,7 +554,11 @@
         declaredMin: isIntInRange(parsed.activeSession.declaredMin, 0, MAX_MIN_PER_RECORD)
           ? parsed.activeSession.declaredMin : 0,
         baseActualMin: isIntInRange(parsed.activeSession.baseActualMin, 0, MAX_MIN_PER_RECORD)
-          ? parsed.activeSession.baseActualMin : 0
+          ? parsed.activeSession.baseActualMin : 0,
+        /* 自動停止のときに確定した分数。再描画・再起動で二重に付けないための目印。
+         * -1 は「まだ一度も確定していない」。 */
+        confirmedMin: isIntInRange(parsed.activeSession.confirmedMin, 0, MAX_MIN_PER_RECORD)
+          ? parsed.activeSession.confirmedMin : -1
       };
       /* APP-440 §3・§8: segments は既定値を持たないフィールドとして扱う。
        *

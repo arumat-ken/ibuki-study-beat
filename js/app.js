@@ -532,7 +532,8 @@
     state.activeSession = {
       recordId: recordId, startTs: Date.now(), pausedAccum: 0, pausedAt: null,
       declaredMin: declared,
-      baseActualMin: rec.actualMin || 0
+      baseActualMin: rec.actualMin || 0,
+      confirmedMin: -1
     };
     save();
     renderToday();
@@ -571,6 +572,7 @@
     /* APP-440 §2: 宣言済み時間に達していたら自動停止して完了画面を出す。
      * アプリを閉じていた場合もここで検出する。停止はイベントではなく計算で決める。 */
     if (prog && prog.completed) {
+      confirmCompletedSession(rec, prog);
       card.style.display = '';
       renderCompletedCard(card, rec, prog);
       return;
@@ -620,15 +622,45 @@
       );
       $('m-close').onclick = $('m-cancel').onclick = closeModal;
       $('m-ok').onclick = function () {
+        /* APP-440: 自動停止で確定済みなら、開始時点の実績まで戻してBPも計算し直す。
+         * 「記録せずにやめる」と言った以上、確定した分も残さない。 */
+        var ses = state.activeSession;
+        if (ses && typeof ses.confirmedMin === 'number' && ses.confirmedMin >= 0) {
+          rec.actualMin = ses.baseActualMin || 0;
+          rec.updatedAt = Date.now();
+          grantStudyBP(rec);
+        }
         state.activeSession = null;
         save(); closeModal(); renderToday();
       };
     };
   }
 
+  /* APP-440 §2: 宣言済み時間に達した時点で、記録とBPをその場で確定する。
+   *
+   * 「完了したのに、あとでボタンを押すまで保存されない」状態を作らない。
+   * 完了直後にアプリを閉じても、実績とBPが残る。
+   *
+   * 二重付与は起こらない。grantStudyBP は rec.bp を再計算して置き換える方式で、
+   * 残高も rec.bp の合計から求めるため、何度呼んでも同じ結果になる。
+   * confirmedMin は「同じ分数で確定済みなら書き込まない」ための目印。 */
+  function confirmCompletedSession(rec, prog) {
+    var ses = state.activeSession;
+    if (!ses || !prog || !prog.completed) return false;
+    var target = prog.minutes;
+    var already = (typeof ses.confirmedMin === 'number') ? ses.confirmedMin : -1;
+    if (target === already) return false;
+    rec.actualMin = Math.min(C.MAX_MIN_PER_RECORD, (ses.baseActualMin || 0) + target);
+    rec.updatedAt = Date.now();
+    ses.confirmedMin = target;
+    grantStudyBP(rec);
+    save();
+    return true;
+  }
+
   /* APP-440 §2: 完了画面。
    *
-   * BPは完了の時点で確定している。ここのボタンは「今の記録が有効か」を問うものではなく、
+   * BPは完了の時点で確定済み。ここのボタンは「今の記録が有効か」を問うものではなく、
    * 「この先どうするか」を選ぶもの。放置しても損はせず、得もしない。 */
   function renderCompletedCard(card, rec, prog) {
     var sub = subjectById(rec.subjectId);
@@ -659,7 +691,7 @@
       lateNotice +
       '<div class="timer-sub">' + esc(sub.name) + '・' + esc(rec.content) + '</div>' +
       '<p class="small" style="margin:10px 0">' + C.fmtDuration(min) +
-      'ぶんのビートは、もう確定しているよ</p>' +
+      'ぶんのビートを記録したよ。<b>このままアプリを閉じても残る</b>から安心して</p>' +
       extendBtns +
       '<div class="btn-row" style="margin-top:10px">' +
       '<button class="btn" id="btn-break">休憩する</button>' +
@@ -708,7 +740,11 @@
     var elapsedMin = sessionMin;
     var suggested = Math.min(maxActual, base + elapsedMin);
     openModal(
-      '<h3>おつかれさま！記録しよう<button class="icon-btn" id="m-close">✕</button></h3>' +
+      '<h3>' + ((ses && ses.confirmedMin >= 0) ? 'おつかれさま！記録を確かめよう' : 'おつかれさま！記録しよう') +
+      '<button class="icon-btn" id="m-close">✕</button></h3>' +
+      ((ses && ses.confirmedMin >= 0)
+        ? '<p class="small" style="margin-bottom:10px">この時間はもう記録済みだよ。減らしたいときだけ直してね</p>'
+        : '') +
       '<p class="small muted" style="margin-bottom:10px">' + esc(rec.content) + '(計測 ' + C.fmtDuration(elapsedMin) + ')</p>' +
       (rec.extendedMin > 0
         ? '<p class="small" style="margin-bottom:10px">計画 ' + C.fmtDuration(rec.planMin) +

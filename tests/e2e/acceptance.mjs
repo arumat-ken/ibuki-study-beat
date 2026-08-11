@@ -1739,6 +1739,59 @@ async function test17_timerReopenAndDayCross() {
   ok('T-1-3 実績60分で保存される', rec && rec.actualMin === 60, rec ? `actual=${rec.actualMin}` : '記録なし');
   ok('T-1-3 BPも60分ぶんまで', rec && rec.bp <= 60 * 3, rec ? `bp=${rec.bp}` : '');
 
+  /* --- 完了直後にアプリを閉じても実績とBPが残る(段階3レビューの修正条件3) --- */
+  await freshPageWithClock(T0);
+  await startPlanTimer({ content: '完了直後に閉じる', plan: 60 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(60 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('完了時点で完了画面が出る', await page.isVisible('#timer-completed'));
+  /* ボタンを一切押さずに保存状態を見る */
+  let stAuto = await getState();
+  let recAuto = stAuto.records.find(r => r.content === '完了直後に閉じる');
+  ok('ボタンを押さなくても実績が保存されている', recAuto && recAuto.actualMin === 60,
+    recAuto ? `actual=${recAuto.actualMin}` : '記録なし');
+  ok('ボタンを押さなくてもBPが確定している', recAuto && recAuto.bp > 0,
+    recAuto ? `bp=${recAuto.bp}` : '');
+  const bpAfterComplete = recAuto.bp;
+
+  /* アプリを閉じて開き直しても残る。二重付与もしない。 */
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  stAuto = await getState();
+  recAuto = stAuto.records.find(r => r.content === '完了直後に閉じる');
+  ok('再起動しても実績が残る', recAuto && recAuto.actualMin === 60, recAuto ? `actual=${recAuto.actualMin}` : '');
+  ok('再起動してもBPが二重に増えない', recAuto && recAuto.bp === bpAfterComplete,
+    recAuto ? `bp=${recAuto.bp} (前=${bpAfterComplete})` : '');
+  /* 何度描画し直しても増えない */
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  stAuto = await getState();
+  recAuto = stAuto.records.find(r => r.content === '完了直後に閉じる');
+  ok('2回目の再起動でもBPが変わらない', recAuto && recAuto.bp === bpAfterComplete,
+    recAuto ? `bp=${recAuto.bp}` : '');
+
+  /* 延長すると、確定済みの記録へ明示した分だけ足される */
+  await page.click('[data-ext="10"]');
+  await page.waitForTimeout(300);
+  await page.clock.fastForward(10 * 60 * 1000);
+  await page.waitForTimeout(300);
+  stAuto = await getState();
+  recAuto = stAuto.records.find(r => r.content === '完了直後に閉じる');
+  ok('延長ぶんも自動で確定する', recAuto && recAuto.actualMin === 70,
+    recAuto ? `actual=${recAuto.actualMin}` : '');
+  ok('延長は extendedMin に残る', recAuto && recAuto.extendedMin === 10,
+    recAuto ? `ext=${recAuto.extendedMin}` : '');
+  ok('延長後のBPが上限を超えない', recAuto && recAuto.bp <= 70 * 3 + 500,
+    recAuto ? `bp=${recAuto.bp}` : '');
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+
   /* --- T-1-4: 日をまたいで放置 --- */
   await freshPageWithClock(new Date(2026, 7, 11, 22, 0, 0).getTime());
   await startPlanTimer({ content: '日またぎ放置', plan: 60 });
