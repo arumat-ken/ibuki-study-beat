@@ -2013,6 +2013,73 @@ async function test18_itemsOnStudyIntervals() {
   ok('画面を行き来するだけでは追加消費しない', totalBoost3 === 40 && extRec.bp === bpAfterExt,
     `boost=${totalBoost3}, bp=${extRec.bp}`);
 
+  /* --- スポットライト2個ぶんの倍率が保存・再起動で減らない(段階4レビュー) --- */
+  await freshPageWithClock(T0);
+  await page.evaluate(() => {
+    const s4 = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const p4 = n => (n < 10 ? '0' : '') + n;
+    const z = new Date(); z.setDate(z.getDate() - 1);
+    /* スポットライトは1個800BP。2個買うので余裕を持たせる(1記録の上限は1,500BP) */
+    for (let k = 0; k < 2; k++) {
+      s4.records.push({ id: 'seedbp3' + k, date: `${z.getFullYear()}-${p4(z.getMonth() + 1)}-${p4(z.getDate())}`,
+        subjectId: 'eng', content: 'seed' + k, kind: '暗記', planMin: 30, actualMin: 30,
+        reflection: '', deletedAt: null, bp: 1500, createdAt: 1 + k, updatedAt: 1, score: null, maxScore: null });
+    }
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(s4));
+  });
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  await nav('coach');
+  await page.click('#btn-open-shop');
+  await page.click('[data-tab="consumable"]');
+  await page.waitForTimeout(150);
+  for (let i = 0; i < 2; i++) {
+    await page.click('.shop-item:has-text("スポットライト") [data-buy]');
+    await page.waitForTimeout(150);
+    await page.click('.shop-item:has-text("スポットライト") [data-use]');
+    await page.waitForTimeout(150);
+  }
+  await page.click('#m-close');
+  await nav('today');
+
+  await startPlanTimer({ content: 'スポットライト2個', plan: 20 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(20 * 60 * 1000);
+  await page.waitForTimeout(300);
+  st = await getState();
+  let spotRec = st.records.find(r => r.content === 'スポットライト2個');
+  ok('スポットライト2個ぶんが1消費1要素で保存される',
+    spotRec && spotRec.bpBoost && spotRec.bpBoost.dayItemIds.length === 2,
+    spotRec && spotRec.bpBoost ? JSON.stringify(spotRec.bpBoost.dayItemIds) : 'bpBoostなし');
+  const spotBp = spotRec.bp;
+  /* 20分 × (1.0 + 0.5 + 0.5) = 40BP。1個ぶんに減れば30BPになる。 */
+  ok('2個ぶんの倍率(合計+1.0倍)でBPが計算される', spotBp >= 40, `bp=${spotBp}`);
+
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  st = await getState();
+  spotRec = st.records.find(r => r.content === 'スポットライト2個');
+  ok('再起動しても2個ぶんのままBPが減らない',
+    spotRec.bpBoost.dayItemIds.length === 2 && spotRec.bp === spotBp,
+    `ids=${JSON.stringify(spotRec.bpBoost.dayItemIds)}, bp=${spotRec.bp}`);
+
+  /* 延長しても個数が増えない(倍率が勝手に上がらない) */
+  await page.click('[data-ext="5"]');
+  await page.waitForTimeout(200);
+  await page.clock.fastForward(5 * 60 * 1000);
+  await page.waitForTimeout(300);
+  st = await getState();
+  spotRec = st.records.find(r => r.content === 'スポットライト2個');
+  ok('延長しても個数は2個のまま(倍率が増えない)', spotRec.bpBoost.dayItemIds.length === 2,
+    JSON.stringify(spotRec.bpBoost.dayItemIds));
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+
   /* 削除・復元の検証(T-2-9/T-2-10)は経路3とあわせて段階5で扱う。 */
 
 }

@@ -690,9 +690,16 @@
       (prev.dayItemIds || []).forEach(function (id) { out.dayItemIds.push(id); });
     }
     (add.timed || []).forEach(function (t) { out.timed.push({ itemId: t.itemId, minutes: t.minutes }); });
-    /* その日いっぱいのアイテムは倍率であって持ち時間ではないので、重複させない。 */
-    (add.dayItemIds || []).forEach(function (id) {
-      if (out.dayItemIds.indexOf(id) === -1) out.dayItemIds.push(id);
+    /* その日いっぱいのアイテムは「使った分だけ消える」ものではないので、
+     * 延長のたびに足すと個数が増えてしまう。IDごとに多い方の個数を採る。
+     * 足せば延長で水増しでき、置き換えれば期限切れで正当な分を失う。 */
+    var counts = {};
+    out.dayItemIds.forEach(function (id) { counts[id] = (counts[id] || 0) + 1; });
+    var addCounts = {};
+    (add.dayItemIds || []).forEach(function (id) { addCounts[id] = (addCounts[id] || 0) + 1; });
+    Object.keys(addCounts).forEach(function (id) {
+      var need = addCounts[id] - (counts[id] || 0);
+      for (var i = 0; i < need; i++) out.dayItemIds.push(id);
     });
     return out;
   }
@@ -1029,7 +1036,8 @@
       if (!item) return;
       /* その日いっぱいのアイテムは、保存時点で有効なものだけ数える。 */
       if (b.kind === 'day') {
-        if (b.expiresAt > now && out.dayItemIds.indexOf(item.id) === -1) out.dayItemIds.push(item.id);
+        /* 1消費1要素。同じスポットライトを2個使っていれば2要素になる。 */
+        if (b.expiresAt > now) out.dayItemIds.push(item.id);
         return;
       }
       if (b.kind !== 'timed' && b.kind !== 'fever') return;

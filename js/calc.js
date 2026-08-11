@@ -194,10 +194,12 @@
     }
     var dayItemIds = [];
     if (Array.isArray(v.dayItemIds)) {
+      /* 1消費1要素。スポットライトを2個使えば +0.5 が2つで +1.0 になる。
+       * ここで重複を潰すと、正当に使った2個目ぶんの倍率が消える。 */
       v.dayItemIds.slice(0, 20).forEach(function (id) {
         var item = consumableById(id);
         if (!item || item.kind !== 'day') return;
-        if (dayItemIds.indexOf(item.id) === -1) dayItemIds.push(item.id);
+        dayItemIds.push(item.id);
       });
     }
     return { timed: timed, dayItemIds: dayItemIds };

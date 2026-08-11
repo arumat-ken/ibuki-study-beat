@@ -1470,10 +1470,10 @@ test('APP-440 §3: 壊れた bpBoost からはBPを増やせない', () => {
     dayItemIds: ['spotlight', 'spotlight', 'unknown', 'energy_drink', 'recovery']
   });
   assert.deepEqual(broken.timed, [{ itemId: 'energy_drink', minutes: 60 }], '正当な分だけ残る');
-  assert.deepEqual(broken.dayItemIds, ['spotlight'], '重複と未知のIDは捨てる');
+  assert.deepEqual(broken.dayItemIds, ['spotlight', 'spotlight'], '未知のIDだけ捨て、個数は保つ');
   assert.equal(broken.fever, undefined, '倍率を持ち込む項目は残さない');
   assert.equal(broken.dayBonus, undefined);
-  assert.equal(C.dayBonusFromBoost(broken), 0.5, '定義どおりの倍率にしかならない');
+  assert.equal(C.dayBonusFromBoost(broken), 1.0, '残った2個ぶん。定義どおりの倍率にしかならない');
 
   // 複数アイテムをまとめた正当な時間は失わない
   const many = C.sanitizeBpBoost({
@@ -1489,4 +1489,31 @@ test('APP-440 §3: 壊れた bpBoost からはBPを増やせない', () => {
     const out = C.sanitizeBpBoost(v);
     assert.ok(out === null || (out.timed.length === 0 && out.dayItemIds.length === 0), String(v));
   });
+});
+
+test('APP-440 §3: スポットライトを2個使うと合計+1.0倍のまま保たれる', () => {
+  // 同日に複数使える仕様。1消費1要素にしないと、保存・再計算で2個目が消えて損をする。
+  const two = C.sanitizeBpBoost({ dayItemIds: ['spotlight', 'spotlight'] });
+  assert.deepEqual(two.dayItemIds, ['spotlight', 'spotlight']);
+  assert.equal(C.dayBonusFromBoost(two), 1.0, '+0.5 が2つで +1.0');
+
+  // 保存して読み直しても減らない
+  const s = C.sanitizeState({
+    schemaVersion: 3,
+    records: [{
+      id: 'r1', date: '2026-08-01', subjectId: 'eng', content: 'x', planMin: 30, actualMin: 30,
+      bpBoost: { timed: [], dayItemIds: ['spotlight', 'spotlight'] }
+    }]
+  }, '2026-08-11');
+  assert.equal(C.dayBonusFromBoost(s.records[0].bpBoost), 1.0, '再読み込みでも +1.0');
+
+  // 3個使えば +1.5。ただし最終倍率は composeMultiplier の3.0倍で頭打ち
+  const three = C.sanitizeBpBoost({ dayItemIds: ['spotlight', 'spotlight', 'spotlight'] });
+  assert.equal(C.dayBonusFromBoost(three), 1.5);
+  assert.equal(C.composeMultiplier({ consumableBonus: C.dayBonusFromBoost(three) }).multiplier, 2.5);
+
+  // day 以外のIDは個数に関係なく捨てる
+  assert.deepEqual(
+    C.sanitizeBpBoost({ dayItemIds: ['energy_drink', 'energy_drink', 'recovery', 'unknown'] }).dayItemIds,
+    []);
 });
