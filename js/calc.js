@@ -166,6 +166,24 @@
     return out;
   }
 
+  /* APP-440 §3: 記録に残したアイテム消費の内訳。
+   * これが失われると、再読み込みのたびにBPが減る(倍率だけ消えて時間は残るため)。 */
+  function sanitizeBpBoost(v) {
+    if (!v || typeof v !== 'object') return null;
+    var fever = (typeof v.fever === 'number' && isFinite(v.fever) && v.fever > 0) ? Math.floor(v.fever) : 0;
+    var dayBonus = (typeof v.dayBonus === 'number' && isFinite(v.dayBonus) && v.dayBonus > 0) ? v.dayBonus : 0;
+    var timed = [];
+    if (Array.isArray(v.timed)) {
+      v.timed.forEach(function (t) {
+        if (!t || typeof t !== 'object') return;
+        if (typeof t.minutes !== 'number' || !isFinite(t.minutes) || t.minutes <= 0) return;
+        if (typeof t.bonus !== 'number' || !isFinite(t.bonus) || t.bonus <= 0) return;
+        timed.push({ minutes: Math.floor(t.minutes), bonus: t.bonus });
+      });
+    }
+    return { fever: fever, timed: timed, dayBonus: dayBonus };
+  }
+
   /* 消費アイテムの持ち時間(ミリ秒)。時間で効かないアイテムは0。 */
   function consumableDurationMs(itemId) {
     var item = consumableById(itemId);
@@ -495,6 +513,7 @@
           bpMin: isIntInRange(r.bpMin, 0, MAX_MIN_PER_RECORD) ? r.bpMin : (r.actualMin | 0),
           bpMultiplier: (typeof r.bpMultiplier === 'number' && isFinite(r.bpMultiplier) && r.bpMultiplier >= 0)
             ? r.bpMultiplier : 1,
+          bpBoost: sanitizeBpBoost(r.bpBoost),
           bpActions: Array.isArray(r.bpActions)
             ? r.bpActions.filter(function (k) {
               return typeof k === 'string' && Object.prototype.hasOwnProperty.call(ACTION_BONUS_BP, k);
@@ -769,9 +788,13 @@
   }
 
   /** 達成率(%)が計画達成の範囲に入っているか */
-  function isPlanAchieved(planMin, actualMin) {
-    if (!planMin || planMin <= 0) return false;
-    var rate = actualMin / planMin * 100;
+  function isPlanAchieved(planMin, actualMin, extendedMin) {
+    /* APP-440 §2: 明示的に延長した分は「決めた時間」に含める。
+     * 含めないと、本人が意思をもって延長して勉強したのに達成率が120%を超えて
+     * 計画達成ボーナスを失う。長く勉強したことで損をさせない。 */
+    var declared = declaredMinutes(planMin, extendedMin);
+    if (!declared || declared <= 0) return false;
+    var rate = actualMin / declared * 100;
     return rate >= PLAN_ACHIEVED_MIN_RATE && rate <= PLAN_ACHIEVED_MAX_RATE;
   }
 
@@ -1108,7 +1131,7 @@
     list.forEach(function (rec) {
       var actualMin = (typeof rec.actualMin === 'number') ? rec.actualMin : 0;
       /* 計画達成: 1日1回。かつ実績15分以上(15分ちょうどを含む)。 */
-      if (actualMin >= PLAN_ACHIEVED_MIN_ACTUAL_MIN && isPlanAchieved(rec.planMin, actualMin)) {
+      if (actualMin >= PLAN_ACHIEVED_MIN_ACTUAL_MIN && isPlanAchieved(rec.planMin, actualMin, rec.extendedMin)) {
         assign('planAchieved', rec);
       }
       /* 振り返り: 1日1回。その日いずれかの記録に書かれていればよい。 */
@@ -1914,6 +1937,7 @@
     bpOrder: bpOrder,
     createdAtFromId: createdAtFromId,
     sanitizeSegments: sanitizeSegments,
+    sanitizeBpBoost: sanitizeBpBoost,
     consumableDurationMs: consumableDurationMs,
     normalizeSegments: normalizeSegments,
     segmentsOverlapMs: segmentsOverlapMs,

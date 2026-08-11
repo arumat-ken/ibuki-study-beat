@@ -1423,3 +1423,36 @@ test('APP-440 §2: 端数の分は切り捨てる(水増ししない)', () => {
   const p = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 + 45 * M + 59000);
   assert.equal(p.minutes, 45, '45分59秒は45分');
 });
+
+test('APP-440 §2: 明示的に延長した分は達成率の分母に入る', () => {
+  // 計画30分を+10分延長して40分やり切った。宣言済みは40分なので達成率100%。
+  // 延長を含めないと133%になり、長く勉強したのに計画達成ボーナスを失う。
+  assert.ok(C.isPlanAchieved(30, 40, 10), '延長込みなら達成');
+  assert.ok(!C.isPlanAchieved(30, 40, 0), '延長していなければ超過扱い');
+  assert.ok(C.isPlanAchieved(30, 30, 0), '計画どおりは達成');
+  assert.ok(!C.isPlanAchieved(0, 30, 0), '計画が無ければ達成にしない');
+});
+
+test('APP-440 §3: rec.bpBoost は読み込みで失われない(消えるとBPが減る)', () => {
+  const s = C.sanitizeState({
+    schemaVersion: 3,
+    records: [{
+      id: 'r1', date: '2026-08-01', subjectId: 'eng', content: 'x', planMin: 30, actualMin: 40,
+      bpBoost: { fever: 10, dayBonus: 0.5, timed: [{ minutes: 30, bonus: 1 }, { minutes: -5, bonus: 1 }, null, { minutes: 5 }] }
+    }]
+  }, '2026-08-11');
+  const b = s.records[0].bpBoost;
+  assert.equal(b.fever, 10);
+  assert.equal(b.dayBonus, 0.5);
+  assert.deepEqual(b.timed, [{ minutes: 30, bonus: 1 }], '壊れた要素は捨てる');
+
+  // 持っていない記録は null。倍率が乗らない状態として扱える。
+  assert.equal(C.sanitizeState({
+    schemaVersion: 3,
+    records: [{ id: 'r2', date: '2026-08-01', subjectId: 'eng', content: 'x', planMin: 30, actualMin: 30 }]
+  }, '2026-08-11').records[0].bpBoost, null);
+  [null, undefined, 'x', 5, []].forEach((v) => {
+    const out = C.sanitizeBpBoost(v);
+    assert.ok(out === null || (out.fever === 0 && out.timed.length === 0), String(v));
+  });
+});

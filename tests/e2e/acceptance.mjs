@@ -1939,6 +1939,80 @@ async function test18_itemsOnStudyIntervals() {
   ok('T-2-11 期限切れのアイテムが2件目で復活しない', st.shop.activeBoosts.length === 0,
     JSON.stringify(st.shop.activeBoosts));
 
+  /* --- 延長ぶんもアイテムが効く(段階4レビューの修正条件3) --- */
+  await freshPageWithClock(T0);
+  await page.evaluate(() => {
+    const s3 = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const p3 = n => (n < 10 ? '0' : '') + n;
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    s3.records.push({ id: 'seedbp2', date: `${y.getFullYear()}-${p3(y.getMonth() + 1)}-${p3(y.getDate())}`,
+      subjectId: 'eng', content: 'seed', kind: '暗記', planMin: 30, actualMin: 30,
+      reflection: '', deletedAt: null, bp: 1000, createdAt: 1, updatedAt: 1, score: null, maxScore: null });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(s3));
+  });
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  await nav('coach');
+  await page.click('#btn-open-shop');
+  await page.click('[data-tab="consumable"]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("エナジードリンク") [data-buy]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("エナジードリンク") [data-use]');
+  await page.waitForTimeout(150);
+  await page.click('#m-close');
+  await nav('today');
+
+  await startPlanTimer({ content: '延長でもアイテムが効く', plan: 30 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(30 * 60 * 1000);
+  await page.waitForTimeout(300);
+  st = await getState();
+  let extRec = st.records.find(r => r.content === '延長でもアイテムが効く');
+  const firstBoost = extRec.bpBoost.timed.reduce((n, t) => n + t.minutes, 0);
+  ok('延長前: 最初の30分にアイテムが乗る', firstBoost === 30, `boost=${firstBoost}`);
+  const bpFirst = extRec.bp;
+
+  await page.click('[data-ext="10"]');
+  await page.waitForTimeout(200);
+  await page.clock.fastForward(10 * 60 * 1000);
+  await page.waitForTimeout(300);
+  st = await getState();
+  extRec = st.records.find(r => r.content === '延長でもアイテムが効く');
+  const totalBoost = extRec.bpBoost.timed.reduce((n, t) => n + t.minutes, 0);
+  ok('延長後: 延長した10分にもアイテムが乗る(合計40分)', totalBoost === 40, `boost=${totalBoost}`);
+  ok('延長後の実績は40分', extRec.actualMin === 40, `actual=${extRec.actualMin}`);
+  ok('延長でBPが増えている', extRec.bp > bpFirst, `bp=${extRec.bp} (前=${bpFirst})`);
+  const bpAfterExt = extRec.bp;
+  const consumedAfterExt = st.shop.activeBoosts.map(b => b.consumedMs || 0);
+  ok('消費は合計40分ぶん', consumedAfterExt.length === 1 && consumedAfterExt[0] === 40 * 60000,
+    JSON.stringify(consumedAfterExt));
+
+  /* 再起動しても二重消費・二重BPにならない */
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  st = await getState();
+  extRec = st.records.find(r => r.content === '延長でもアイテムが効く');
+  const totalBoost2 = extRec.bpBoost.timed.reduce((n, t) => n + t.minutes, 0);
+  ok('再起動しても消費が増えない', totalBoost2 === 40, `boost=${totalBoost2}`);
+  ok('再起動してもBPが増えない', extRec.bp === bpAfterExt, `bp=${extRec.bp} (前=${bpAfterExt})`);
+  const consumedReload = st.shop.activeBoosts.map(b => b.consumedMs || 0);
+  ok('再起動しても consumedMs が増えない', consumedReload.length === 1 && consumedReload[0] === 40 * 60000,
+    JSON.stringify(consumedReload));
+
+  /* 同じ記録を再描画しても追加消費しない(画面を行き来するだけ) */
+  await nav('graph');
+  await page.waitForTimeout(150);
+  await nav('today');
+  await page.waitForTimeout(300);
+  st = await getState();
+  extRec = st.records.find(r => r.content === '延長でもアイテムが効く');
+  const totalBoost3 = extRec.bpBoost.timed.reduce((n, t) => n + t.minutes, 0);
+  ok('画面を行き来するだけでは追加消費しない', totalBoost3 === 40 && extRec.bp === bpAfterExt,
+    `boost=${totalBoost3}, bp=${extRec.bp}`);
+
   /* 削除・復元の検証(T-2-9/T-2-10)は経路3とあわせて段階5で扱う。 */
 
 }

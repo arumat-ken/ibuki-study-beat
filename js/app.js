@@ -668,11 +668,37 @@
    * 結果を rec.bpBoost に残し、以後の再計算では消費し直さない。
    * これがないと、同じアイテムの時間を複数の記録で使い回せる。 */
   function applyBoostsOnce(rec, ses) {
-    if (!ses || rec.bpBoost) return;
+    if (!ses) return;
     var segments = Array.isArray(ses.segments) ? ses.segments : null;
     /* 区間が無い記録(手入力・移行中の旧セッション)には時間制アイテムを適用しない。 */
-    if (!segments || !segments.length) { rec.bpBoost = { fever: 0, timed: [], dayBonus: 0 }; return; }
-    rec.bpBoost = consumeTimedBoosts(segments);
+    if (!segments || !segments.length) {
+      if (!rec.bpBoost) rec.bpBoost = { fever: 0, timed: [], dayBonus: 0 };
+      return;
+    }
+    /* 何度呼んでも増えない。二重消費を防いでいるのは rec.bpBoost の有無ではなく
+     * アイテム側の consumedMs で、既に使った重なりは二度と返ってこない。
+     * 延長したときは新しい区間が増えているので、その分だけが追加で消費される。 */
+    rec.bpBoost = mergeBoost(rec.bpBoost, consumeTimedBoosts(segments));
+  }
+
+  /* 既に消費した分を上書きせず、追加分を足し込む。 */
+  function mergeBoost(prev, add) {
+    var out = { fever: 0, timed: [], dayBonus: 0 };
+    if (prev) {
+      out.fever = prev.fever || 0;
+      out.dayBonus = prev.dayBonus || 0;
+      (prev.timed || []).forEach(function (t) { out.timed.push({ minutes: t.minutes, bonus: t.bonus }); });
+    }
+    out.fever += add.fever || 0;
+    /* その日いっぱいのアイテムは倍率であって持ち時間ではないので、足さずに大きい方を採る。 */
+    out.dayBonus = Math.max(out.dayBonus, add.dayBonus || 0);
+    (add.timed || []).forEach(function (t) {
+      var hit = null;
+      out.timed.forEach(function (x) { if (x.bonus === t.bonus) hit = x; });
+      if (hit) hit.minutes += t.minutes;
+      else out.timed.push({ minutes: t.minutes, bonus: t.bonus });
+    });
+    return out;
   }
 
   /* APP-440 §2: 完了画面。
@@ -922,7 +948,7 @@
 
   function buildActionsForRecord(rec) {
     var actions = [];
-    if (C.isPlanAchieved(rec.planMin, rec.actualMin)) actions.push('planAchieved');
+    if (C.isPlanAchieved(rec.planMin, rec.actualMin, rec.extendedMin)) actions.push('planAchieved');
     if (rec.reflection && rec.reflection.trim()) actions.push('reflection');
 
     var streak = C.streakDays(state.records, rec.date, state.shop.streakGuardDates);
