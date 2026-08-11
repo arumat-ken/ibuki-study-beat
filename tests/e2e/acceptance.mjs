@@ -1583,6 +1583,213 @@ async function extra_screens() {
   ok('横向きでグラフを優先表示', Number(chartH) >= 220, `h=${chartH}`);
 }
 
+/* ============ APP-440 段階3: タイマーの自動停止と延長 ============ */
+
+/** 偽の時計を入れた状態でページを開く。実時間を待たずに経過を再現する。 */
+async function freshPageWithClock(startMs) {
+  if (context) await context.close();
+  context = await browser.newContext({ ...devices['iPhone 13'], locale: 'ja-JP' });
+  page = await context.newPage();
+  page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+  page.on('pageerror', e => consoleErrors.push(String(e)));
+  await page.clock.install({ time: new Date(startMs) });
+  await page.goto(BASE + '/index.html');
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+}
+
+/** 今日の予定を作ってタイマーを開始する */
+async function startPlanTimer({ subjectLabel = '英語', kind = '単語・熟語', content, plan }) {
+  await page.click('#btn-start-study');
+  await page.waitForSelector('#modal-back.open');
+  await page.selectOption('#m-subject', { label: subjectLabel });
+  await page.selectOption('#m-kind', kind);
+  await page.fill('#m-content', content);
+  await page.fill('#m-plan', String(plan));
+  await page.click('#m-save');
+  await page.waitForTimeout(200);
+}
+
+async function test16_timerAutoStop() {
+  console.log('\n■ 試験16: タイマーの自動停止と延長(APP-440 T-1)');
+  // 2026-08-11 10:00 に固定する
+  const T0 = new Date(2026, 7, 11, 10, 0, 0).getTime();
+  await freshPageWithClock(T0);
+
+  /* --- T-1-1: 宣言済み時間で自動停止する --- */
+  await startPlanTimer({ content: '英単語 60分', plan: 60 });
+  await page.waitForSelector('#timer-card:visible');
+  const runningBefore = await page.isVisible('#timer-elapsed');
+  ok('T-1-1 開始直後はタイマーが動いている', runningBefore);
+
+  await page.clock.fastForward(60 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('T-1-1 計画時間でタイマーが自動停止し完了画面が出る', await page.isVisible('#timer-completed'));
+  const doneText = await page.textContent('#timer-completed');
+  ok('T-1-1 完了画面に60分と出る', /1時間|60分/.test(doneText), doneText);
+  await shot('70-timer-completed');
+
+  /* --- T-1-2: 完了画面で何もしないまま放置しても増えない --- */
+  await page.clock.fastForward(30 * 60 * 1000);
+  await page.waitForTimeout(300);
+  const doneText2 = await page.textContent('#timer-completed');
+  ok('T-1-2 完了後に30分放置しても90分にならない', doneText2 === doneText, doneText2);
+
+  /* 保存すると60分。超過30分は捨てられる。 */
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  const suggested = await page.inputValue('#m-actual');
+  ok('T-1-2 保存欄の既定値が60分(90分ではない)', suggested === '60', suggested);
+  const maxAttr = await page.getAttribute('#m-actual', 'max');
+  ok('T-1-2 実績欄の上限が宣言済み時間になっている', maxAttr === '60', maxAttr);
+
+  /* 増やす方向の修正は受け付けない */
+  await page.fill('#m-actual', '120');
+  await page.click('#m-save');
+  await page.waitForTimeout(200);
+  const stillOpen = await page.isVisible('#m-actual');
+  ok('T-1-2 宣言済み時間を超える値では保存できない', stillOpen);
+  await page.fill('#m-actual', '60');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+
+  let st = await getState();
+  let rec = st.records.find(r => r.content === '英単語 60分');
+  ok('T-1-2 実績60分で保存される(放置分は入らない)', rec && rec.actualMin === 60,
+    rec ? `actual=${rec.actualMin}` : '記録なし');
+  ok('T-1-2 未確定の30分はBPにならない', rec && rec.bp > 0 && rec.bp <= 60 * 3,
+    rec ? `bp=${rec.bp}` : '');
+
+  /* --- T-1-5/T-1-6/T-1-14: 延長 --- */
+  await page.clock.fastForward(60 * 1000);
+  await startPlanTimer({ content: '延長テスト', plan: 30 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(30 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('T-1-5 計画30分で完了画面が出る', await page.isVisible('#timer-completed'));
+  ok('T-1-5 延長のボタンが出ている', await page.isVisible('[data-ext="15"]'));
+
+  await page.click('[data-ext="15"]');
+  await page.waitForTimeout(300);
+  ok('T-1-5 延長するとタイマーが再開する', await page.isVisible('#timer-elapsed'));
+  st = await getState();
+  rec = st.records.find(r => r.content === '延長テスト');
+  ok('T-1-14 延長は実績へ溶かし込まず extendedMin に残る', rec && rec.extendedMin === 15,
+    rec ? `extendedMin=${rec.extendedMin}` : '記録なし');
+
+  await page.clock.fastForward(15 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('T-1-6 延長した時間で再び完了画面が出る', await page.isVisible('#timer-completed'));
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  const extSuggested = await page.inputValue('#m-actual');
+  ok('T-1-6 計画30分＋延長15分=45分が既定値', extSuggested === '45', extSuggested);
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  st = await getState();
+  rec = st.records.find(r => r.content === '延長テスト');
+  ok('T-1-6 実績45分・延長15分で保存', rec && rec.actualMin === 45 && rec.extendedMin === 15,
+    rec ? `actual=${rec.actualMin}, ext=${rec.extendedMin}` : '記録なし');
+
+  /* --- T-1-13: テストは延長できない --- */
+  await page.clock.fastForward(60 * 1000);
+  await startPlanTimer({ content: '英語ミニテスト', kind: 'テスト', plan: 20 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(20 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('T-1-13 テストでも完了画面は出る', await page.isVisible('#timer-completed'));
+  ok('T-1-13 テストには延長のボタンが出ない', !(await page.isVisible('[data-ext="15"]')));
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+}
+
+async function test17_timerReopenAndDayCross() {
+  console.log('\n■ 試験17: 再起動・日またぎでも終了時刻で頭打ち(APP-440 T-1-3/T-1-4)');
+  const T0 = new Date(2026, 7, 11, 10, 0, 0).getTime();
+
+  /* --- T-1-3: アプリを閉じたまま8時間放置して開く --- */
+  await freshPageWithClock(T0);
+  await startPlanTimer({ content: '放置8時間', plan: 60 });
+  await page.waitForSelector('#timer-card:visible');
+  /* アプリを閉じている状態を、8時間先の時計で開き直して再現する */
+  await page.clock.fastForward(8 * 60 * 60 * 1000);
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  ok('T-1-3 開き直すと完了画面が出る', await page.isVisible('#timer-completed'));
+  const late = await page.textContent('#timer-card');
+  ok('T-1-3 完了していた時刻を伝える', /完了していました/.test(late), late.slice(0, 60));
+  await shot('71-timer-completed-late');
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  const v = await page.inputValue('#m-actual');
+  ok('T-1-3 480分ではなく60分', v === '60', v);
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  let st = await getState();
+  let rec = st.records.find(r => r.content === '放置8時間');
+  ok('T-1-3 実績60分で保存される', rec && rec.actualMin === 60, rec ? `actual=${rec.actualMin}` : '記録なし');
+  ok('T-1-3 BPも60分ぶんまで', rec && rec.bp <= 60 * 3, rec ? `bp=${rec.bp}` : '');
+
+  /* --- T-1-4: 日をまたいで放置 --- */
+  await freshPageWithClock(new Date(2026, 7, 11, 22, 0, 0).getTime());
+  await startPlanTimer({ content: '日またぎ放置', plan: 60 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(11 * 60 * 60 * 1000);   // 翌日09:00
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  ok('T-1-4 日をまたいでも完了画面が出る', await page.isVisible('#timer-completed'));
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  const v2 = await page.inputValue('#m-actual');
+  ok('T-1-4 日またぎでも宣言済み時間しか入らない', v2 === '60', v2);
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  st = await getState();
+  rec = st.records.find(r => r.content === '日またぎ放置');
+  ok('T-1-4 実績60分で保存される', rec && rec.actualMin === 60, rec ? `actual=${rec.actualMin}` : '記録なし');
+
+  /* --- 一時停止中は進まない --- */
+  await freshPageWithClock(T0);
+  await startPlanTimer({ content: '一時停止テスト', plan: 60 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(20 * 60 * 1000);
+  await page.click('#btn-pause');
+  await page.waitForTimeout(200);
+  await page.clock.fastForward(2 * 60 * 60 * 1000);
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  ok('一時停止中は2時間放置しても完了しない', !(await page.isVisible('#timer-completed')));
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  const v3 = await page.inputValue('#m-actual');
+  ok('一時停止中の放置は実績に入らない', v3 === '20', v3);
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+
+  /* --- 計画時間が無いと開始できない --- */
+  await freshPage(true);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: '計画なし記録', plan: 0, actual: 20 });
+  await page.waitForTimeout(200);
+  const started = await page.evaluate(() => {
+    const st2 = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return !!st2.activeSession;
+  });
+  ok('計画0分の記録ではタイマーが始まらない', !started);
+}
+
 /* ============ 実行 ============ */
 browser = await chromium.launch();
 try {
@@ -1601,6 +1808,8 @@ try {
   await test13_codexReviewFixes();
   await test14_subjectStudyKinds();
   await test15_coachPanelsAndReport();
+  await test16_timerAutoStop();
+  await test17_timerReopenAndDayCross();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

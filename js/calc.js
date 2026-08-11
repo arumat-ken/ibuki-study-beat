@@ -548,7 +548,13 @@
         recordId: parsed.activeSession.recordId,
         startTs: parsed.activeSession.startTs,
         pausedAccum: typeof parsed.activeSession.pausedAccum === 'number' ? parsed.activeSession.pausedAccum : 0,
-        pausedAt: typeof parsed.activeSession.pausedAt === 'number' ? parsed.activeSession.pausedAt : null
+        pausedAt: typeof parsed.activeSession.pausedAt === 'number' ? parsed.activeSession.pausedAt : null,
+        /* APP-440 §2: 開始時に宣言した時間と、開始時点の実績。
+         * 旧セッションは持たないので0。呼び出し側で記録の計画時間から補う。 */
+        declaredMin: isIntInRange(parsed.activeSession.declaredMin, 0, MAX_MIN_PER_RECORD)
+          ? parsed.activeSession.declaredMin : 0,
+        baseActualMin: isIntInRange(parsed.activeSession.baseActualMin, 0, MAX_MIN_PER_RECORD)
+          ? parsed.activeSession.baseActualMin : 0
       };
       /* APP-440 §3・§8: segments は既定値を持たないフィールドとして扱う。
        *
@@ -960,6 +966,75 @@
       appliedMs: appliedMs,
       boostMinutes: appliedMs / MS_PER_MINUTE,
       nextConsumedMs: consumedMs + appliedMs
+    };
+  }
+
+  /* §2: 延長は5分刻み、1回あたり最長60分(親の確定 2026-08-10)。 */
+  var EXTENSION_STEP_MIN = 5;
+  var EXTENSION_MAX_MIN = 60;
+
+  /** §2: 宣言済み時間(計画A + 延長E)。本人が先に「勉強する」と意思表示した時間。 */
+  function declaredMinutes(planMin, extendedMin) {
+    var p = (typeof planMin === 'number' && isFinite(planMin) && planMin > 0) ? planMin : 0;
+    var e = (typeof extendedMin === 'number' && isFinite(extendedMin) && extendedMin > 0) ? extendedMin : 0;
+    return Math.floor(p) + Math.floor(e);
+  }
+
+  /** §2 T-1-7・T-1-8: 延長の入力を5分刻みに丸め、1回60分までに収める。 */
+  function roundExtensionMin(value) {
+    if (typeof value !== 'number' || !isFinite(value) || value <= 0) return 0;
+    var stepped = Math.floor(value / EXTENSION_STEP_MIN) * EXTENSION_STEP_MIN;
+    if (stepped > EXTENSION_MAX_MIN) return EXTENSION_MAX_MIN;
+    return stepped;
+  }
+
+  /** §2: テスト・模試は延長できない。試験時間は決まっており超過はありえない。 */
+  function canExtendKind(kind) {
+    return kind !== TEST_KIND;
+  }
+
+  /**
+   * §2: タイマーの進み具合と、自動停止したかどうかを求める。
+   *
+   * 停止はイベントではなく計算で決める。通知や setTimeout に依存しない。
+   * iPhoneは画面を消すとタイマーが動かず、アプリが終了させられることもあるため、
+   * 「次に開いたときに計算し直す」以外の方法では宣言済み時間を守れない。
+   *
+   * 数えるのは実際に勉強した時間(一時停止を除く)である。
+   * 壁時計で数えると、休憩を挟んだだけで宣言済み時間に達してしまう。
+   */
+  function sessionProgress(session, declaredMin, nowMs) {
+    var s = session || {};
+    var now = (typeof nowMs === 'number' && isFinite(nowMs)) ? nowMs : 0;
+    var startTs = (typeof s.startTs === 'number' && isFinite(s.startTs)) ? s.startTs : 0;
+    var pausedAccum = (typeof s.pausedAccum === 'number' && isFinite(s.pausedAccum) && s.pausedAccum > 0)
+      ? s.pausedAccum : 0;
+    var pausedAt = (typeof s.pausedAt === 'number' && isFinite(s.pausedAt)) ? s.pausedAt : null;
+
+    /* 一時停止中は「止めた時刻」で数え止める。放置しても進まない。 */
+    var until = pausedAt !== null ? pausedAt : now;
+    var elapsedMs = Math.max(0, until - startTs - pausedAccum);
+
+    var dm = (typeof declaredMin === 'number' && isFinite(declaredMin) && declaredMin > 0)
+      ? Math.floor(declaredMin) : 0;
+    var declaredMs = dm * MS_PER_MINUTE;
+
+    /* 宣言済み時間が無い場合は自動停止できない。呼び出し側で開始を止める。 */
+    var completed = declaredMs > 0 && elapsedMs >= declaredMs;
+    var cappedMs = declaredMs > 0 ? Math.min(elapsedMs, declaredMs) : elapsedMs;
+
+    return {
+      elapsedMs: elapsedMs,
+      declaredMs: declaredMs,
+      cappedMs: cappedMs,
+      /* 宣言済み時間を超えた分は捨てる。C にも D にも入れない。 */
+      discardedMs: Math.max(0, elapsedMs - cappedMs),
+      completed: completed,
+      /* 完了した瞬間の実時刻。「◯時◯分に完了していました」に使う。
+       * 完了後は一時停止できないので、pausedAccum は完了時点の値のまま。 */
+      completedAt: completed ? startTs + pausedAccum + declaredMs : null,
+      paused: pausedAt !== null,
+      minutes: Math.floor(cappedMs / MS_PER_MINUTE)
     };
   }
 
@@ -1826,6 +1901,12 @@
     MS_PER_MINUTE: MS_PER_MINUTE,
     PLAN_ACHIEVED_MIN_ACTUAL_MIN: PLAN_ACHIEVED_MIN_ACTUAL_MIN,
     DAILY_ONCE_ACTIONS: DAILY_ONCE_ACTIONS,
+    EXTENSION_STEP_MIN: EXTENSION_STEP_MIN,
+    EXTENSION_MAX_MIN: EXTENSION_MAX_MIN,
+    declaredMinutes: declaredMinutes,
+    roundExtensionMin: roundExtensionMin,
+    canExtendKind: canExtendKind,
+    sessionProgress: sessionProgress,
     bpOrder: bpOrder,
     createdAtFromId: createdAtFromId,
     sanitizeSegments: sanitizeSegments,

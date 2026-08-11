@@ -256,7 +256,12 @@
     var total = 0;
     todayRecords().forEach(function (r) { total += r.actualMin; });
     var name = state.settings.userName || '伊吹';
-    if (state.activeSession) return '集中してるね！このビート、最高だよ！';
+    if (state.activeSession) {
+      /* APP-440: 自動停止した後は「集中してるね」ではなく、やり切ったことを言う。 */
+      var prog = sessionProgress();
+      if (prog && prog.completed) return '決めた時間、やり切ったね。かっこいいよ！';
+      return '集中してるね！このビート、最高だよ！';
+    }
     if (total >= state.settings.dailyGoalMin) return '今日の目標クリア！' + name + '、君がチャンピオンだ！';
     if (total > 0) return 'いい積み上げだね！この調子で刻んでいこう！';
     if (h < 5) return '夜更かしは体に毒だよ。無理せずいこう。';
@@ -516,17 +521,41 @@
   function startSessionForRecord(recordId) {
     var rec = state.records.find(function (r) { return r.id === recordId; });
     if (!rec) return;
-    state.activeSession = { recordId: recordId, startTs: Date.now(), pausedAccum: 0, pausedAt: null };
+    /* APP-440 §2: 宣言済み時間が無いと、いつ止めるかを決められない。
+     * 「勉強する意思もないのにタイマーだけカウントする」ことをさせないため、
+     * 計画時間を決めてからでないと始められないようにする。 */
+    var declared = C.declaredMinutes(rec.planMin, 0);
+    if (declared <= 0) {
+      toast('先に計画時間を決めよう。何分やるか決めるところからだよ', true);
+      return;
+    }
+    state.activeSession = {
+      recordId: recordId, startTs: Date.now(), pausedAccum: 0, pausedAt: null,
+      declaredMin: declared,
+      baseActualMin: rec.actualMin || 0
+    };
     save();
     renderToday();
-    toast('スタート！いいビートを刻もう！');
+    toast('スタート！' + C.fmtDuration(declared) + 'で完了だよ');
+  }
+
+  /* APP-440 §2: 進み具合はすべてこの関数から取る。
+   * 「いま」を渡して計算するので、通知やsetTimeoutに頼らない。
+   * アプリを閉じていても、次に開いたときに正しく完了を検出できる。 */
+  function sessionProgress() {
+    var s = state.activeSession;
+    if (!s) return null;
+    var rec = state.records.find(function (r) { return r.id === s.recordId; });
+    /* 旧セッションは declaredMin を持たないので、記録の計画時間から補う。 */
+    var declared = s.declaredMin > 0
+      ? s.declaredMin
+      : (rec ? C.declaredMinutes(rec.planMin, rec.extendedMin) : 0);
+    return C.sessionProgress(s, declared, Date.now());
   }
 
   function sessionElapsedMs() {
-    var s = state.activeSession;
-    if (!s) return 0;
-    var end = s.pausedAt || Date.now();
-    return Math.max(0, end - s.startTs - s.pausedAccum);
+    var p = sessionProgress();
+    return p ? p.cappedMs : 0;
   }
 
   function renderTimerCard() {
@@ -537,19 +566,34 @@
     if (!rec) { state.activeSession = null; save(); card.style.display = 'none'; return; }
     var sub = subjectById(rec.subjectId);
     var paused = !!state.activeSession.pausedAt;
+    var prog = sessionProgress();
+
+    /* APP-440 §2: 宣言済み時間に達していたら自動停止して完了画面を出す。
+     * アプリを閉じていた場合もここで検出する。停止はイベントではなく計算で決める。 */
+    if (prog && prog.completed) {
+      card.style.display = '';
+      renderCompletedCard(card, rec, prog);
+      return;
+    }
+
+    var declaredMin = prog ? Math.floor(prog.declaredMs / 60000) : 0;
     card.style.display = '';
     card.innerHTML =
       '<h2>学習中</h2>' +
       '<div class="timer-big" id="timer-elapsed">0:00</div>' +
       '<div class="timer-sub">' + esc(sub.name) + '・' + esc(rec.content) +
-      (rec.planMin > 0 ? '(計画 ' + C.fmtDuration(rec.planMin) + ')' : '') + '</div>' +
+      (declaredMin > 0 ? '(' + C.fmtDuration(declaredMin) + 'で完了)' : '') + '</div>' +
       '<div class="btn-row">' +
       '<button class="btn" id="btn-pause">' + (paused ? '▶ 再開' : '⏸ 一時停止') + '</button>' +
       '<button class="btn primary" id="btn-finish">終了する ✓</button>' +
       '</div>' +
       '<button class="btn ghost small" id="btn-discard" style="margin-top:8px;color:var(--dim)">記録せずにやめる</button>';
     function tick() {
-      var ms = sessionElapsedMs();
+      var p = sessionProgress();
+      if (!p) return;
+      /* 宣言済み時間に達した瞬間に自動停止する。画面を開いたままでも進み続けない。 */
+      if (p.completed) { clearInterval(timerInterval); renderTimerCard(); return; }
+      var ms = p.cappedMs;
       var m = Math.floor(ms / 60000), s = Math.floor(ms / 1000) % 60;
       $('timer-elapsed').textContent = m + ':' + (s < 10 ? '0' : '') + s;
     }
@@ -582,14 +626,96 @@
     };
   }
 
-  function openFinishModal(rec) {
-    var elapsedMin = Math.max(1, Math.round(sessionElapsedMs() / 60000));
-    var suggested = Math.min(C.MAX_MIN_PER_RECORD, rec.actualMin + elapsedMin);
+  /* APP-440 §2: 完了画面。
+   *
+   * BPは完了の時点で確定している。ここのボタンは「今の記録が有効か」を問うものではなく、
+   * 「この先どうするか」を選ぶもの。放置しても損はせず、得もしない。 */
+  function renderCompletedCard(card, rec, prog) {
+    var sub = subjectById(rec.subjectId);
+    var min = prog.minutes;
+    var canExtend = C.canExtendKind(rec.kind);
+    var lateNotice = '';
+    /* アプリを閉じている間に完了していた場合は、見逃さないように時刻を伝える。 */
+    if (prog.discardedMs >= 60000 && prog.completedAt) {
+      var d = new Date(prog.completedAt);
+      lateNotice = '<p class="small muted" style="margin:0 0 10px">' +
+        d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes() +
+        ' に完了していました。ここまでの時間は記録に入っているよ</p>';
+    }
+    var extendBtns = '';
+    if (canExtend) {
+      extendBtns =
+        '<div class="finish-extend">' +
+        '<div class="small muted" style="margin-bottom:6px">もう少し続ける？(5分刻み・最長' +
+        C.EXTENSION_MAX_MIN + '分)</div>' +
+        '<div class="btn-row">' +
+        [5, 10, 15, 30].map(function (n) {
+          return '<button class="btn small" data-ext="' + n + '">+' + n + '分</button>';
+        }).join('') +
+        '</div></div>';
+    }
+    card.innerHTML =
+      '<h2 id="timer-completed">完了！ ' + C.fmtDuration(min) + '</h2>' +
+      lateNotice +
+      '<div class="timer-sub">' + esc(sub.name) + '・' + esc(rec.content) + '</div>' +
+      '<p class="small" style="margin:10px 0">' + C.fmtDuration(min) +
+      'ぶんのビートは、もう確定しているよ</p>' +
+      extendBtns +
+      '<div class="btn-row" style="margin-top:10px">' +
+      '<button class="btn" id="btn-break">休憩する</button>' +
+      '<button class="btn primary" id="btn-finish">今日はここまで</button>' +
+      '</div>';
+
+    if (canExtend) {
+      Array.prototype.forEach.call(card.querySelectorAll('[data-ext]'), function (b) {
+        b.onclick = function () { extendSession(parseIntSafe(b.dataset.ext)); };
+      });
+    }
+    /* 休憩も「今日はここまで」も、確定した時間を記録する点は同じ。
+     * 違いは再開の導線を残すかどうかだけ(設計 §2)。 */
+    $('btn-break').onclick = function () { openFinishModal(rec, { resumeHint: true }); };
+    $('btn-finish').onclick = function () { openFinishModal(rec); };
+  }
+
+  /* APP-440 §2: 延長は毎回が明示的な意思表示。記録にも残す。 */
+  function extendSession(rawMin) {
+    var ses = state.activeSession;
+    if (!ses) return;
+    var rec = state.records.find(function (r) { return r.id === ses.recordId; });
+    if (!rec) return;
+    if (!C.canExtendKind(rec.kind)) { toast('テストは延長できないよ', true); return; }
+    var add = C.roundExtensionMin(rawMin);
+    if (add <= 0) { toast('延長は' + C.EXTENSION_STEP_MIN + '分から選んでね', true); return; }
+    ses.declaredMin = (ses.declaredMin || 0) + add;
+    /* 実績へ黙って溶かし込まず、「予定どおりに終わらなかった」事実として別に残す。 */
+    rec.extendedMin = (rec.extendedMin || 0) + add;
+    rec.updatedAt = Date.now();
+    save();
+    renderTimerCard();
+    toast(C.fmtDuration(add) + '延長したよ。いこう！');
+  }
+
+  function openFinishModal(rec, opts) {
+    var o = opts || {};
+    var prog = sessionProgress();
+    var ses = state.activeSession;
+    var sessionMin = prog ? prog.minutes : 0;
+    var base = (ses && typeof ses.baseActualMin === 'number') ? ses.baseActualMin : rec.actualMin;
+    /* APP-440 §1: C ≤ A+E。宣言していない時間は実績にも入らない。
+     * 上限は「開始時点の実績 + このセッションで宣言した時間」まで。 */
+    var declaredMin = prog ? Math.floor(prog.declaredMs / 60000) : 0;
+    var maxActual = Math.min(C.MAX_MIN_PER_RECORD, base + (declaredMin > 0 ? declaredMin : sessionMin));
+    var elapsedMin = sessionMin;
+    var suggested = Math.min(maxActual, base + elapsedMin);
     openModal(
       '<h3>おつかれさま！記録しよう<button class="icon-btn" id="m-close">✕</button></h3>' +
       '<p class="small muted" style="margin-bottom:10px">' + esc(rec.content) + '(計測 ' + C.fmtDuration(elapsedMin) + ')</p>' +
-      '<div class="field"><label for="m-actual">実績時間(分) — 修正できます</label>' +
-      '<input type="number" id="m-actual" min="1" max="720" inputmode="numeric" value="' + suggested + '"></div>' +
+      (rec.extendedMin > 0
+        ? '<p class="small" style="margin-bottom:10px">計画 ' + C.fmtDuration(rec.planMin) +
+          ' ＋ 延長 ' + C.fmtDuration(rec.extendedMin) + '</p>'
+        : '') +
+      '<div class="field"><label for="m-actual">実績時間(分) — 減らす方向に修正できます</label>' +
+      '<input type="number" id="m-actual" min="0" max="' + maxActual + '" inputmode="numeric" value="' + suggested + '"></div>' +
       '<div class="field"><label for="m-refl">振り返り(ひとことでOK)</label>' +
       '<textarea id="m-refl" maxlength="300" placeholder="覚えた！例文とセットで覚えるといい。">' + esc(rec.reflection) + '</textarea></div>' +
       '<button class="btn primary block big" id="m-save">記録を保存する ✓</button>'
@@ -597,6 +723,12 @@
     $('m-close').onclick = closeModal;
     $('m-save').onclick = function () {
       var actual = parseIntSafe($('m-actual').value);
+      /* 宣言済み時間を超える値は受け付けない。増やす方向の修正でBPを稼げないようにする。 */
+      if (actual > maxActual) {
+        toast('宣言した時間(' + C.fmtDuration(maxActual) + ')までだよ', true);
+        $('m-actual').value = maxActual;
+        return;
+      }
       var candidate = Object.assign({}, rec, { actualMin: actual, reflection: $('m-refl').value.trim() });
       var v = C.validateRecord(candidate, state.settings.subjects);
       if (!v.ok) { toast(v.errors[0], true); return; }
@@ -608,6 +740,7 @@
       save(); closeModal();
       celebrateAfterSave(rec, grant);
       renderToday();
+      if (o.resumeHint) toast('ゆっくり休もう。続けたくなったら、また始められるよ');
     };
   }
 

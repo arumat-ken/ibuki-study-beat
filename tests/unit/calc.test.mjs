@@ -1311,3 +1311,115 @@ test('APP-440 §8: 壊れたデータを読み込んでもBP残高と確定済�
   assert.equal(broken.shop.activeBoosts.length, 0, '壊れたアイテムは捨てる');
   assert.ok(!('segments' in broken.activeSession), '壊れた区間で新形式にしない');
 });
+
+/* ==================================================================
+ * APP-440 段階3: タイマーの自動停止と延長
+ * 設計書 §2 / 受入試験 T-1-1〜15
+ * ================================================================== */
+
+test('APP-440 §2 T-1-1: 宣言済み時間ちょうどで完了する', () => {
+  const p = C.sessionProgress({ startTs: T0, pausedAccum: 0, pausedAt: null }, 60, T0 + 60 * M);
+  assert.ok(p.completed);
+  assert.equal(p.minutes, 60);
+  assert.equal(p.discardedMs, 0);
+  assert.equal(p.completedAt, T0 + 60 * M);
+});
+
+test('APP-440 §2 T-1-2/T-1-3/T-1-4: 放置しても宣言済み時間しか入らない', () => {
+  // 完了画面で何も操作しないまま30分放置(T-1-2)
+  const idle = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 + 90 * M);
+  assert.equal(idle.minutes, 60, '90分にはならない');
+  assert.equal(idle.discardedMs, 30 * M, '超過分は捨てる');
+
+  // アプリを閉じたまま8時間放置して開く(T-1-3)
+  const away = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 + 480 * M);
+  assert.equal(away.minutes, 60, '480分は記録されない');
+  assert.equal(away.completedAt, T0 + 60 * M, '11:00に完了していたと分かる');
+
+  // 日をまたいで放置して開く(T-1-4)
+  const nextDay = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 + 23 * 60 * M);
+  assert.equal(nextDay.minutes, 60, '日またぎでも宣言済み時間しか入らない');
+});
+
+test('APP-440 §2 T-1-5/T-1-6: 延長すると終了予定が伸び、何度でも延長できる', () => {
+  // 計画60分 + 延長30分 = 90分
+  const ext1 = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, C.declaredMinutes(60, 30), T0 + 90 * M);
+  assert.ok(ext1.completed);
+  assert.equal(ext1.minutes, 90);
+
+  // さらに15分延長 = 105分。延長前の90分時点では未完了にならない
+  const declared = C.declaredMinutes(60, 45);
+  assert.equal(declared, 105);
+  assert.ok(!C.sessionProgress({ startTs: T0, pausedAccum: 0 }, declared, T0 + 90 * M).completed);
+  assert.ok(C.sessionProgress({ startTs: T0, pausedAccum: 0 }, declared, T0 + 105 * M).completed);
+});
+
+test('APP-440 §2 T-1-7/T-1-8: 延長は5分刻み・1回60分まで', () => {
+  assert.equal(C.roundExtensionMin(65), 60, '65分は60分までしか選べない');
+  assert.equal(C.roundExtensionMin(7), 5, '7分は5分に丸める');
+  assert.equal(C.roundExtensionMin(14), 10);
+  assert.equal(C.roundExtensionMin(60), 60);
+  assert.equal(C.roundExtensionMin(5), 5);
+  [0, -5, 3, NaN, Infinity, null, undefined, 'x'].forEach((v) => {
+    assert.equal(C.roundExtensionMin(v), 0, String(v) + ' は延長にならない');
+  });
+});
+
+test('APP-440 §2 T-1-13: テスト・模試は延長できない', () => {
+  assert.ok(!C.canExtendKind(C.TEST_KIND), 'テストは延長不可');
+  ['単語・熟語', '問題演習', '現代文読解', 'その他'].forEach((k) => {
+    assert.ok(C.canExtendKind(k), k + ' は延長できる');
+  });
+});
+
+test('APP-440 §2 T-1-9: 計画より前にやめた場合はその時点まで', () => {
+  const p = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 + 45 * M);
+  assert.ok(!p.completed);
+  assert.equal(p.minutes, 45, '減る方向は素直に通す');
+  assert.equal(p.discardedMs, 0);
+});
+
+test('APP-440 §2 T-1-10: 一時停止中はカウントが進まない', () => {
+  // 10:00開始、10:45に一時停止。11:45に開いても45分のまま。
+  const s = { startTs: T0, pausedAccum: 0, pausedAt: T0 + 45 * M };
+  assert.equal(C.sessionProgress(s, 60, T0 + 45 * M).minutes, 45);
+  assert.equal(C.sessionProgress(s, 60, T0 + 105 * M).minutes, 45, '1時間放置しても増えない');
+  assert.ok(!C.sessionProgress(s, 60, T0 + 105 * M).completed, '停止中に完了しない');
+  assert.ok(C.sessionProgress(s, 60, T0 + 105 * M).paused);
+});
+
+test('APP-440 §2: 休憩を挟んでも宣言済み時間ぶん勉強できる(壁時計で数えない)', () => {
+  // 10:00開始・計画60分。10:20-10:50を一時停止(30分)。
+  // 壁時計基準なら11:00で完了だが、実際に勉強したのは30分しかない。
+  const s = { startTs: T0, pausedAccum: 30 * M, pausedAt: null };
+  const at11 = C.sessionProgress(s, 60, T0 + 60 * M);
+  assert.equal(at11.minutes, 30, '休憩ぶんは勉強時間に数えない');
+  assert.ok(!at11.completed, '11:00ではまだ完了しない');
+
+  // 11:30(=勉強60分)で完了する
+  const at1130 = C.sessionProgress(s, 60, T0 + 90 * M);
+  assert.ok(at1130.completed);
+  assert.equal(at1130.minutes, 60);
+  assert.equal(at1130.completedAt, T0 + 90 * M, '休憩ぶん後ろへずれた時刻で完了');
+});
+
+test('APP-440 §2: 宣言済み時間が無いセッションは自動停止できない', () => {
+  // 計画0分では終わりを決められない。開始そのものを止めるのは呼び出し側の責務。
+  const p = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 0, T0 + 60 * M);
+  assert.ok(!p.completed);
+  assert.equal(p.declaredMs, 0);
+  assert.equal(C.declaredMinutes(0, 0), 0);
+  assert.equal(C.declaredMinutes(null, undefined), 0);
+  assert.equal(C.declaredMinutes(-10, -5), 0, '負の値は0として扱う');
+});
+
+test('APP-440 §2: 時刻が巻き戻っても負の経過にならない', () => {
+  const p = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 - 10 * M);
+  assert.equal(p.elapsedMs, 0);
+  assert.equal(p.minutes, 0);
+});
+
+test('APP-440 §2: 端数の分は切り捨てる(水増ししない)', () => {
+  const p = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 + 45 * M + 59000);
+  assert.equal(p.minutes, 45, '45分59秒は45分');
+});
