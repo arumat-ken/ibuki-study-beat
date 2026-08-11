@@ -234,6 +234,10 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 .timer-card { text-align: center; border-color: var(--gold-dim); }
 .timer-big { font-size: 3rem; font-weight: 900; font-variant-numeric: tabular-nums; letter-spacing: 0.03em; margin: 6px 0 2px; }
 .timer-sub { font-size: 0.85rem; color: var(--dim); margin-bottom: 12px; }
+/* APP-440: 完了画面の延長ボタン。狭い画面でも折り返して収まるようにする。 */
+.finish-extend { border: 1px solid var(--line); border-radius: 12px; padding: 10px; margin-top: 10px; }
+.finish-extend .btn-row { flex-wrap: wrap; gap: 6px; }
+.finish-extend .btn { flex: 1 1 60px; min-width: 60px; }
 
 /* ---------- 記録画面 ---------- */
 .rec-group-date { font-size: 0.75rem; color: var(--gold); margin: 14px 2px 6px; font-weight: 700; }

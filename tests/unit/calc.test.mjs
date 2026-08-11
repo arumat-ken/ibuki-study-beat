@@ -833,3 +833,829 @@ test('テストはすべての科目の選択肢に含まれる(科目を変え�
     }
   }
 });
+
+/* ==================================================================
+ * APP-440 段階1: 時間の分離とBPの決定的な再計算
+ * 設計書 docs/design/APP-440_DESIGN.md §1・§3・§5・§6
+ * ================================================================== */
+
+const M = C.MS_PER_MINUTE;
+const T0 = 1786400000000;   // 基準時刻。実時計は使わない
+
+function seg(fromMin, toMin) {
+  return { from: T0 + fromMin * M, to: toMin === null ? null : T0 + toMin * M };
+}
+function boostRec(over) {
+  return Object.assign({
+    id: 'r1', createdAt: 1000, planMin: 30, actualMin: 30,
+    reflection: '', score: null, maxScore: null, deletedAt: null
+  }, over);
+}
+
+test('APP-440 §5: bpOrder は createdAt 昇順 → id 昇順で決定的に並ぶ', () => {
+  const a = { id: 'b', createdAt: 100 };
+  const b = { id: 'a', createdAt: 200 };
+  const c = { id: 'a', createdAt: 100 };
+  assert.equal(C.bpOrder(a, b), -1, 'createdAt が早い方が先');
+  assert.equal(C.bpOrder(b, a), 1);
+  assert.equal(C.bpOrder(c, a), -1, 'createdAt 同着なら id 昇順');
+  assert.equal(C.bpOrder(a, a), 0);
+  // 配列順に依存しないこと。どんな初期順序でも同じ並びになる。
+  const items = [
+    { id: 'z', createdAt: 300 }, { id: 'a', createdAt: 100 },
+    { id: 'b', createdAt: 100 }, { id: 'm', createdAt: 200 }
+  ];
+  const want = ['a', 'b', 'm', 'z'];
+  assert.deepEqual(items.slice().sort(C.bpOrder).map((r) => r.id), want);
+  assert.deepEqual(items.slice().reverse().sort(C.bpOrder).map((r) => r.id), want);
+});
+
+test('APP-440 §5: createdAt を持たない旧データも例外にならず順序が定まる', () => {
+  const items = [{ id: 'b' }, { id: 'a', createdAt: 5 }, { id: 'c' }];
+  const sorted = items.slice().sort(C.bpOrder);
+  // createdAt 無しは 0 として扱われ、その日の最古になる
+  assert.deepEqual(sorted.map((r) => r.id), ['b', 'c', 'a']);
+});
+
+test('APP-440 §3: normalizeSegments は進行中を now で閉じ、壊れた区間を捨てる', () => {
+  const now = T0 + 30 * M;
+  const out = C.normalizeSegments([
+    seg(0, 10),
+    seg(20, null),          // 進行中 → now で閉じる
+    { from: T0 + 5 * M, to: T0 + 5 * M },   // 長さ0 → 捨てる
+    { from: T0 + 10 * M, to: T0 + 8 * M },  // 逆転 → 捨てる
+    { from: 'x', to: 1 },   // 数値でない → 捨てる
+    null
+  ], now);
+  assert.equal(out.length, 2);
+  assert.equal(out[1].to, now, '進行中の区間は now で閉じる');
+});
+
+test('APP-440 §3: 壊れた終了時刻は now で閉じず、区間ごと捨てる', () => {
+  // to: null 以外の「数値でない終了時刻」を now で閉じると、
+  // 壊れた区間を「いままで学習していた」ことにでき、倍率の対象を水増しできる。
+  const now = T0 + 30 * M;
+  assert.deepEqual(C.normalizeSegments([
+    { from: T0, to: 'x' },
+    { from: T0, to: {} },
+    { from: T0, to: Infinity }
+  ], now), [], '壊れた to は捨てる');
+
+  // 終了時刻そのものが無い場合も、進行中とは判断できないので捨てる
+  assert.deepEqual(C.normalizeSegments([{ from: T0 }], now), [], 'to が無い区間も捨てる');
+  assert.deepEqual(C.normalizeSegments([{ from: T0, to: NaN }], now), [], 'NaN も捨てる');
+
+  // null だけが進行中を表す
+  const alive = C.normalizeSegments([{ from: T0, to: null }], now);
+  assert.equal(alive.length, 1);
+  assert.equal(alive[0].to, now);
+
+  // 壊れた区間ぶんの倍率が乗らないことまで確認する
+  const boost = C.applyTimedBoost({
+    segments: [{ from: T0, to: 'x' }], startedAt: T0, durationMs: 60 * M, consumedMs: 0, now
+  });
+  assert.equal(boost.boostMinutes, 0, '壊れた区間に倍率は乗らない');
+});
+
+test('APP-440 §3: segmentsOverlapMs は重複区間を二重に数えない', () => {
+  // 0-10分 と 5-15分 が重なっている。単純合計なら20分だが、実際に勉強したのは15分。
+  const ms = C.segmentsOverlapMs([seg(0, 10), seg(5, 15)], T0, T0 + 60 * M);
+  assert.equal(ms / M, 15);
+  // 有効区間の外は数えない
+  assert.equal(C.segmentsOverlapMs([seg(70, 80)], T0, T0 + 60 * M) / M, 0);
+  // 有効区間をまたぐ場合は内側だけ
+  assert.equal(C.segmentsOverlapMs([seg(-10, 70)], T0, T0 + 60 * M) / M, 60);
+  // 有効区間が空なら0
+  assert.equal(C.segmentsOverlapMs([seg(0, 10)], T0, T0), 0);
+});
+
+test('APP-440 §3 T-2-17: 59秒は切り上げず、次の1秒でちょうど1分になる', () => {
+  // 端数を失わないこと。consumedMs に足すのは appliedMs であって availableMs ではない。
+  const first = C.applyTimedBoost({
+    segments: [{ from: T0, to: T0 + 59000 }], startedAt: T0, durationMs: 60 * M, consumedMs: 0
+  });
+  assert.equal(first.boostMinutes, 0, '59秒では倍率は乗らない');
+  assert.equal(first.nextConsumedMs, 0, '59秒を消費しない(据え置き)');
+
+  const second = C.applyTimedBoost({
+    segments: [{ from: T0, to: T0 + 60000 }], startedAt: T0, durationMs: 60 * M,
+    consumedMs: first.nextConsumedMs
+  });
+  assert.equal(second.boostMinutes, 1, 'あと1秒でちょうど1分');
+  assert.equal(second.nextConsumedMs, 60000);
+});
+
+test('APP-440 §3 T-2-18: 期限まで59秒でも0分。期限後も0分で持ち越さない', () => {
+  // 有効区間 60分。59分01秒ぶん勉強した状態。
+  const near = C.applyTimedBoost({
+    segments: [seg(0, 29), { from: T0 + 29 * M, to: T0 + 29 * M + 59000 }],
+    startedAt: T0, durationMs: 30 * M, consumedMs: 29 * M
+  });
+  assert.equal(near.boostMinutes, 0, '残り59秒は乗らない');
+  assert.equal(near.nextConsumedMs, 29 * M, '据え置き');
+
+  // 期限を過ぎてから保存しても、重なりは増えないので0分のまま
+  const after = C.applyTimedBoost({
+    segments: [seg(0, 29), { from: T0 + 29 * M, to: T0 + 29 * M + 59000 }, seg(40, 50)],
+    startedAt: T0, durationMs: 30 * M, consumedMs: near.nextConsumedMs
+  });
+  assert.equal(after.boostMinutes, 0, '期限後に勉強しても端数は復活しない');
+  assert.equal(after.nextConsumedMs, 29 * M);
+});
+
+test('APP-440 §3 T-2-3: 一時停止中はアイテムを消費しない(壁時計基準にしない)', () => {
+  // 10:00開始・60分アイテム。10:00-10:20 勉強、10:20-10:50 一時停止。
+  // 壁時計基準なら50分ぶん使えてしまうが、実学習区間基準では20分だけ。
+  const studied = [seg(0, 20)];
+  const first = C.applyTimedBoost({ segments: studied, startedAt: T0, durationMs: 60 * M, consumedMs: 0 });
+  assert.equal(first.boostMinutes, 20);
+
+  // 一時停止したまま30分置いて保存しても、区間は増えていない
+  const paused = C.applyTimedBoost({
+    segments: studied, startedAt: T0, durationMs: 60 * M, consumedMs: first.nextConsumedMs
+  });
+  assert.equal(paused.boostMinutes, 0, '停止中の30分は一切消費しない');
+  assert.equal(paused.nextConsumedMs, first.nextConsumedMs);
+});
+
+test('APP-440 §3 T-2-8/T-2-11: 持ち時間を超えて再配分できない', () => {
+  // 削除・復元を繰り返しても consumedMs は単調増加のままで、合計は持ち時間を超えない
+  let consumed = 0;
+  let total = 0;
+  for (let i = 0; i < 5; i++) {
+    const r = C.applyTimedBoost({
+      segments: [seg(0, 100)], startedAt: T0, durationMs: 30 * M, consumedMs: consumed
+    });
+    total += r.boostMinutes;
+    consumed = r.nextConsumedMs;
+  }
+  assert.equal(total, 30, '何回保存しても合計30分を超えない');
+});
+
+test('APP-440 §3: 期限切れ・既消費でも負の値にならない(Math.max(0,…))', () => {
+  const r = C.applyTimedBoost({
+    segments: [seg(0, 90)], startedAt: T0, durationMs: 60 * M, consumedMs: 60 * M
+  });
+  assert.equal(r.availableMs, 0);
+  assert.equal(r.boostMinutes, 0);
+  assert.equal(r.nextConsumedMs, 60 * M);
+});
+
+test('APP-440 §3 T-2-12/T-2-15: segments が無ければ倍率は乗らない(手入力・移行中)', () => {
+  // 手入力の記録にも、移行中の旧セッションにも segments が無い。
+  // 根拠が無い時間にさかのぼって倍率を乗せない。
+  [undefined, null, [], 'x'].forEach((segments) => {
+    const r = C.applyTimedBoost({ segments, startedAt: T0, durationMs: 60 * M, consumedMs: 0 });
+    assert.equal(r.boostMinutes, 0, String(segments) + ' では0分');
+    assert.equal(r.nextConsumedMs, 0);
+  });
+});
+
+test('APP-440 §1: D ≤ C ≤ A+E。宣言していない時間はBP対象にならない', () => {
+  // 計画60分・延長なしで、実績90分が渡ってきた場合(あってはならないが防御する)
+  const over = C.resolveBpMinutes({ actualMin: 90, planMin: 60, extendedMin: 0 });
+  assert.equal(over.bpMin, 60, '宣言済み時間で頭打ち');
+  assert.ok(over.cappedByDeclared);
+
+  // 延長30分を明示した場合は90分まで対象
+  const ext = C.resolveBpMinutes({ actualMin: 90, planMin: 60, extendedMin: 30 });
+  assert.equal(ext.bpMin, 90);
+  assert.ok(!ext.cappedByDeclared);
+
+  // 途中でやめた場合は実績のまま(減る方向は素直に通す)
+  const early = C.resolveBpMinutes({ actualMin: 45, planMin: 60, extendedMin: 0 });
+  assert.equal(early.bpMin, 45);
+});
+
+test('APP-440 §1: 手入力は本人の明示的な意思表示なので実績をそのまま使う', () => {
+  const manual = C.resolveBpMinutes({ actualMin: 240, planMin: 0, extendedMin: 0, manualEntry: true });
+  assert.equal(manual.bpMin, 240);
+  assert.ok(!manual.cappedByDeclared);
+});
+
+test('APP-440 §5: 編集でBPは減ることはあっても増えることはない', () => {
+  // 30分で保存した記録を60分に編集しても、BP対象は30分のまま
+  const up = C.resolveBpMinutes({ actualMin: 60, planMin: 60, extendedMin: 0, previousBpMin: 30 });
+  assert.equal(up.bpMin, 30, '増やす編集はBPに反映されない');
+  assert.ok(up.cappedByPrevious);
+
+  // 減らす編集はそのまま反映される
+  const down = C.resolveBpMinutes({ actualMin: 20, planMin: 60, extendedMin: 0, previousBpMin: 30 });
+  assert.equal(down.bpMin, 20);
+  assert.ok(!down.cappedByPrevious);
+});
+
+test('APP-440 §6 T-5-6: 計画達成は15分ちょうどを含み、14分は対象外', () => {
+  // 単語10個・ミニテストのような短時間で完結する勉強を弾かないため「15分以上」
+  const at15 = C.resolveDailyActionBonuses([boostRec({ planMin: 15, actualMin: 15 })]);
+  assert.equal(at15.owners.planAchieved, 'r1', '15分ちょうどは対象');
+
+  const at14 = C.resolveDailyActionBonuses([boostRec({ planMin: 14, actualMin: 14 })]);
+  assert.equal(at14.owners.planAchieved, undefined, '14分は対象外');
+});
+
+test('APP-440 §6: 行動ボーナスは1日1回。小分け記録で水増しできない', () => {
+  // 30分の記録を5件作っても、計画達成は1回だけ
+  const list = [1, 2, 3, 4, 5].map((i) => boostRec({
+    id: 'r' + i, createdAt: 1000 + i, planMin: 30, actualMin: 30, reflection: 'わかった'
+  }));
+  const r = C.resolveDailyActionBonuses(list);
+  const totalAssigned = Object.keys(r.byRecordId).reduce((n, k) => n + r.byRecordId[k].length, 0);
+  assert.equal(totalAssigned, 2, '計画達成1つと振り返り1つだけ');
+  assert.equal(r.owners.planAchieved, 'r1', 'bpOrder の最初の対象記録に付く');
+  assert.equal(r.owners.reflection, 'r1');
+});
+
+test('APP-440 §6: 模試は得点と満点が両方あるときだけ、1日1回', () => {
+  const list = [
+    boostRec({ id: 'r1', createdAt: 1, actualMin: 90, planMin: 90, score: null, maxScore: 100 }),
+    boostRec({ id: 'r2', createdAt: 2, actualMin: 90, planMin: 90, score: 80, maxScore: 100 }),
+    boostRec({ id: 'r3', createdAt: 3, actualMin: 90, planMin: 90, score: 70, maxScore: 100 })
+  ];
+  const r = C.resolveDailyActionBonuses(list);
+  assert.equal(r.owners.mockExamTaken, 'r2', '得点が入っている最初の記録');
+  assert.ok((r.byRecordId['r3'] || []).indexOf('mockExamTaken') === -1, '2件目には付かない');
+});
+
+test('APP-440 §6: 削除済みの記録は行動ボーナスの対象にならない', () => {
+  const list = [
+    boostRec({ id: 'r1', createdAt: 1, deletedAt: 123 }),
+    boostRec({ id: 'r2', createdAt: 2 })
+  ];
+  const r = C.resolveDailyActionBonuses(list);
+  assert.equal(r.owners.planAchieved, 'r2');
+});
+
+test('APP-440 §6: 日単位のボーナスは未知のキーを黙って無視しない', () => {
+  assert.throws(() => C.resolveDailyActionBonuses([boostRec({})], { dayLevelActions: ['unknownKey'] }),
+    /未知の行動ボーナス/);
+});
+
+test('APP-440 §5 T-4-6: 同じ記録集合からは何度計算しても同じBPが出る', () => {
+  const list = [
+    boostRec({ id: 'r3', createdAt: 300, actualMin: 60, planMin: 60 }),
+    boostRec({ id: 'r1', createdAt: 100, actualMin: 30, planMin: 30, reflection: 'できた' }),
+    boostRec({ id: 'r2', createdAt: 200, actualMin: 45, planMin: 45 })
+  ];
+  const a = C.recalcDayBP(list);
+  const b = C.recalcDayBP(list.slice().reverse());
+  assert.deepEqual(a, b, '配列順を変えても結果は同じ');
+  assert.deepEqual(a.records.map((r) => r.id), ['r1', 'r2', 'r3'], 'bpOrder で並ぶ');
+  // 30+50(計画達成)+10(振り返り) + 45 + 60 = 195
+  assert.equal(a.totalBP, 195);
+});
+
+test('APP-440 §5 T-4-7: 同じ日へ寄せても日次上限1,500BPを超えない', () => {
+  // 800分の記録を3件。単純合計なら2,400BPだが上限で止まる。
+  const list = [1, 2, 3].map((i) => boostRec({
+    id: 'r' + i, createdAt: i, planMin: 700, actualMin: 700
+  }));
+  const r = C.recalcDayBP(list);
+  assert.equal(r.totalBP, C.DAILY_BP_CAP);
+  assert.ok(r.records[2].dailyCapped, '上限に当たったことが分かる');
+});
+
+test('APP-440 §5 T-4-8: 非受験科目は1日100BPまで', () => {
+  const list = [1, 2].map((i) => boostRec({
+    id: 'r' + i, createdAt: i, planMin: 90, actualMin: 90
+  }));
+  const r = C.recalcDayBP(list, { isExamSubjectFor: () => false });
+  assert.equal(r.nonExamBP, C.NON_EXAM_DAILY_BP_CAP);
+  assert.ok(r.records[0].nonExamCapped);
+});
+
+test('APP-440 §5: 再計算は宣言済み時間と初回BP対象時間の両方を守る', () => {
+  // 2つの防御は別々に効く。どちらが効いたかを取り違えないよう分けて確認する。
+  const byDeclared = C.recalcDayBP([
+    // 計画30分のまま実績を90分に編集した。宣言していない60分はBP対象にならない。
+    boostRec({ id: 'r1', createdAt: 1, planMin: 30, actualMin: 90 })
+  ]);
+  assert.equal(byDeclared.records[0].bpMin, 30, 'グラフは90分でもBPは30分ぶん');
+  assert.ok(byDeclared.records[0].cappedByDeclared, '宣言済み時間で止まる');
+  assert.ok(!byDeclared.records[0].cappedByPrevious, 'ここでは初回上限は効いていない');
+
+  // 延長を含めて90分まで宣言済みだが、初回は30分ぶんで確定していた場合
+  const byPrevious = C.recalcDayBP([
+    boostRec({ id: 'r1', createdAt: 1, planMin: 60, extendedMin: 30, actualMin: 90, bpMin: 30 })
+  ]);
+  assert.equal(byPrevious.records[0].bpMin, 30, '増やす編集はBPに反映されない');
+  assert.ok(byPrevious.records[0].cappedByPrevious, '初回BP対象時間で止まる');
+  assert.ok(!byPrevious.records[0].cappedByDeclared);
+});
+
+test('APP-440 §5: 倍率は記録ごとに差し替えられる(装備・アイテムは呼び出し側の責務)', () => {
+  const list = [boostRec({ id: 'r1', createdAt: 1, planMin: 10, actualMin: 10 })];
+  const r = C.recalcDayBP(list, { multiplierFor: () => 2.5 });
+  assert.equal(r.records[0].bp, 25);
+  assert.equal(r.records[0].multiplier, 2.5);
+});
+
+/* ==================================================================
+ * APP-440 段階2: sanitizeState の後方互換処理
+ * 設計書 §8「旧データの移行」/ 受入試験 T-6-4
+ * ================================================================== */
+
+function oldState(over) {
+  return Object.assign({ schemaVersion: 3 }, over);
+}
+
+test('APP-440 §8 T-6-4: 旧セッションに segments を新設しない(実績を失わせない)', () => {
+  // ここで segments: [] を書くと Array.isArray が新形式と判定し、
+  // 区間の合計0分が確認済み実績Cになる。旧セッションの学習時間が消える。
+  const s = C.sanitizeState(oldState({
+    activeSession: { recordId: 'r1', startTs: T0, pausedAccum: 10 * M }
+  }), '2026-08-11');
+  assert.ok(!('segments' in s.activeSession), 'フィールドごと未定義のまま');
+  assert.equal(s.activeSession.startTs, T0, '従来式に必要な値は保つ');
+  assert.equal(s.activeSession.pausedAccum, 10 * M);
+});
+
+test('APP-440 §8: 空配列・壊れた配列の segments はフィールドごと落とす', () => {
+  // 空配列を保持すると C=0 になる。壊れた配列も同じ。従来式へ倒す。
+  [[], [{ from: 'x' }], [{ to: 5 }], [null, 3, 'a'], [{ from: 200, to: 100 }]].forEach((segments) => {
+    const s = C.sanitizeState(oldState({
+      activeSession: { recordId: 'r1', startTs: T0, segments }
+    }), '2026-08-11');
+    assert.ok(!('segments' in s.activeSession), JSON.stringify(segments) + ' は落とす');
+  });
+});
+
+test('APP-440 §8: 妥当な segments はそのまま保つ(to: null は null のまま)', () => {
+  const s = C.sanitizeState(oldState({
+    activeSession: {
+      recordId: 'r1', startTs: T0,
+      segments: [{ from: T0, to: T0 + 10 * M }, { from: T0 + 20 * M, to: null }, { from: 'x', to: 1 }]
+    }
+  }), '2026-08-11');
+  assert.equal(s.activeSession.segments.length, 2, '壊れた区間だけ捨てる');
+  assert.equal(s.activeSession.segments[1].to, null, '進行中は null のまま。読み込みで時刻を作らない');
+});
+
+test('APP-440 §8: 旧記録の bpMin は actualMin と同じ(既存のBPを維持する)', () => {
+  const s = C.sanitizeState(oldState({
+    records: [{ id: 'r1', date: '2026-08-01', subjectId: 'eng', content: '英単語', planMin: 30, actualMin: 28 }]
+  }), '2026-08-11');
+  const r = s.records[0];
+  assert.equal(r.bpMin, 28, '新しい上限は今後の記録にだけ効く');
+  assert.equal(r.extendedMin, 0);
+  assert.equal(r.bpMultiplier, 1);
+  assert.deepEqual(r.bpActions, []);
+});
+
+test('APP-440 §8: 保存済みの bpMin / bpActions は上書きしない', () => {
+  const s = C.sanitizeState(oldState({
+    records: [{
+      id: 'r1', date: '2026-08-01', subjectId: 'eng', content: '英単語',
+      planMin: 60, actualMin: 90, extendedMin: 30, bpMin: 45, bpMultiplier: 2.5,
+      bpActions: ['planAchieved', 'unknownKey', 123]
+    }]
+  }), '2026-08-11');
+  const r = s.records[0];
+  assert.equal(r.bpMin, 45);
+  assert.equal(r.extendedMin, 30);
+  assert.equal(r.bpMultiplier, 2.5);
+  assert.deepEqual(r.bpActions, ['planAchieved'], '未知のキーと非文字列は捨てる');
+});
+
+test('APP-440 §5: createdAt を持たない旧記録はIDから作成日時を復元する', () => {
+  const ts = 1786400000000;
+  const id = 'r' + ts.toString(36) + '7';
+  assert.equal(C.createdAtFromId(id), ts);
+  // 復元できないIDは0(その日の最古)。例外にしない。
+  [null, undefined, 123, '', 'abc', 'r' + (1000).toString(36)].forEach((bad) => {
+    assert.equal(C.createdAtFromId(bad), 0, String(bad));
+  });
+  const s = C.sanitizeState(oldState({
+    records: [{ id, date: '2026-08-01', subjectId: 'eng', content: 'x', planMin: 10, actualMin: 10 }]
+  }), '2026-08-11');
+  assert.equal(s.records[0].createdAt, ts);
+});
+
+test('APP-440 §8: 発動中アイテムは有効区間だけ逆算し、消費量を仮定しない', () => {
+  const expiresAt = T0 + 20 * M;   // フィーバー(30分)を発動して10分経過した状態
+  const s = C.sanitizeState(oldState({
+    shop: { activeBoosts: [{ itemId: 'fever_time', expiresAt }] }
+  }), '2026-08-11');
+  const b = s.shop.activeBoosts[0];
+  assert.equal(b.durationMs, 30 * M);
+  assert.equal(b.startedAt, expiresAt - 30 * M, '有効区間の開始を expiresAt から逆算');
+  assert.equal(b.consumedMs, 0, '過去の消費は仮定しない');
+
+  // consumedMs=0 でも得にはならない。使えるのは移行後の区間と有効区間の重なりだけ。
+  const after = C.applyTimedBoost({
+    segments: [{ from: T0, to: T0 + 60 * M }],   // 移行後に60分勉強した
+    startedAt: b.startedAt, durationMs: b.durationMs, consumedMs: b.consumedMs
+  });
+  assert.equal(after.boostMinutes, 20, '有効区間の残り20分ぶんだけ');
+});
+
+test('APP-440 §8 T-2-14: 期限切れのアイテムは移行で復活しない', () => {
+  const expiresAt = T0 - 10 * M;   // 既に期限切れ
+  const s = C.sanitizeState(oldState({
+    shop: { activeBoosts: [{ itemId: 'energy_drink', expiresAt }] }
+  }), '2026-08-11');
+  const b = s.shop.activeBoosts[0];
+  const r = C.applyTimedBoost({
+    segments: [{ from: T0, to: T0 + 60 * M }],   // 期限後に勉強した
+    startedAt: b.startedAt, durationMs: b.durationMs, consumedMs: b.consumedMs
+  });
+  assert.equal(r.boostMinutes, 0, '使える分数は0。移行で復活しない');
+});
+
+test('APP-440 §8: 時間で効かないアイテムには有効区間を作らない', () => {
+  const s = C.sanitizeState(oldState({
+    shop: {
+      activeBoosts: [
+        { itemId: 'spotlight', expiresAt: T0 },      // その日1日
+        { itemId: 'recovery', expiresAt: T0 }        // 連続記録の保険
+      ]
+    }
+  }), '2026-08-11');
+  s.shop.activeBoosts.forEach((b) => {
+    assert.ok(!('durationMs' in b), b.itemId + ' に持ち時間は無い');
+    assert.ok(!('startedAt' in b), b.itemId + ' に有効区間は無い');
+  });
+  assert.equal(C.consumableDurationMs('spotlight'), 0);
+  assert.equal(C.consumableDurationMs('unknown_item'), 0);
+});
+
+test('APP-440 §8: 保存済みの startedAt / consumedMs は逆算で上書きしない', () => {
+  const s = C.sanitizeState(oldState({
+    shop: {
+      activeBoosts: [{
+        itemId: 'energy_drink', expiresAt: T0 + 60 * M,
+        startedAt: T0, durationMs: 60 * M, consumedMs: 25 * M
+      }]
+    }
+  }), '2026-08-11');
+  const b = s.shop.activeBoosts[0];
+  assert.equal(b.startedAt, T0);
+  assert.equal(b.consumedMs, 25 * M, '消費済みの時間を巻き戻さない');
+});
+
+test('APP-440 §8: 壊れたデータを読み込んでもBP残高と確定済み記録が変わらない', () => {
+  const base = {
+    records: [{
+      id: 'r1', date: '2026-08-01', subjectId: 'eng', content: '英単語',
+      planMin: 30, actualMin: 28, bp: 120
+    }],
+    shop: { bpBalance: 5000, activeBoosts: [] }
+  };
+  const clean = C.sanitizeState(oldState(base), '2026-08-11');
+  const broken = C.sanitizeState(oldState(Object.assign({}, base, {
+    activeSession: { recordId: 'r1', startTs: T0, segments: [{ from: 'x', to: {} }, null] },
+    shop: { bpBalance: 5000, activeBoosts: [{ itemId: 'energy_drink', expiresAt: 'x' }] }
+  })), '2026-08-11');
+  assert.equal(broken.records[0].bp, clean.records[0].bp, '確定済みのBPは動かない');
+  assert.equal(broken.shop.bpBalance, clean.shop.bpBalance, '残高も動かない');
+  assert.equal(broken.shop.activeBoosts.length, 0, '壊れたアイテムは捨てる');
+  assert.ok(!('segments' in broken.activeSession), '壊れた区間で新形式にしない');
+});
+
+/* ==================================================================
+ * APP-440 段階3: タイマーの自動停止と延長
+ * 設計書 §2 / 受入試験 T-1-1〜15
+ * ================================================================== */
+
+test('APP-440 §2 T-1-1: 宣言済み時間ちょうどで完了する', () => {
+  const p = C.sessionProgress({ startTs: T0, pausedAccum: 0, pausedAt: null }, 60, T0 + 60 * M);
+  assert.ok(p.completed);
+  assert.equal(p.minutes, 60);
+  assert.equal(p.discardedMs, 0);
+  assert.equal(p.completedAt, T0 + 60 * M);
+});
+
+test('APP-440 §2 T-1-2/T-1-3/T-1-4: 放置しても宣言済み時間しか入らない', () => {
+  // 完了画面で何も操作しないまま30分放置(T-1-2)
+  const idle = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 + 90 * M);
+  assert.equal(idle.minutes, 60, '90分にはならない');
+  assert.equal(idle.discardedMs, 30 * M, '超過分は捨てる');
+
+  // アプリを閉じたまま8時間放置して開く(T-1-3)
+  const away = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 + 480 * M);
+  assert.equal(away.minutes, 60, '480分は記録されない');
+  assert.equal(away.completedAt, T0 + 60 * M, '11:00に完了していたと分かる');
+
+  // 日をまたいで放置して開く(T-1-4)
+  const nextDay = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 + 23 * 60 * M);
+  assert.equal(nextDay.minutes, 60, '日またぎでも宣言済み時間しか入らない');
+});
+
+test('APP-440 §2 T-1-5/T-1-6: 延長すると終了予定が伸び、何度でも延長できる', () => {
+  // 計画60分 + 延長30分 = 90分
+  const ext1 = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, C.declaredMinutes(60, 30), T0 + 90 * M);
+  assert.ok(ext1.completed);
+  assert.equal(ext1.minutes, 90);
+
+  // さらに15分延長 = 105分。延長前の90分時点では未完了にならない
+  const declared = C.declaredMinutes(60, 45);
+  assert.equal(declared, 105);
+  assert.ok(!C.sessionProgress({ startTs: T0, pausedAccum: 0 }, declared, T0 + 90 * M).completed);
+  assert.ok(C.sessionProgress({ startTs: T0, pausedAccum: 0 }, declared, T0 + 105 * M).completed);
+});
+
+test('APP-440 §2 T-1-7/T-1-8: 延長は5分刻み・1回60分まで', () => {
+  assert.equal(C.roundExtensionMin(65), 60, '65分は60分までしか選べない');
+  assert.equal(C.roundExtensionMin(7), 5, '7分は5分に丸める');
+  assert.equal(C.roundExtensionMin(14), 10);
+  assert.equal(C.roundExtensionMin(60), 60);
+  assert.equal(C.roundExtensionMin(5), 5);
+  [0, -5, 3, NaN, Infinity, null, undefined, 'x'].forEach((v) => {
+    assert.equal(C.roundExtensionMin(v), 0, String(v) + ' は延長にならない');
+  });
+});
+
+test('APP-440 §2 T-1-13: テスト・模試は延長できない', () => {
+  assert.ok(!C.canExtendKind(C.TEST_KIND), 'テストは延長不可');
+  ['単語・熟語', '問題演習', '現代文読解', 'その他'].forEach((k) => {
+    assert.ok(C.canExtendKind(k), k + ' は延長できる');
+  });
+});
+
+test('APP-440 §2 T-1-9: 計画より前にやめた場合はその時点まで', () => {
+  const p = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 + 45 * M);
+  assert.ok(!p.completed);
+  assert.equal(p.minutes, 45, '減る方向は素直に通す');
+  assert.equal(p.discardedMs, 0);
+});
+
+test('APP-440 §2 T-1-10: 一時停止中はカウントが進まない', () => {
+  // 10:00開始、10:45に一時停止。11:45に開いても45分のまま。
+  const s = { startTs: T0, pausedAccum: 0, pausedAt: T0 + 45 * M };
+  assert.equal(C.sessionProgress(s, 60, T0 + 45 * M).minutes, 45);
+  assert.equal(C.sessionProgress(s, 60, T0 + 105 * M).minutes, 45, '1時間放置しても増えない');
+  assert.ok(!C.sessionProgress(s, 60, T0 + 105 * M).completed, '停止中に完了しない');
+  assert.ok(C.sessionProgress(s, 60, T0 + 105 * M).paused);
+});
+
+test('APP-440 §2: 休憩を挟んでも宣言済み時間ぶん勉強できる(壁時計で数えない)', () => {
+  // 10:00開始・計画60分。10:20-10:50を一時停止(30分)。
+  // 壁時計基準なら11:00で完了だが、実際に勉強したのは30分しかない。
+  const s = { startTs: T0, pausedAccum: 30 * M, pausedAt: null };
+  const at11 = C.sessionProgress(s, 60, T0 + 60 * M);
+  assert.equal(at11.minutes, 30, '休憩ぶんは勉強時間に数えない');
+  assert.ok(!at11.completed, '11:00ではまだ完了しない');
+
+  // 11:30(=勉強60分)で完了する
+  const at1130 = C.sessionProgress(s, 60, T0 + 90 * M);
+  assert.ok(at1130.completed);
+  assert.equal(at1130.minutes, 60);
+  assert.equal(at1130.completedAt, T0 + 90 * M, '休憩ぶん後ろへずれた時刻で完了');
+});
+
+test('APP-440 §2: 宣言済み時間が無いセッションは自動停止できない', () => {
+  // 計画0分では終わりを決められない。開始そのものを止めるのは呼び出し側の責務。
+  const p = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 0, T0 + 60 * M);
+  assert.ok(!p.completed);
+  assert.equal(p.declaredMs, 0);
+  assert.equal(C.declaredMinutes(0, 0), 0);
+  assert.equal(C.declaredMinutes(null, undefined), 0);
+  assert.equal(C.declaredMinutes(-10, -5), 0, '負の値は0として扱う');
+});
+
+test('APP-440 §2: 時刻が巻き戻っても負の経過にならない', () => {
+  const p = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 - 10 * M);
+  assert.equal(p.elapsedMs, 0);
+  assert.equal(p.minutes, 0);
+});
+
+test('APP-440 §2: 端数の分は切り捨てる(水増ししない)', () => {
+  const p = C.sessionProgress({ startTs: T0, pausedAccum: 0 }, 60, T0 + 45 * M + 59000);
+  assert.equal(p.minutes, 45, '45分59秒は45分');
+});
+
+test('APP-440 §2: 明示的に延長した分は達成率の分母に入る', () => {
+  // 計画30分を+10分延長して40分やり切った。宣言済みは40分なので達成率100%。
+  // 延長を含めないと133%になり、長く勉強したのに計画達成ボーナスを失う。
+  assert.ok(C.isPlanAchieved(30, 40, 10), '延長込みなら達成');
+  assert.ok(!C.isPlanAchieved(30, 40, 0), '延長していなければ超過扱い');
+  assert.ok(C.isPlanAchieved(30, 30, 0), '計画どおりは達成');
+  assert.ok(!C.isPlanAchieved(0, 30, 0), '計画が無ければ達成にしない');
+});
+
+test('APP-440 §3: rec.bpBoost は読み込みで失われない(消えるとBPが減る)', () => {
+  const s = C.sanitizeState({
+    schemaVersion: 3,
+    records: [{
+      id: 'r1', date: '2026-08-01', subjectId: 'eng', content: 'x', planMin: 30, actualMin: 40,
+      bpBoost: { timed: [{ itemId: 'energy_drink', minutes: 30 }], dayItemIds: ['spotlight'] }
+    }]
+  }, '2026-08-11');
+  const b = s.records[0].bpBoost;
+  assert.deepEqual(b.timed, [{ itemId: 'energy_drink', minutes: 30 }]);
+  assert.deepEqual(b.dayItemIds, ['spotlight']);
+  assert.equal(C.dayBonusFromBoost(b), 0.5, '倍率は定義から引く');
+
+  // 持っていない記録は null
+  assert.equal(C.sanitizeState({
+    schemaVersion: 3,
+    records: [{ id: 'r2', date: '2026-08-01', subjectId: 'eng', content: 'x', planMin: 30, actualMin: 30 }]
+  }, '2026-08-11').records[0].bpBoost, null);
+});
+
+test('APP-440 §3: 壊れた bpBoost からはBPを増やせない', () => {
+  // 倍率そのものを保存していないので、仕様に無い倍率は原理的に作れない。
+  const broken = C.sanitizeBpBoost({
+    fever: 999, dayBonus: 99,
+    timed: [
+      { itemId: 'energy_drink', minutes: 999 },   // 持ち時間(60分)超え → 捨てる
+      { itemId: 'fever_time', minutes: 999 },     // 持ち時間(30分)超え → 捨てる
+      { itemId: 'unknown_item', minutes: 30 },    // 仕様に無い → 捨てる
+      { itemId: 'recovery', minutes: 30 },        // 時間で効かない → 捨てる
+      { itemId: 'spotlight', minutes: 30 },       // その日いっぱい。timedではない → 捨てる
+      { minutes: 30, bonus: 99 },                 // itemId が無い → 捨てる
+      { itemId: 'energy_drink', minutes: -5 },    // 負 → 捨てる
+      { itemId: 'energy_drink', minutes: 60 }     // 正当 → 残す
+    ],
+    dayItemIds: ['spotlight', 'spotlight', 'unknown', 'energy_drink', 'recovery']
+  });
+  assert.deepEqual(broken.timed, [{ itemId: 'energy_drink', minutes: 60 }], '正当な分だけ残る');
+  assert.deepEqual(broken.dayItemIds, ['spotlight', 'spotlight'], '未知のIDだけ捨て、個数は保つ');
+  assert.equal(broken.fever, undefined, '倍率を持ち込む項目は残さない');
+  assert.equal(broken.dayBonus, undefined);
+  assert.equal(C.dayBonusFromBoost(broken), 1.0, '残った2個ぶん。定義どおりの倍率にしかならない');
+
+  // 複数アイテムをまとめた正当な時間は失わない
+  const many = C.sanitizeBpBoost({
+    timed: [
+      { itemId: 'energy_drink', minutes: 30 },
+      { itemId: 'energy_drink', minutes: 20 },
+      { itemId: 'fever_time', minutes: 30 }
+    ]
+  });
+  assert.equal(many.timed.length, 3, '同じアイテムの複数回ぶんも残す');
+
+  [null, undefined, 'x', 5, [], { timed: 'x' }].forEach((v) => {
+    const out = C.sanitizeBpBoost(v);
+    assert.ok(out === null || (out.timed.length === 0 && out.dayItemIds.length === 0), String(v));
+  });
+});
+
+test('APP-440 §3: スポットライトを2個使うと合計+1.0倍のまま保たれる', () => {
+  // 同日に複数使える仕様。1消費1要素にしないと、保存・再計算で2個目が消えて損をする。
+  const two = C.sanitizeBpBoost({ dayItemIds: ['spotlight', 'spotlight'] });
+  assert.deepEqual(two.dayItemIds, ['spotlight', 'spotlight']);
+  assert.equal(C.dayBonusFromBoost(two), 1.0, '+0.5 が2つで +1.0');
+
+  // 保存して読み直しても減らない
+  const s = C.sanitizeState({
+    schemaVersion: 3,
+    records: [{
+      id: 'r1', date: '2026-08-01', subjectId: 'eng', content: 'x', planMin: 30, actualMin: 30,
+      bpBoost: { timed: [], dayItemIds: ['spotlight', 'spotlight'] }
+    }]
+  }, '2026-08-11');
+  assert.equal(C.dayBonusFromBoost(s.records[0].bpBoost), 1.0, '再読み込みでも +1.0');
+
+  // 3個使えば +1.5。ただし最終倍率は composeMultiplier の3.0倍で頭打ち
+  const three = C.sanitizeBpBoost({ dayItemIds: ['spotlight', 'spotlight', 'spotlight'] });
+  assert.equal(C.dayBonusFromBoost(three), 1.5);
+  assert.equal(C.composeMultiplier({ consumableBonus: C.dayBonusFromBoost(three) }).multiplier, 2.5);
+
+  // day 以外のIDは個数に関係なく捨てる
+  assert.deepEqual(
+    C.sanitizeBpBoost({ dayItemIds: ['energy_drink', 'energy_drink', 'recovery', 'unknown'] }).dayItemIds,
+    []);
+});
+
+/* ==================================================================
+ * APP-440 段階5: ニュースの削除・復元(経路3)
+ * 設計書 §4 / 受入試験 T-3
+ * 不変条件: どの時点でも、同じ日のBP付きニュースは最大3本
+ * ================================================================== */
+
+function news(over) {
+  return Object.assign({ id: 'n1', date: '2026-08-11', genreId: 'economy', headline: 'x', bp: 40 }, over);
+}
+
+test('APP-440 §4: 上限は総本数ではなくBP付きの本数で数える', () => {
+  const list = [
+    news({ id: 'n1', bp: 40 }), news({ id: 'n2', bp: 40 }),
+    news({ id: 'n3', bp: 0 }),                    // ポイントの付かない記録は枠を埋めない
+    news({ id: 'n4', bp: 40, date: '2026-08-10' }) // 別の日
+  ];
+  assert.equal(C.bpNewsCountForDate(list, '2026-08-11'), 2);
+  assert.ok(C.canGrantNewsBp(list, '2026-08-11'), 'あと1本ぶんの枠がある');
+});
+
+test('APP-440 §4 T-3-1: 削除でBPが消え、枠が空いて4本目にBPが付く', () => {
+  let list = [news({ id: 'n1' }), news({ id: 'n2' }), news({ id: 'n3' })];
+  assert.ok(!C.canGrantNewsBp(list, '2026-08-11'), '3本埋まっていれば付かない');
+
+  list = list.filter((n) => n.id !== 'n2');   // 1本削除
+  assert.ok(C.canGrantNewsBp(list, '2026-08-11'), '削除で枠が空く');
+  list.push(news({ id: 'n4' }));
+  assert.equal(C.bpNewsCountForDate(list, '2026-08-11'), 3, 'BP付きは3本のまま');
+});
+
+test('APP-440 §4 T-3-2: 枠が埋まっていれば復元してもBPは戻らない', () => {
+  // 3本 → 1本削除 → 4本目を追加(枠が埋まる) → 削除した1本を元に戻す
+  const list = [news({ id: 'n1' }), news({ id: 'n3' }), news({ id: 'n4' })];
+  assert.ok(!C.canGrantNewsBp(list, '2026-08-11'), '枠は埋まっている');
+  // 実装は bp: 0 で復活させる
+  list.push(news({ id: 'n2', bp: 0 }));
+  assert.equal(C.bpNewsCountForDate(list, '2026-08-11'), 3, 'BP付きは3本を超えない');
+});
+
+test('APP-440 §4 T-3-3: 枠が空いていればBPごと復活する', () => {
+  const list = [news({ id: 'n1' }), news({ id: 'n3' })];   // 1本削除したまま
+  assert.ok(C.canGrantNewsBp(list, '2026-08-11'), '枠が空いている');
+  list.push(news({ id: 'n2', bp: 40 }));
+  assert.equal(C.bpNewsCountForDate(list, '2026-08-11'), 3);
+});
+
+test('APP-440 §4 T-3-4: 日が変われば枠は戻る', () => {
+  const list = [news({ id: 'n1' }), news({ id: 'n2' }), news({ id: 'n3' })];
+  assert.ok(!C.canGrantNewsBp(list, '2026-08-11'));
+  assert.ok(C.canGrantNewsBp(list, '2026-08-12'), '新しい日は3本ぶん付く');
+});
+
+test('APP-440 §4 T-3-5: 削除→追加→復元を繰り返してもBP付きは3本を超えない', () => {
+  let list = [news({ id: 'n1' }), news({ id: 'n2' }), news({ id: 'n3' })];
+  for (let i = 0; i < 5; i++) {
+    const removed = list[0];
+    list = list.slice(1);                                    // 削除
+    const added = news({ id: 'add' + i, bp: C.canGrantNewsBp(list, '2026-08-11') ? 40 : 0 });
+    list.push(added);                                        // 追加
+    const restored = news({ id: removed.id, bp: C.canGrantNewsBp(list, '2026-08-11') ? removed.bp : 0 });
+    list.push(restored);                                     // 元に戻す
+    assert.ok(C.bpNewsCountForDate(list, '2026-08-11') <= C.NEWS_DAILY_LIMIT,
+      i + '回目: BP付きが3本を超えない');
+  }
+});
+
+test('APP-440 §4 T-3-6: 旧データは移行処理なしで正しく動く', () => {
+  // 台帳(dailyNewsBp)を作らない方針なので、旧データにも新フィールドは要らない
+  const s = C.sanitizeState({
+    schemaVersion: 3,
+    news: [
+      { id: 'n1', date: '2026-08-11', genreId: 'economy', headline: '円安', bp: 40, createdAt: 1 },
+      { id: 'n2', date: '2026-08-11', genreId: 'politics', headline: '法案', bp: 40, createdAt: 2 }
+    ]
+  }, '2026-08-11');
+  assert.equal(s.news.length, 2);
+  assert.equal(C.bpNewsCountForDate(s.news, '2026-08-11'), 2, 'BP残高が変わらない');
+  assert.ok(C.canGrantNewsBp(s.news, '2026-08-11'), '3本目にはBPが付く');
+});
+
+test('APP-440 §4 T-3-7: BPを使い切っていても残高は0で止まり、購入済みは失われない', () => {
+  const state = {
+    records: [], news: [news({ id: 'n1', bp: 40 })],
+    shop: { owned: { costume: ['socks'], skill: [], stage: [], consumable: {} } }
+  };
+  const before = C.calcBpBalance(state);
+  // BP付きニュースを削除する
+  state.news = [];
+  const after = C.calcBpBalance(state);
+  assert.ok(after >= 0, '残高が負にならない');
+  assert.ok(after <= before, '削除で増えない');
+  assert.deepEqual(state.shop.owned.costume, ['socks'], '購入済みアイテムは失われない');
+});
+
+test('APP-440 §5: 既存記録にも初回BP上限が入る(旧記録を編集して稼げない)', () => {
+  // 更新前からある記録は bpMinInitial を持たない。ここを null のままにすると、
+  // 実績を600分へ書き換えるだけでBPを取れてしまう。
+  const s = C.sanitizeState({
+    schemaVersion: 3,
+    records: [
+      // 旧タイマー記録(計画30分・実績30分)
+      { id: 'r1', date: '2026-08-01', subjectId: 'eng', content: 'timer', planMin: 30, actualMin: 30, bp: 80 },
+      // 旧手入力記録(bpMin を持っている)
+      { id: 'r2', date: '2026-08-01', subjectId: 'eng', content: 'manual', planMin: 0, actualMin: 45, bpMin: 45, bp: 45 }
+    ]
+  }, '2026-08-11');
+
+  assert.equal(s.records[0].bpMinInitial, 30, '旧タイマー記録は確定済みの30分が上限');
+  assert.equal(s.records[1].bpMinInitial, 45, '旧手入力記録は確定済みの45分が上限');
+
+  // 読み込むだけではBP残高が変わらない
+  assert.equal(s.records[0].bp, 80);
+  assert.equal(s.records[1].bp, 45);
+  assert.equal(C.calcBpBalance(s), 125, '読み込みで残高が動かない');
+});
+
+test('APP-440 §5: 旧記録を600分へ編集してもBP対象は増えない', () => {
+  const s = C.sanitizeState({
+    schemaVersion: 3,
+    records: [
+      { id: 'r1', date: '2026-08-01', subjectId: 'eng', content: 'timer', planMin: 30, actualMin: 30, bp: 80 },
+      { id: 'r2', date: '2026-08-01', subjectId: 'eng', content: 'manual', planMin: 0, actualMin: 45, bpMin: 45, bp: 45 }
+    ]
+  }, '2026-08-11');
+
+  // 旧タイマー記録: timerUsed が false でも、初回BP上限で止まる
+  const timerEdited = C.resolveBpMinutes({
+    actualMin: 600, planMin: 30, extendedMin: 0,
+    manualEntry: !s.records[0].timerUsed,          // 旧記録なので false → 手入力扱い
+    previousBpMin: s.records[0].bpMinInitial
+  });
+  assert.equal(timerEdited.bpMin, 30, '旧タイマー記録は30分以下');
+  assert.ok(timerEdited.cappedByPrevious);
+
+  // 旧手入力記録も同じ
+  const manualEdited = C.resolveBpMinutes({
+    actualMin: 600, planMin: 0, extendedMin: 0,
+    manualEntry: true, previousBpMin: s.records[1].bpMinInitial
+  });
+  assert.equal(manualEdited.bpMin, 45, '旧手入力記録は45分以下');
+});
