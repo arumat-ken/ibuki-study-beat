@@ -754,6 +754,269 @@
     };
   }
 
+  /* ==================================================================
+   * APP-440: 時間の分離とBPの決定的な再計算
+   *
+   * 設計書 docs/design/APP-440_DESIGN.md の §1・§3・§5・§6 に対応する。
+   * ここに置くのは純粋関数だけで、state も DOM も時計も触らない。
+   * 「いま」が必要な計算は必ず引数で受け取る。
+   * ================================================================== */
+
+  var MS_PER_MINUTE = 60000;
+
+  /* §6: 計画達成ボーナスの最低実績。「15分以上」で15分ちょうどを含む(親の確定)。
+   * 単語10個・漢字20個・ミニテストのような、短時間で完結する勉強を弾かないため。 */
+  var PLAN_ACHIEVED_MIN_ACTUAL_MIN = 15;
+
+  /* §6: 1日1回だけ付く行動ボーナス。小分け記録で水増しできないようにする。 */
+  var DAILY_ONCE_ACTIONS = ['planAchieved', 'reflection', 'mockExamTaken', 'allExamSubjects',
+    'streak3', 'streak7', 'streak30'];
+
+  /**
+   * §5: BP再計算の並べ替え。
+   * 上限は「先に来た記録から順に配る」ため、順序が変わると同じデータでもBPが変わる。
+   * 配列順・updatedAt・画面の表示順に依存させてはならない。
+   */
+  function bpOrder(a, b) {
+    var ac = (a && typeof a.createdAt === 'number') ? a.createdAt : 0;
+    var bc = (b && typeof b.createdAt === 'number') ? b.createdAt : 0;
+    if (ac !== bc) return ac < bc ? -1 : 1;
+    var ai = (a && typeof a.id === 'string') ? a.id : '';
+    var bi = (b && typeof b.id === 'string') ? b.id : '';
+    return ai < bi ? -1 : (ai > bi ? 1 : 0);
+  }
+
+  /**
+   * §3: 学習区間を [from, to] の組に正規化する。
+   * to が null の区間は「いま進行中」を表すので nowTs で閉じる。
+   * 壊れた区間(数値でない・逆転している)は捨てる。推測して補わない。
+   */
+  function normalizeSegments(segments, nowTs) {
+    if (!Array.isArray(segments)) return [];
+    var now = (typeof nowTs === 'number' && isFinite(nowTs)) ? nowTs : 0;
+    var out = [];
+    segments.forEach(function (s) {
+      if (!s || typeof s !== 'object') return;
+      if (typeof s.from !== 'number' || !isFinite(s.from)) return;
+      var to = (typeof s.to === 'number' && isFinite(s.to)) ? s.to : now;
+      if (to <= s.from) return;
+      out.push({ from: s.from, to: to });
+    });
+    return out;
+  }
+
+  /**
+   * §3: 学習区間とアイテムの有効区間が実際に重なったミリ秒。
+   * 区間が重複していても二重に数えないよう、先に和集合をとる。
+   */
+  function segmentsOverlapMs(segments, fromTs, toTs, nowTs) {
+    if (typeof fromTs !== 'number' || typeof toTs !== 'number') return 0;
+    if (toTs <= fromTs) return 0;
+    var clipped = [];
+    normalizeSegments(segments, nowTs).forEach(function (s) {
+      var a = Math.max(s.from, fromTs);
+      var b = Math.min(s.to, toTs);
+      if (b > a) clipped.push({ from: a, to: b });
+    });
+    clipped.sort(function (x, y) { return x.from - y.from; });
+    var total = 0;
+    var curFrom = null;
+    var curTo = null;
+    clipped.forEach(function (s) {
+      if (curTo === null) { curFrom = s.from; curTo = s.to; return; }
+      if (s.from <= curTo) { if (s.to > curTo) curTo = s.to; return; }
+      total += curTo - curFrom;
+      curFrom = s.from;
+      curTo = s.to;
+    });
+    if (curTo !== null) total += curTo - curFrom;
+    return total;
+  }
+
+  /**
+   * §3: 時間制アイテムの倍率が乗る分数を決める。
+   *
+   *   availableMs = max(0, min(持ち時間の残り, まだ使っていない実学習の重なり))
+   *   appliedMs   = availableMs から分未満を切り捨てた値
+   *   consumedMs += appliedMs        ← availableMs ではない
+   *
+   * consumedMs に足すのを appliedMs にするのが要点。
+   * availableMs を足すと59秒を消費して端数を失い、
+   * 何も足さないと次回に同じ59秒を重ねて使えてしまう。
+   *
+   * 壁時計の経過ではなく実学習区間を基準にするため、
+   * 一時停止して放置してもアイテムは減らない。
+   */
+  function applyTimedBoost(opts) {
+    var o = opts || {};
+    var durationMs = (typeof o.durationMs === 'number' && isFinite(o.durationMs)) ? o.durationMs : 0;
+    var consumedMs = (typeof o.consumedMs === 'number' && isFinite(o.consumedMs)) ? o.consumedMs : 0;
+    assertNotNegative(durationMs, 'アイテムの持ち時間');
+    assertNotNegative(consumedMs, 'アイテムの消費済み時間');
+    var startedAt = (typeof o.startedAt === 'number' && isFinite(o.startedAt)) ? o.startedAt : null;
+    if (startedAt === null) {
+      return { overlapMs: 0, availableMs: 0, appliedMs: 0, boostMinutes: 0, nextConsumedMs: consumedMs };
+    }
+    var overlapMs = segmentsOverlapMs(o.segments, startedAt, startedAt + durationMs, o.now);
+    var availableMs = Math.max(0, Math.min(durationMs - consumedMs, overlapMs - consumedMs));
+    var appliedMs = availableMs - (availableMs % MS_PER_MINUTE);
+    return {
+      overlapMs: overlapMs,
+      availableMs: availableMs,
+      appliedMs: appliedMs,
+      boostMinutes: appliedMs / MS_PER_MINUTE,
+      nextConsumedMs: consumedMs + appliedMs
+    };
+  }
+
+  /**
+   * §1: BP対象時間 D を決める。
+   *
+   *   C ≤ A + E   宣言していない時間は実績にも入らない
+   *   D ≤ C       BP対象は確認済み実績を超えない
+   *   D ≤ 初回保存時の D   編集でBPが増えることはない(§5)
+   *
+   * 「宣言済み時間」は計画A＋延長Eで、本人が先に意思表示した時間である。
+   */
+  function resolveBpMinutes(opts) {
+    var o = opts || {};
+    var actualMin = (typeof o.actualMin === 'number' && isFinite(o.actualMin)) ? o.actualMin : 0;
+    assertNotNegative(actualMin, '実績時間');
+    var planMin = (typeof o.planMin === 'number' && isFinite(o.planMin)) ? o.planMin : 0;
+    var extendedMin = (typeof o.extendedMin === 'number' && isFinite(o.extendedMin)) ? o.extendedMin : 0;
+    assertNotNegative(planMin, '計画時間');
+    assertNotNegative(extendedMin, '延長時間');
+
+    var declaredMin = planMin + extendedMin;
+    /* 手入力の記録は宣言済み時間を持たない。本人の明示的な意思表示なので実績をそのまま使う。 */
+    var byDeclared = o.manualEntry ? actualMin : Math.min(actualMin, declaredMin);
+    var cappedByDeclared = byDeclared < actualMin;
+
+    var bpMin = byDeclared;
+    var cappedByPrevious = false;
+    if (typeof o.previousBpMin === 'number' && isFinite(o.previousBpMin) && o.previousBpMin >= 0) {
+      if (bpMin > o.previousBpMin) {
+        bpMin = o.previousBpMin;
+        cappedByPrevious = true;
+      }
+    }
+    return {
+      bpMin: bpMin,
+      actualMin: actualMin,
+      declaredMin: declaredMin,
+      manualEntry: !!o.manualEntry,
+      cappedByDeclared: cappedByDeclared,
+      cappedByPrevious: cappedByPrevious
+    };
+  }
+
+  /**
+   * §6: その日の行動ボーナスを1日1回だけに束ねる。
+   *
+   * 1分の記録を10件作って +600BP という水増しを塞ぐ。
+   * どの記録に付けるかは bpOrder で決まる最初の対象記録に固定し、
+   * 何度計算しても同じ結果になるようにする。
+   */
+  function resolveDailyActionBonuses(records, opts) {
+    var o = opts || {};
+    var list = (Array.isArray(records) ? records : []).filter(function (r) {
+      return r && !r.deletedAt;
+    }).slice().sort(bpOrder);
+
+    var assigned = {};   // recordId -> [actionKey]
+    var owners = {};     // actionKey -> recordId
+    function assign(key, rec) {
+      if (!rec || owners[key]) return;
+      owners[key] = rec.id;
+      if (!assigned[rec.id]) assigned[rec.id] = [];
+      assigned[rec.id].push(key);
+    }
+
+    list.forEach(function (rec) {
+      var actualMin = (typeof rec.actualMin === 'number') ? rec.actualMin : 0;
+      /* 計画達成: 1日1回。かつ実績15分以上(15分ちょうどを含む)。 */
+      if (actualMin >= PLAN_ACHIEVED_MIN_ACTUAL_MIN && isPlanAchieved(rec.planMin, actualMin)) {
+        assign('planAchieved', rec);
+      }
+      /* 振り返り: 1日1回。その日いずれかの記録に書かれていればよい。 */
+      if (typeof rec.reflection === 'string' && rec.reflection.trim() !== '') {
+        assign('reflection', rec);
+      }
+      /* 模試・テスト: 1日1回。得点と満点が両方入っている記録が対象。 */
+      if (typeof rec.score === 'number' && typeof rec.maxScore === 'number' && rec.maxScore > 0) {
+        assign('mockExamTaken', rec);
+      }
+    });
+
+    /* 日単位で決まるボーナス(全受験科目・連続日数)は、その日の最初の記録に寄せる。 */
+    var dayLevel = Array.isArray(o.dayLevelActions) ? o.dayLevelActions : [];
+    if (dayLevel.length && list.length) {
+      dayLevel.forEach(function (key) {
+        if (!Object.prototype.hasOwnProperty.call(ACTION_BONUS_BP, key)) {
+          throw new RangeError('未知の行動ボーナスです: ' + key);
+        }
+        assign(key, list[0]);
+      });
+    }
+
+    return { byRecordId: assigned, owners: owners };
+  }
+
+  /**
+   * §5: その日のBPを決定的に再計算する。
+   *
+   * 同じ記録集合からは、何度計算しても同じBPが出ることを不変条件とする。
+   * 編集で日付・科目・実績が変わったら、移動前と移動後の両方の日でこれを呼ぶ。
+   */
+  function recalcDayBP(records, opts) {
+    var o = opts || {};
+    var multiplierFor = typeof o.multiplierFor === 'function' ? o.multiplierFor : function () { return 1; };
+    var isExamSubjectFor = typeof o.isExamSubjectFor === 'function' ? o.isExamSubjectFor : function () { return true; };
+
+    var list = (Array.isArray(records) ? records : []).filter(function (r) {
+      return r && !r.deletedAt;
+    }).slice().sort(bpOrder);
+
+    var bonuses = resolveDailyActionBonuses(list, { dayLevelActions: o.dayLevelActions });
+
+    var todayTotalBP = 0;
+    var todayNonExamBP = 0;
+    var results = [];
+    list.forEach(function (rec) {
+      var resolved = resolveBpMinutes({
+        actualMin: rec.actualMin,
+        planMin: rec.planMin,
+        extendedMin: rec.extendedMin,
+        manualEntry: rec.manualEntry,
+        previousBpMin: rec.bpMin
+      });
+      var actions = bonuses.byRecordId[rec.id] || [];
+      var calc = calcStudyBP({
+        minutes: resolved.bpMin,
+        multiplier: multiplierFor(rec),
+        actions: actions,
+        isExamSubject: isExamSubjectFor(rec),
+        todayTotalBP: todayTotalBP,
+        todayNonExamBP: todayNonExamBP
+      });
+      todayTotalBP = calc.todayTotalAfter;
+      todayNonExamBP = calc.todayNonExamAfter;
+      results.push({
+        id: rec.id,
+        bpMin: resolved.bpMin,
+        bp: calc.grantedBP,
+        actions: actions,
+        multiplier: calc.multiplierApplied,
+        cappedByDeclared: resolved.cappedByDeclared,
+        cappedByPrevious: resolved.cappedByPrevious,
+        nonExamCapped: calc.nonExamCapped,
+        dailyCapped: calc.dailyCapped
+      });
+    });
+
+    return { records: results, totalBP: todayTotalBP, nonExamBP: todayNonExamBP };
+  }
+
   /* ---------- 時事ニュース (C章) ---------- */
 
   /* faculty: 'economics'|'law'|'international' に一致すると×1.5。
@@ -1465,6 +1728,17 @@
     isPlanAchieved: isPlanAchieved,
     calcActionBonusBP: calcActionBonusBP,
     calcStudyBP: calcStudyBP,
+    /* --- APP-440: 時間の分離とBPの決定的な再計算 --- */
+    MS_PER_MINUTE: MS_PER_MINUTE,
+    PLAN_ACHIEVED_MIN_ACTUAL_MIN: PLAN_ACHIEVED_MIN_ACTUAL_MIN,
+    DAILY_ONCE_ACTIONS: DAILY_ONCE_ACTIONS,
+    bpOrder: bpOrder,
+    normalizeSegments: normalizeSegments,
+    segmentsOverlapMs: segmentsOverlapMs,
+    applyTimedBoost: applyTimedBoost,
+    resolveBpMinutes: resolveBpMinutes,
+    resolveDailyActionBonuses: resolveDailyActionBonuses,
+    recalcDayBP: recalcDayBP,
     /* --- 時事ニュース (ver.4) --- */
     NEWS_GENRES: NEWS_GENRES,
     NEWS_DAILY_LIMIT: NEWS_DAILY_LIMIT,
