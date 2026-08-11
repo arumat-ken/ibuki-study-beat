@@ -1993,8 +1993,18 @@
     state.news.splice(idx, 1);
     save(); renderWorldScreen();
     toast('削除しました', false, '元に戻す', function () {
-      state.news.splice(idx, 0, removed);
+      /* APP-440 §4: 復元も追加と同じ判定を通す。
+       * ここを素通しにすると、削除 → 別のニュースを追加 → 元に戻す で
+       * BP付きが4本になり、1日3本の上限を回り込める。 */
+      var restored = Object.assign({}, removed);
+      var hadBp = (removed.bp | 0) > 0;
+      var slotFree = C.canGrantNewsBp(state.news, restored.date);
+      if (hadBp && !slotFree) restored.bp = 0;
+      state.news.splice(idx, 0, restored);
       save(); renderWorldScreen();
+      if (hadBp && !slotFree) {
+        toast('戻したよ。ただし今日は' + C.NEWS_DAILY_LIMIT + '本ぶんのポイントが埋まっているので、ポイントは戻りません');
+      }
     });
   }
 
@@ -2002,7 +2012,7 @@
 
   function openNewsFormModal() {
     var today = todayNews();
-    var remaining = Math.max(0, C.NEWS_DAILY_LIMIT - today.length);
+    var remaining = Math.max(0, C.NEWS_DAILY_LIMIT - C.bpNewsCountForDate(state.news, todayStr()));
     openModal(
       '<h3>今日のニュースを記録<button class="icon-btn" id="m-close">✕</button></h3>' +
       (remaining > 0
@@ -2028,10 +2038,13 @@
       };
       var v = C.validateNewsEntry(entry);
       if (!v.ok) { toast(v.errors[0], true); return; }
+      /* APP-440 §4: 上限は総本数ではなく「BPが付いている本数」で数える。
+       * 総本数で数えると、ポイントの付かない4本目以降が枠を埋めてしまい、
+       * 1本消しても枠が戻らない。 */
       var result = C.calcNewsBP({
         genreId: entry.genreId,
         faculties: selectedFacultyIds(),
-        todayCount: today.length
+        todayCount: C.bpNewsCountForDate(state.news, entry.date)
       });
       entry.bp = result.bp;
       state.news.push(entry);

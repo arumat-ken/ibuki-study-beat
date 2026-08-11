@@ -1301,6 +1301,33 @@
   }
 
   /** 今日その日に全ジャンルを記録したか(+200BP) */
+  /**
+   * APP-440 §4: その日の「BPが付いているニュース」の本数。
+   *
+   * 上限は総本数ではなくBP付きの本数で数える。総本数で数えると、
+   * ポイントの付かない4本目以降が枠を埋めてしまう。
+   */
+  function bpNewsCountForDate(news, dateStr) {
+    var list = Array.isArray(news) ? news : [];
+    var n = 0;
+    list.forEach(function (x) {
+      if (!x || x.date !== dateStr) return;
+      if ((x.bp | 0) > 0) n++;
+    });
+    return n;
+  }
+
+  /**
+   * APP-440 §4: いまBPを付けてよいか。
+   *
+   * 追加のときも「元に戻す」のときも、必ずこの判定を通す。
+   * 復元だけ判定を通さないと、削除 → 別のニュースを追加 → 元に戻す で
+   * BP付きが4本になる。不変条件は「どの時点でも同じ日のBP付きは最大3本」。
+   */
+  function canGrantNewsBp(news, dateStr) {
+    return bpNewsCountForDate(news, dateStr) < NEWS_DAILY_LIMIT;
+  }
+
   function calcAllGenresBonus(recordedGenreIds) {
     var ids = Array.isArray(recordedGenreIds) ? recordedGenreIds : [];
     var seen = {};
@@ -1984,6 +2011,8 @@
     NEWS_ALL_GENRES_BONUS_BP: NEWS_ALL_GENRES_BONUS_BP,
     newsGenreById: newsGenreById,
     calcNewsBP: calcNewsBP,
+    bpNewsCountForDate: bpNewsCountForDate,
+    canGrantNewsBp: canGrantNewsBp,
     calcAllGenresBonus: calcAllGenresBonus,
     /* --- GT / PayPay (ver.4) --- */
     GT_BASE_YEN: GT_BASE_YEN,

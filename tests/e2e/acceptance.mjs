@@ -33,6 +33,7 @@ const SHOT_DIR = new URL('../../docs/screenshots/', import.meta.url).pathname;
 mkdirSync(SHOT_DIR, { recursive: true });
 
 const results = [];
+const C_NEWS_LIMIT = 3;   // js/calc.js の NEWS_DAILY_LIMIT と対応
 const consoleErrors = [];
 let page, context, browser;
 
@@ -2084,6 +2085,68 @@ async function test18_itemsOnStudyIntervals() {
 
 }
 
+async function test19_newsSlotOnRestore() {
+  console.log('\n■ 試験19: ニュースの削除・復元で1日3本の上限を回り込めない(APP-440 T-3)');
+  await freshPage(true);
+  await nav('world');
+
+  async function addNews(headline) {
+    await page.click('#btn-add-news');
+    await page.waitForSelector('#m-headline');
+    await page.fill('#m-headline', headline);
+    await page.click('#m-save');
+    await page.waitForTimeout(250);
+    if (await page.isVisible('#modal-back.open')) { await page.click('#m-close'); await page.waitForTimeout(150); }
+  }
+  async function bpNewsCount() {
+    return page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+      const p = n => (n < 10 ? '0' : '') + n;
+      const d = new Date();
+      const today = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+      return (s.news || []).filter(n => n.date === today && (n.bp | 0) > 0).length;
+    });
+  }
+
+  await addNews('ニュース1');
+  await addNews('ニュース2');
+  await addNews('ニュース3');
+  ok('T-3-1 3本目までBPが付く', await bpNewsCount() === 3, String(await bpNewsCount()));
+
+  /* 1本削除して4本目を追加 → 枠が空いているのでBPが付く */
+  await page.click('.news-item:has-text("ニュース2") [data-act="del"]');
+  await page.waitForTimeout(300);
+  ok('T-3-1 削除で枠が空く', await bpNewsCount() === 2, String(await bpNewsCount()));
+  await addNews('ニュース4');
+  ok('T-3-1 4本目にBPが付き、BP付きは3本のまま', await bpNewsCount() === 3, String(await bpNewsCount()));
+
+  /* ここで「元に戻す」を押しても、枠が埋まっているのでBPは戻らない */
+  await page.click('.news-item:has-text("ニュース4") [data-act="del"]');
+  await page.waitForTimeout(200);
+  await addNews('ニュース5');
+  await page.click('.news-item:has-text("ニュース5") [data-act="del"]');
+  await page.waitForTimeout(200);
+  await addNews('ニュース6');
+  const beforeUndo = await bpNewsCount();
+  if (await page.isVisible('#toast .toast-action')) {
+    await page.click('#toast .toast-action');
+    await page.waitForTimeout(300);
+  }
+  const afterUndo = await bpNewsCount();
+  ok('T-3-2 枠が埋まっていれば元に戻してもBPは戻らない', afterUndo <= C_NEWS_LIMIT,
+    `前=${beforeUndo}, 後=${afterUndo}`);
+  ok('T-3-5 どの時点でもBP付きは3本を超えない', afterUndo <= C_NEWS_LIMIT, String(afterUndo));
+
+  /* 5本目以降を足してもBP付きは3本を超えない */
+  await addNews('ニュース7');
+  await addNews('ニュース8');
+  ok('T-3-5 追加を重ねてもBP付きは3本のまま', await bpNewsCount() === 3, String(await bpNewsCount()));
+
+  const st = await getState();
+  ok('T-3-7 BP残高が負にならない', st.shop.bpBalance === undefined || st.shop.bpBalance >= 0);
+  await shot('72-news-slots');
+}
+
 /* ============ 実行 ============ */
 browser = await chromium.launch();
 try {
@@ -2105,6 +2168,7 @@ try {
   await test16_timerAutoStop();
   await test17_timerReopenAndDayCross();
   await test18_itemsOnStudyIntervals();
+  await test19_newsSlotOnRestore();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

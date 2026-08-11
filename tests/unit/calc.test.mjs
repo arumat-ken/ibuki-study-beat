@@ -1517,3 +1517,97 @@ test('APP-440 §3: スポットライトを2個使うと合計+1.0倍のまま�
     C.sanitizeBpBoost({ dayItemIds: ['energy_drink', 'energy_drink', 'recovery', 'unknown'] }).dayItemIds,
     []);
 });
+
+/* ==================================================================
+ * APP-440 段階5: ニュースの削除・復元(経路3)
+ * 設計書 §4 / 受入試験 T-3
+ * 不変条件: どの時点でも、同じ日のBP付きニュースは最大3本
+ * ================================================================== */
+
+function news(over) {
+  return Object.assign({ id: 'n1', date: '2026-08-11', genreId: 'economy', headline: 'x', bp: 40 }, over);
+}
+
+test('APP-440 §4: 上限は総本数ではなくBP付きの本数で数える', () => {
+  const list = [
+    news({ id: 'n1', bp: 40 }), news({ id: 'n2', bp: 40 }),
+    news({ id: 'n3', bp: 0 }),                    // ポイントの付かない記録は枠を埋めない
+    news({ id: 'n4', bp: 40, date: '2026-08-10' }) // 別の日
+  ];
+  assert.equal(C.bpNewsCountForDate(list, '2026-08-11'), 2);
+  assert.ok(C.canGrantNewsBp(list, '2026-08-11'), 'あと1本ぶんの枠がある');
+});
+
+test('APP-440 §4 T-3-1: 削除でBPが消え、枠が空いて4本目にBPが付く', () => {
+  let list = [news({ id: 'n1' }), news({ id: 'n2' }), news({ id: 'n3' })];
+  assert.ok(!C.canGrantNewsBp(list, '2026-08-11'), '3本埋まっていれば付かない');
+
+  list = list.filter((n) => n.id !== 'n2');   // 1本削除
+  assert.ok(C.canGrantNewsBp(list, '2026-08-11'), '削除で枠が空く');
+  list.push(news({ id: 'n4' }));
+  assert.equal(C.bpNewsCountForDate(list, '2026-08-11'), 3, 'BP付きは3本のまま');
+});
+
+test('APP-440 §4 T-3-2: 枠が埋まっていれば復元してもBPは戻らない', () => {
+  // 3本 → 1本削除 → 4本目を追加(枠が埋まる) → 削除した1本を元に戻す
+  const list = [news({ id: 'n1' }), news({ id: 'n3' }), news({ id: 'n4' })];
+  assert.ok(!C.canGrantNewsBp(list, '2026-08-11'), '枠は埋まっている');
+  // 実装は bp: 0 で復活させる
+  list.push(news({ id: 'n2', bp: 0 }));
+  assert.equal(C.bpNewsCountForDate(list, '2026-08-11'), 3, 'BP付きは3本を超えない');
+});
+
+test('APP-440 §4 T-3-3: 枠が空いていればBPごと復活する', () => {
+  const list = [news({ id: 'n1' }), news({ id: 'n3' })];   // 1本削除したまま
+  assert.ok(C.canGrantNewsBp(list, '2026-08-11'), '枠が空いている');
+  list.push(news({ id: 'n2', bp: 40 }));
+  assert.equal(C.bpNewsCountForDate(list, '2026-08-11'), 3);
+});
+
+test('APP-440 §4 T-3-4: 日が変われば枠は戻る', () => {
+  const list = [news({ id: 'n1' }), news({ id: 'n2' }), news({ id: 'n3' })];
+  assert.ok(!C.canGrantNewsBp(list, '2026-08-11'));
+  assert.ok(C.canGrantNewsBp(list, '2026-08-12'), '新しい日は3本ぶん付く');
+});
+
+test('APP-440 §4 T-3-5: 削除→追加→復元を繰り返してもBP付きは3本を超えない', () => {
+  let list = [news({ id: 'n1' }), news({ id: 'n2' }), news({ id: 'n3' })];
+  for (let i = 0; i < 5; i++) {
+    const removed = list[0];
+    list = list.slice(1);                                    // 削除
+    const added = news({ id: 'add' + i, bp: C.canGrantNewsBp(list, '2026-08-11') ? 40 : 0 });
+    list.push(added);                                        // 追加
+    const restored = news({ id: removed.id, bp: C.canGrantNewsBp(list, '2026-08-11') ? removed.bp : 0 });
+    list.push(restored);                                     // 元に戻す
+    assert.ok(C.bpNewsCountForDate(list, '2026-08-11') <= C.NEWS_DAILY_LIMIT,
+      i + '回目: BP付きが3本を超えない');
+  }
+});
+
+test('APP-440 §4 T-3-6: 旧データは移行処理なしで正しく動く', () => {
+  // 台帳(dailyNewsBp)を作らない方針なので、旧データにも新フィールドは要らない
+  const s = C.sanitizeState({
+    schemaVersion: 3,
+    news: [
+      { id: 'n1', date: '2026-08-11', genreId: 'economy', headline: '円安', bp: 40, createdAt: 1 },
+      { id: 'n2', date: '2026-08-11', genreId: 'politics', headline: '法案', bp: 40, createdAt: 2 }
+    ]
+  }, '2026-08-11');
+  assert.equal(s.news.length, 2);
+  assert.equal(C.bpNewsCountForDate(s.news, '2026-08-11'), 2, 'BP残高が変わらない');
+  assert.ok(C.canGrantNewsBp(s.news, '2026-08-11'), '3本目にはBPが付く');
+});
+
+test('APP-440 §4 T-3-7: BPを使い切っていても残高は0で止まり、購入済みは失われない', () => {
+  const state = {
+    records: [], news: [news({ id: 'n1', bp: 40 })],
+    shop: { owned: { costume: ['socks'], skill: [], stage: [], consumable: {} } }
+  };
+  const before = C.calcBpBalance(state);
+  // BP付きニュースを削除する
+  state.news = [];
+  const after = C.calcBpBalance(state);
+  assert.ok(after >= 0, '残高が負にならない');
+  assert.ok(after <= before, '削除で増えない');
+  assert.deepEqual(state.shop.owned.costume, ['socks'], '購入済みアイテムは失われない');
+});
