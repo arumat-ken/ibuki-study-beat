@@ -179,11 +179,27 @@ iPhoneは画面を消すとタイマーが動かないことがあり、アプ�
 
 次にアプリを開いたとき、次の式で終了時刻を確定する。
 
+**数えるのは実際に勉強した時間である。**一時停止していた時間は勉強ではないので除く。
+
 ```js
-var endsAt = session.startedAt + (session.planMin + session.extendedMin) * 60000;
-var endedAt = Math.min(now, endsAt);      // 宣言済み時間を超えない
-var elapsedMin = Math.floor((endedAt - session.startedAt) / 60000);
+// 一時停止中は「止めた時刻」で数え止める
+var until      = session.pausedAt !== null ? session.pausedAt : now;
+var elapsedMs  = Math.max(0, until - session.startedAt - session.pausedAccum);
+
+var declaredMs = (session.planMin + session.extendedMin) * 60000;
+var completed  = declaredMs > 0 && elapsedMs >= declaredMs;
+var elapsedMin = Math.floor(Math.min(elapsedMs, declaredMs) / 60000);
+
+// 完了した瞬間の実時刻。「◯時◯分に完了していました」に使う
+var completedAt = completed ? session.startedAt + session.pausedAccum + declaredMs : null;
 ```
+
+**壁時計で数えてはならない。**`endsAt = startedAt + declaredMs` とすると、
+5分席を立っただけで宣言済み時間に達し、**勉強していないのに完了する**。
+§3 の T-2-4(10:00開始・10:20〜10:50一時停止・11:10保存で実学習40分)も、
+壁時計基準では11:00にセッションが終わってしまい成立しない。
+
+一時停止が無ければ `completedAt = startedAt + declaredMs` となり、素直な式と一致する。
 
 - `now > endsAt` なら、**セッションは `endsAt` に完了していた**ものとして扱う
 - 完了画面を出し、「◯時◯分に完了していました」と伝える。**見逃さない**

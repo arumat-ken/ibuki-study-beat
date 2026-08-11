@@ -535,6 +535,7 @@
       baseActualMin: rec.actualMin || 0,
       confirmedMin: -1
     };
+    segmentStart(state.activeSession);
     save();
     renderToday();
     toast('スタート！' + C.fmtDuration(declared) + 'で完了だよ');
@@ -606,9 +607,11 @@
       if (ses.pausedAt) {
         ses.pausedAccum += Date.now() - ses.pausedAt;
         ses.pausedAt = null;
+        segmentResume(ses);
         toast('再開！ここからまた刻もう！');
       } else {
         ses.pausedAt = Date.now();
+        segmentClose(ses, ses.pausedAt);
       }
       save(); renderTimerCard();
     };
@@ -653,9 +656,23 @@
     rec.actualMin = Math.min(C.MAX_MIN_PER_RECORD, (ses.baseActualMin || 0) + target);
     rec.updatedAt = Date.now();
     ses.confirmedMin = target;
+    /* 完了した時刻で区間を閉じる。宣言済み時間を超えた分は区間にも入れない。 */
+    if (prog.completedAt) segmentClose(ses, prog.completedAt);
+    applyBoostsOnce(rec, ses);
     grantStudyBP(rec);
     save();
     return true;
+  }
+
+  /* APP-440 §3: アイテムの消費は記録ごとに一度だけ。
+   * 結果を rec.bpBoost に残し、以後の再計算では消費し直さない。
+   * これがないと、同じアイテムの時間を複数の記録で使い回せる。 */
+  function applyBoostsOnce(rec, ses) {
+    if (!ses || rec.bpBoost) return;
+    var segments = Array.isArray(ses.segments) ? ses.segments : null;
+    /* 区間が無い記録(手入力・移行中の旧セッション)には時間制アイテムを適用しない。 */
+    if (!segments || !segments.length) { rec.bpBoost = { fever: 0, timed: [], dayBonus: 0 }; return; }
+    rec.bpBoost = consumeTimedBoosts(segments);
   }
 
   /* APP-440 §2: 完了画面。
@@ -719,6 +736,8 @@
     var add = C.roundExtensionMin(rawMin);
     if (add <= 0) { toast('延長は' + C.EXTENSION_STEP_MIN + '分から選んでね', true); return; }
     ses.declaredMin = (ses.declaredMin || 0) + add;
+    /* 延長は明示的な意思表示。ここで新しい学習区間が始まる。 */
+    segmentResume(ses);
     /* 実績へ黙って溶かし込まず、「予定どおりに終わらなかった」事実として別に残す。 */
     rec.extendedMin = (rec.extendedMin || 0) + add;
     rec.updatedAt = Date.now();
@@ -771,6 +790,7 @@
       rec.actualMin = actual;
       rec.reflection = candidate.reflection;
       rec.updatedAt = Date.now();
+      if (ses) { segmentClose(ses); applyBoostsOnce(rec, ses); }
       state.activeSession = null;
       var grant = grantStudyBP(rec);
       save(); closeModal();
@@ -944,6 +964,64 @@
    * 「発動している時間帯だけ」に効くべきなので、ここで実績時間を分割する(Codexレビュー指摘)。
    * 過去日の記録・実績0分には消費アイテムを適用しない(既存仕様どおり)。
    */
+  /* APP-440 §3: 時間制アイテムは「有効区間」と「実際に使った分」で持つ。
+   * 壁時計の残り時間ではなく、実学習区間との重なりだけを消費する。 */
+  function newTimedBoost(itemId, kind, durationMin) {
+    var now = Date.now();
+    var durationMs = durationMin * 60000;
+    return {
+      id: nextId('ab'), itemId: itemId, kind: kind,
+      expiresAt: now + durationMs,
+      startedAt: now, durationMs: durationMs, consumedMs: 0
+    };
+  }
+
+  /* APP-440 §3: 学習区間の記録。区間が増える入口は
+   * 「開始」と「本人が再開を押したとき」の二つだけにする。 */
+  function segmentStart(ses) { ses.segments = [{ from: Date.now(), to: null }]; }
+
+  function segmentClose(ses, atMs) {
+    if (!ses || !Array.isArray(ses.segments) || !ses.segments.length) return;
+    var last = ses.segments[ses.segments.length - 1];
+    if (last && last.to === null) last.to = (typeof atMs === 'number') ? atMs : Date.now();
+  }
+
+  function segmentResume(ses) {
+    if (!ses) return;
+    if (!Array.isArray(ses.segments)) return;   // 移行中の旧セッションには区間を作らない
+    ses.segments.push({ from: Date.now(), to: null });
+  }
+
+  /* APP-440 §3: 実学習区間とアイテムの有効区間が重なった分だけ消費する。
+   * 記録ごとに一度だけ呼び、結果を rec.bpBoost に残す。
+   * 再計算では消費し直さないので、同じアイテム時間を複数の記録へ再利用できない。 */
+  function consumeTimedBoosts(segments, nowMs) {
+    var out = { fever: 0, timed: [], dayBonus: 0 };
+    if (focusModeActive()) return out;
+    var now = (typeof nowMs === 'number') ? nowMs : Date.now();
+    /* ここで pruneActiveBoosts を先に呼んではいけない。
+     * 保存する時点では期限を過ぎていても、有効だった区間に勉強していれば
+     * その分は倍率の対象である。期限切れの掃除は消費を数え終わってから行う。 */
+    state.shop.activeBoosts.forEach(function (b) {
+      var item = C.consumableById(b.itemId);
+      if (!item) return;
+      /* その日いっぱいのアイテムは、保存時点で有効なものだけ数える。 */
+      if (b.kind === 'day') { if (b.expiresAt > now) out.dayBonus += item.bonus; return; }
+      if (b.kind !== 'timed' && b.kind !== 'fever') return;
+      if (typeof b.startedAt !== 'number' || typeof b.durationMs !== 'number') return;
+      var r = C.applyTimedBoost({
+        segments: segments, startedAt: b.startedAt, durationMs: b.durationMs,
+        consumedMs: b.consumedMs || 0, now: now
+      });
+      if (r.boostMinutes <= 0) return;
+      b.consumedMs = r.nextConsumedMs;   /* 消費は取り消せない(§3) */
+      if (b.kind === 'fever') out.fever += r.boostMinutes;
+      else out.timed.push({ minutes: r.boostMinutes, bonus: item.bonus });
+    });
+    pruneActiveBoosts();
+    return out;
+  }
+
   function buildStudyBPSegments(rec) {
     var prevDay = C.addDays(rec.date, -1);
     var conditionBonus = C.conditionBonusFromHabits(C.calcHabitBP(state.habits[prevDay]));
@@ -986,55 +1064,39 @@
       return [{ minutes: rec.actualMin, multiplier: plainMult }];
     }
 
-    pruneActiveBoosts();
-    var now = Date.now();
+    /* APP-440 §3: 時間制アイテムは「実際に勉強した区間との重なり」だけに効く。
+     * 壁時計の残り時間で配るのをやめたので、一時停止して放置しても消費されない。
+     * 消費量は確定時に rec.bpBoost へ記録済み。ここでは読むだけで、再計算しても増減しない。 */
+    var boost = rec.bpBoost || { fever: 0, timed: [], dayBonus: 0 };
     var actualMin = rec.actualMin;
-    /* 実績時間を「今から経過した分」の並びとみなし、各アイテムの残り有効時間(今からの
-     * 分数)を境界として区切る。フィーバーが効いている区間は他の倍率を無視して10倍(H-4)。
-     * それ以外の区間は、まだ有効なエナジードリンクの倍率を(複数使用時は合算して)適用する。
-     * 「残り時間で平均配分」ではなく実際の区間ごとに計算することで、フィーバーとエナジーが
-     * 重なる場合や複数のエナジードリンクを使った場合でも正しい時間だけに効かせる。 */
-    var feverRemains = [], timedBoosts = [], dayBonus = 0;
-    state.shop.activeBoosts.forEach(function (b) {
-      var item = C.consumableById(b.itemId);
-      if (!item) return;
-      var remain = Math.max(0, (b.expiresAt - now) / 60000);
-      if (remain <= 0) return;
-      if (b.kind === 'fever') feverRemains.push(remain);
-      else if (b.kind === 'day') dayBonus += item.bonus;
-      else if (b.kind === 'timed') timedBoosts.push({ remain: remain, bonus: item.bonus });
-    });
-
-    var boundaries = [0, actualMin];
-    feverRemains.forEach(function (r) { if (r > 0 && r < actualMin) boundaries.push(r); });
-    timedBoosts.forEach(function (t) { if (t.remain > 0 && t.remain < actualMin) boundaries.push(t.remain); });
-    boundaries.sort(function (a, b) { return a - b; });
-    boundaries = boundaries.filter(function (v, i) { return i === 0 || v !== boundaries[i - 1]; });
+    var dayBonus = boost.dayBonus || 0;
+    var baseMult = C.composeMultiplier({
+      costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus,
+      conditionBonus: conditionBonus, consumableBonus: dayBonus
+    }).multiplier;
 
     var segments = [];
-    for (var i = 0; i < boundaries.length - 1; i++) {
-      var segStart = boundaries[i], segEnd = boundaries[i + 1];
-      var segMinutes = segEnd - segStart;
-      if (segMinutes <= 0) continue;
-      var feverHere = feverRemains.some(function (r) { return r > segStart; });
-      var mult;
-      if (feverHere) {
-        mult = C.FEVER_MULTIPLIER;
-      } else {
-        var timedBonusHere = 0;
-        timedBoosts.forEach(function (t) { if (t.remain > segStart) timedBonusHere += t.bonus; });
-        mult = C.composeMultiplier({
-          costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus, conditionBonus: conditionBonus,
-          consumableBonus: dayBonus + timedBonusHere
-        }).multiplier;
-      }
-      segments.push({ minutes: segMinutes, multiplier: mult });
-    }
-    /* boundariesは常に[0, actualMin]を含み(isToday && actualMin>0はここまでに保証済み)、
-     * ループは必ず1つ以上のセグメントを生成するため空になることはない。 */
-    /* 端数丸めで合計が実績時間とズレないよう、最後のセグメントで吸収する。 */
-    var sumMin = segments.reduce(function (s, seg) { return s + seg.minutes; }, 0);
-    segments[segments.length - 1].minutes += (actualMin - sumMin);
+    var remain = actualMin;
+
+    /* フィーバー中は他の倍率をすべて無効化して10倍に置き換える(H-4)。 */
+    var feverMin = Math.min(remain, boost.fever || 0);
+    if (feverMin > 0) { segments.push({ minutes: feverMin, multiplier: C.FEVER_MULTIPLIER }); remain -= feverMin; }
+
+    /* エナジードリンクなどの加算は、重なった分数にだけ乗せる。 */
+    (boost.timed || []).forEach(function (t) {
+      var m = Math.min(remain, t.minutes || 0);
+      if (m <= 0) return;
+      segments.push({
+        minutes: m,
+        multiplier: C.composeMultiplier({
+          costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus,
+          conditionBonus: conditionBonus, consumableBonus: dayBonus + (t.bonus || 0)
+        }).multiplier
+      });
+      remain -= m;
+    });
+
+    if (remain > 0 || !segments.length) segments.push({ minutes: remain, multiplier: baseMult });
     return segments;
   }
 
@@ -2203,9 +2265,9 @@
         toast('フィーバータイムは週1回までだよ', true); return;
       }
       state.shop.feverLastUsedDate = todayStr();
-      state.shop.activeBoosts.push({ id: nextId('ab'), itemId: itemId, kind: 'fever', expiresAt: Date.now() + item.durationMin * 60000 });
+      state.shop.activeBoosts.push(newTimedBoost(itemId, 'fever', item.durationMin));
     } else if (item.kind === 'timed') {
-      state.shop.activeBoosts.push({ id: nextId('ab'), itemId: itemId, kind: 'timed', expiresAt: Date.now() + item.durationMin * 60000 });
+      state.shop.activeBoosts.push(newTimedBoost(itemId, 'timed', item.durationMin));
     } else if (item.kind === 'day') {
       var endOfDay = new Date();
       endOfDay.setHours(23, 59, 59, 999);

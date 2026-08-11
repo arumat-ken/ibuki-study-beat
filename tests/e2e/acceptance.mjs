@@ -1059,11 +1059,16 @@ async function test13_codexReviewFixes() {
   await page.click('#rf-save');
   await page.waitForTimeout(200);
   const bpBoxText = await page.textContent('#celebrate-bp');
-  ok('フィーバー中の長時間記録は、発動中の30分だけ10倍になる', bpBoxText.includes('30分') && bpBoxText.includes('10.00倍') && bpBoxText.includes('90分') && bpBoxText.includes('1.00倍'), bpBoxText);
+  /* APP-440 §3: 手入力の記録には時間制アイテムを適用しない。
+   * 以前はここで「30分だけ10倍」を期待していたが、それはアイテムを発動して
+   * 長時間を手で打ち込むだけで倍率を取れる経路そのものだった。
+   * タイマーで実際に勉強した区間だけに乗せる方式へ変更している。 */
+  ok('APP-440 手入力の記録にはフィーバーの倍率が乗らない',
+    bpBoxText.includes('1.00倍') && !bpBoxText.includes('10.00倍'), bpBoxText);
   if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
   st = await getState();
   const feverRec = st.records.find(r => r.content === 'fever-120min');
-  ok('120分記録のBPが「30分×10倍+90分×1倍+行動ボーナス」で計算される(記録全体が10倍にならない)', feverRec.bp === 440, `bp=${feverRec.bp}`);
+  ok('APP-440 手入力120分のBPは等倍+行動ボーナスのみ(120+50=170)', feverRec.bp === 170, `bp=${feverRec.bp}`);
 
   // フィーバー(残30分)とエナジー(残60分)が重なる場合: 「残り時間で平均配分」ではなく、
   // フィーバー優先で実際の時間区間ごとに正しく計算されることを確認する(Codex再レビュー指摘)
@@ -1097,12 +1102,21 @@ async function test13_codexReviewFixes() {
   await page.click('#rf-save');
   await page.waitForTimeout(200);
   const overlapBpText = await page.textContent('#celebrate-bp');
-  ok('フィーバー(残30分)とエナジー(残60分)が重なる区間は、フィーバー優先(30分×10倍)→エナジー継続(30分×2倍)→通常(60分×1倍)に正しく分割される',
-    overlapBpText.includes('30分') && overlapBpText.includes('10.00倍') && overlapBpText.includes('2.00倍') && overlapBpText.includes('60分') && overlapBpText.includes('1.00倍'), overlapBpText);
+  /* APP-440 §3: 手入力なので、フィーバーもエナジーも乗らない。
+   * 発動したアイテムは消費されず、タイマーで勉強したときに使える。 */
+  ok('APP-440 手入力ではフィーバーもエナジーも乗らない',
+    overlapBpText.includes('1.00倍') && !overlapBpText.includes('10.00倍') && !overlapBpText.includes('2.00倍'),
+    overlapBpText);
   if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
   st = await getState();
   const overlapRec = st.records.find(r => r.content === 'fever-energy-overlap');
-  ok('フィーバー×エナジー重なり時のBPが期待値470(30×10+30×2+60×1+行動ボーナス50)と一致する(以前は平均配分で499になっていた)', overlapRec.bp === 470, `bp=${overlapRec.bp}`);
+  ok('APP-440 手入力120分のBPは等倍+行動ボーナスのみ(170)', overlapRec.bp === 170, `bp=${overlapRec.bp}`);
+  /* 手入力で発動を消費していないこと(タイマーで使えば効くこと)を確認する */
+  const notConsumed = await page.evaluate(() => {
+    const s2 = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return (s2.shop.activeBoosts || []).every(b => (b.consumedMs || 0) === 0);
+  });
+  ok('APP-440 手入力ではアイテムの持ち時間を消費しない', notConsumed);
 
   // エナジードリンクを2本使った場合、効果が加算される(1本ずつの上限で頭打ちにならない)ことも確認する
   await freshPage(true);
@@ -1593,6 +1607,9 @@ async function freshPageWithClock(startMs) {
   page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
   page.on('pageerror', e => consoleErrors.push(String(e)));
   await page.clock.install({ time: new Date(startMs) });
+  /* 時計を完全に止める。止めないと実時間ぶんの微小なずれが積もり、
+     分単位の期待値が1分ずれることがある。 */
+  await page.clock.pauseAt(new Date(startMs));
   await page.goto(BASE + '/index.html');
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -1843,6 +1860,89 @@ async function test17_timerReopenAndDayCross() {
   ok('計画0分の記録ではタイマーが始まらない', !started);
 }
 
+async function test18_itemsOnStudyIntervals() {
+  console.log('\n■ 試験18: 時間制アイテムを実学習区間にだけ適用(APP-440 T-2)');
+  const T0 = new Date(2026, 7, 11, 10, 0, 0).getTime();
+  await freshPageWithClock(T0);
+  /* BPを与えてエナジードリンクを買えるようにする */
+  await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const p = n => (n < 10 ? '0' : '') + n;
+    const x = new Date(); x.setDate(x.getDate() - 1);
+    s.records.push({ id: 'seedbp', date: `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}`,
+      subjectId: 'eng', content: 'seed', kind: '暗記', planMin: 30, actualMin: 30,
+      reflection: '', deletedAt: null, bp: 1000, createdAt: 1, updatedAt: 1, score: null, maxScore: null });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(s));
+  });
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+
+  /* エナジードリンク(60分)を発動する */
+  await nav('coach');
+  await page.click('#btn-open-shop');
+  await page.click('[data-tab="consumable"]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("エナジードリンク") [data-buy]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("エナジードリンク") [data-use]');
+  await page.waitForTimeout(150);
+  await page.click('#m-close');
+  await nav('today');
+
+  /* 10分勉強 → 40分休憩 → 20分勉強。実学習30分、壁時計70分。
+   * アイテムの有効区間は 0〜60分なので、重なるのは [0,10] と [50,60] の20分だけ。 */
+  await startPlanTimer({ content: '休憩を挟む学習', plan: 30 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(10 * 60 * 1000);
+  await page.click('#btn-pause');
+  await page.waitForTimeout(200);
+  await page.clock.fastForward(40 * 60 * 1000);
+  await page.click('#btn-pause');           // 再開
+  await page.waitForTimeout(200);
+  await page.clock.fastForward(20 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('T-2 休憩を挟んでも実学習30分で完了する', await page.isVisible('#timer-completed'));
+
+  let st = await getState();
+  let rec = st.records.find(r => r.content === '休憩を挟む学習');
+  ok('T-2-3 休憩中の時間はアイテム消費に入らない(20分だけ)',
+    rec && rec.bpBoost && rec.bpBoost.timed.length === 1 && rec.bpBoost.timed[0].minutes === 20,
+    rec && rec.bpBoost ? JSON.stringify(rec.bpBoost.timed) : 'bpBoostなし');
+  ok('T-2-3 実績は実学習の30分', rec && rec.actualMin === 30, rec ? `actual=${rec.actualMin}` : '');
+
+  /* 保存した時点で壁時計は70分経っており、60分のアイテムは期限切れ。
+     有効だった区間ぶん(20分)は数えたうえで片付けられる。 */
+  ok('T-2 期限切れのアイテムは数え終わってから片付けられる', st.shop.activeBoosts.length === 0,
+    JSON.stringify(st.shop.activeBoosts));
+
+  /* 学習区間が保存されていること(休憩で分かれている) */
+  ok('T-2 学習区間が2本に分かれて記録されている',
+    st.activeSession && Array.isArray(st.activeSession.segments) && st.activeSession.segments.length === 2,
+    st.activeSession ? JSON.stringify(st.activeSession.segments) : 'セッションなし');
+
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+
+  /* --- T-2-8/T-2-11: 同じアイテム時間を別の記録へ再利用できない --- */
+  await startPlanTimer({ content: '2件目の学習', plan: 20 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(20 * 60 * 1000);
+  await page.waitForTimeout(300);
+  st = await getState();
+  const rec2 = st.records.find(r => r.content === '2件目の学習');
+  const boosted2 = rec2 && rec2.bpBoost ? (rec2.bpBoost.timed || []).reduce((n, t) => n + t.minutes, 0) : -1;
+  ok('T-2-8 期限を過ぎたアイテムは2件目に乗らない', boosted2 === 0, `boosted=${boosted2}`);
+  ok('T-2-11 期限切れのアイテムが2件目で復活しない', st.shop.activeBoosts.length === 0,
+    JSON.stringify(st.shop.activeBoosts));
+
+  /* 削除・復元の検証(T-2-9/T-2-10)は経路3とあわせて段階5で扱う。 */
+
+}
+
 /* ============ 実行 ============ */
 browser = await chromium.launch();
 try {
@@ -1863,6 +1963,7 @@ try {
   await test15_coachPanelsAndReport();
   await test16_timerAutoStop();
   await test17_timerReopenAndDayCross();
+  await test18_itemsOnStudyIntervals();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);
