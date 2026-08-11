@@ -1457,6 +1457,11 @@
         if (!rec) return;
         if (btn.dataset.act === 'restore') {
           rec.deletedAt = null;
+          /* APP-440 §5: ごみ箱からの復元も、トーストの「元に戻す」と同じく
+           * その日を配り直す。削除したときに他の記録へBPを配り直しているので、
+           * ここで配り直さないと、復元記録の古いBPと配り直し済みのBPが共存し、
+           * 日次1,500BP・非受験科目100BP・行動ボーナス1日1回を超える。 */
+          recalcBpForDate(rec.date);
           save(); closeModal(); renderRecordList(); renderToday();
           toast('復元したよ！');
         } else {

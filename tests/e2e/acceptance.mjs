@@ -2262,22 +2262,21 @@ async function test20_editRecalcBp() {
     .reduce((n, x) => n + (x.bp | 0), 0);
   ok('T-4-4 配り直しても日次上限を超えない', totalAfterDel <= 1500, `合計=${totalAfterDel}`);
 
-  /* ごみ箱から戻す */
+  /* ごみ箱から戻す。トーストの「元に戻す」ではなく、ごみ箱画面の復元ボタンを使う。
+   * 以前はボタンのIDを取り違えて条件付きで囲っており、無言でスキップされていた。 */
   await nav('record');
   await page.waitForTimeout(150);
-  if (await page.isVisible('#btn-trash')) {
-    await page.click('#btn-trash');
-    await page.waitForTimeout(300);
-    if (await page.isVisible('[data-act="restore"]')) {
-      await page.click('[data-act="restore"]');
-      await page.waitForTimeout(400);
-    }
-    if (await page.isVisible('#m-close')) await page.click('#m-close');
-  }
+  await page.click('#btn-open-trash');
+  await page.waitForSelector('[data-act="restore"]');
+  await page.click('[data-act="restore"]');
+  await page.waitForTimeout(400);
   let stRes = await getState();
+  const restored = stRes.records.find(x => x.content === '削除する記録');
+  ok('T-4-5 ごみ箱から実際に復元される', restored && !restored.deletedAt,
+    restored ? `deletedAt=${restored.deletedAt}` : '記録なし');
   const totalAfterRestore = stRes.records.filter(x => x.date === localDate(0) && !x.deletedAt)
     .reduce((n, x) => n + (x.bp | 0), 0);
-  ok('T-4-5 復元しても日次上限を超えない', totalAfterRestore <= 1500, `合計=${totalAfterRestore}`);
+  ok('T-4-5 ごみ箱から復元しても日次上限を超えない', totalAfterRestore <= 1500, `合計=${totalAfterRestore}`);
 
   /* --- 更新前からある記録を編集しても稼げない(段階6レビューの修正条件) --- */
   await freshPage(true);
@@ -2448,6 +2447,73 @@ async function test21_dailyActionBonuses() {
   await shot('74-daily-action-bonus');
 }
 
+async function test22_trashRestoreRecalc() {
+  console.log('\n■ 試験22: ごみ箱からの復元でも上限を超えない(APP-440 段階7レビュー)');
+
+  async function dayBp() {
+    const st = await getState();
+    return st.records.filter(r => r.date === localDate(0) && !r.deletedAt)
+      .reduce((n, r) => n + (r.bp | 0), 0);
+  }
+  async function nonExamDayBp() {
+    const st = await getState();
+    const nonExamIds = st.settings.subjects.filter(x => !x.examSubject).map(x => x.id);
+    return st.records.filter(r => r.date === localDate(0) && !r.deletedAt &&
+      nonExamIds.indexOf(r.subjectId) !== -1).reduce((n, r) => n + (r.bp | 0), 0);
+  }
+  /* トーストの「元に戻す」を押さずに、ごみ箱画面から復元する */
+  async function deleteThenRestoreFromTrash(content) {
+    await nav('record');
+    await page.waitForTimeout(150);
+    await page.click(`.rec-item:has-text("${content}") [data-act="del"]`);
+    await page.waitForTimeout(400);
+    await page.click('#btn-open-trash');
+    await page.waitForSelector('[data-act="restore"]');
+    await page.click('[data-act="restore"]');
+    await page.waitForTimeout(400);
+  }
+
+  /* --- 日次1,500BPの上限 --- */
+  await freshPage(true);
+  for (let i = 0; i < 3; i++) {
+    await addRecord({ date: localDate(0), subjectLabel: '英語', content: '上限' + i, plan: 700, actual: 700 });
+    await page.waitForTimeout(200);
+  }
+  const capBefore = await dayBp();
+  ok('日次上限まで埋まっている', capBefore === 1500, `合計=${capBefore}`);
+
+  await deleteThenRestoreFromTrash('上限0');
+  const capAfter = await dayBp();
+  ok('ごみ箱から復元しても日次1,500BPを超えない', capAfter <= 1500, `合計=${capAfter}`);
+
+  /* --- 非受験科目の100BP上限 --- */
+  await freshPage(true);
+  await addRecord({ date: localDate(0), subjectLabel: 'その他', content: '非受験A', plan: 90, actual: 90 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: localDate(0), subjectLabel: 'その他', content: '非受験B', plan: 90, actual: 90 });
+  await page.waitForTimeout(200);
+  const nonExamBefore = await nonExamDayBp();
+  ok('非受験科目は100BPで頭打ちになっている', nonExamBefore === 100, `合計=${nonExamBefore}`);
+
+  await deleteThenRestoreFromTrash('非受験A');
+  const nonExamAfter = await nonExamDayBp();
+  ok('ごみ箱から復元しても非受験科目100BPを超えない', nonExamAfter <= 100, `合計=${nonExamAfter}`);
+
+  /* --- 行動ボーナスは1日1回のまま --- */
+  await freshPage(true);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: 'ボーナスA', plan: 30, actual: 30 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: 'ボーナスB', plan: 30, actual: 30 });
+  await page.waitForTimeout(200);
+  const bonusBefore = await dayBp();
+  ok('行動ボーナスは1回ぶん(60分+50)', bonusBefore === 110, `合計=${bonusBefore}`);
+
+  await deleteThenRestoreFromTrash('ボーナスA');
+  const bonusAfter = await dayBp();
+  ok('ごみ箱から復元しても行動ボーナスは1回ぶんのまま', bonusAfter === 110, `合計=${bonusAfter}`);
+  await shot('75-trash-restore');
+}
+
 /* ============ 実行 ============ */
 browser = await chromium.launch();
 try {
@@ -2472,6 +2538,7 @@ try {
   await test19_newsSlotOnRestore();
   await test20_editRecalcBp();
   await test21_dailyActionBonuses();
+  await test22_trashRestoreRecalc();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);
