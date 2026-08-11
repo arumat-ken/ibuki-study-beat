@@ -2263,6 +2263,47 @@ async function test20_editRecalcBp() {
     .reduce((n, x) => n + (x.bp | 0), 0);
   ok('T-4-5 復元しても日次上限を超えない', totalAfterRestore <= 1500, `合計=${totalAfterRestore}`);
 
+  /* --- 更新前からある記録を編集しても稼げない(段階6レビューの修正条件) --- */
+  await freshPage(true);
+  await page.evaluate(() => {
+    const key = 'ibukiStudyBeat.v3';
+    const s5 = JSON.parse(localStorage.getItem(key));
+    const p5 = n => (n < 10 ? '0' : '') + n;
+    const d5 = new Date();
+    const today = `${d5.getFullYear()}-${p5(d5.getMonth() + 1)}-${p5(d5.getDate())}`;
+    /* APP-440 より前の形。bpMinInitial も timerUsed も持たない。 */
+    s5.records.push({
+      id: 'oldtimer', date: today, subjectId: 'eng', content: '旧タイマー記録',
+      kind: '暗記', planMin: 30, actualMin: 30, reflection: '', deletedAt: null,
+      bp: 80, createdAt: 1, updatedAt: 1, score: null, maxScore: null
+    });
+    s5.records.push({
+      id: 'oldmanual', date: today, subjectId: 'eng', content: '旧手入力記録',
+      kind: '暗記', planMin: 0, actualMin: 45, reflection: '', deletedAt: null,
+      bp: 45, createdAt: 2, updatedAt: 1, score: null, maxScore: null
+    });
+    localStorage.setItem(key, JSON.stringify(s5));
+  });
+  await reload();
+  let stOld = await getState();
+  const oldTimer = stOld.records.find(x => x.id === 'oldtimer');
+  const oldManual = stOld.records.find(x => x.id === 'oldmanual');
+  ok('旧記録を読み込むだけではBP残高が変わらない',
+    oldTimer.bp === 80 && oldManual.bp === 45, `timer=${oldTimer.bp}, manual=${oldManual.bp}`);
+  ok('旧記録に初回BP上限が入る',
+    oldTimer.bpMinInitial === 30 && oldManual.bpMinInitial === 45,
+    `timer=${oldTimer.bpMinInitial}, manual=${oldManual.bpMinInitial}`);
+
+  await editRecord('旧タイマー記録', { actual: 600 });
+  r = await recBy('旧タイマー記録');
+  ok('旧タイマー記録を600分へ編集してもBP対象は30分以下', r.bpMin <= 30, `bpMin=${r.bpMin}, bp=${r.bp}`);
+  ok('旧タイマー記録のBPが600分ぶんにならない', r.bp <= 80, `bp=${r.bp}`);
+
+  await editRecord('旧手入力記録', { actual: 600 });
+  r = await recBy('旧手入力記録');
+  ok('旧手入力記録を600分へ編集してもBP対象は45分以下', r.bpMin <= 45, `bpMin=${r.bpMin}, bp=${r.bp}`);
+  ok('旧手入力記録のBPが600分ぶんにならない', r.bp <= 95, `bp=${r.bp}`);
+
   /* --- T-4-6: 何度再計算しても同じ値になる --- */
   const stable = await page.evaluate(() => {
     const key = 'ibukiStudyBeat.v3';

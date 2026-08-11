@@ -661,6 +661,8 @@
     if (prog.completedAt) segmentClose(ses, prog.completedAt);
     applyBoostsOnce(rec, ses);
     grantStudyBP(rec);
+    /* 宣言して勉強した分までを、以後の編集の上限として確定する。 */
+    rec.bpMinInitial = rec.bpMin;
     save();
     return true;
   }
@@ -823,6 +825,7 @@
       if (ses) { segmentClose(ses); applyBoostsOnce(rec, ses); rec.timerUsed = true; }
       state.activeSession = null;
       var grant = grantStudyBP(rec);
+      rec.bpMinInitial = rec.bpMin;
       save(); closeModal();
       celebrateAfterSave(rec, grant);
       renderToday();
@@ -1151,12 +1154,15 @@
   function grantStudyBP(rec) {
     /* APP-440 §1・§5: BPの対象は実績Cではなく D。
      * D ≤ C ≤ A+E、かつ編集で増えない。 */
+    /* 学習中の記録は、宣言済み時間(計画+延長)が上限として効いている。
+     * ここに初回BP上限まで重ねると、明示的に延長した分が入らなくなる。 */
+    var inProgress = !!(state.activeSession && state.activeSession.recordId === rec.id);
     var resolved = C.resolveBpMinutes({
       actualMin: rec.actualMin,
       planMin: rec.planMin,
       extendedMin: rec.extendedMin,
       manualEntry: !rec.timerUsed,
-      previousBpMin: (typeof rec.bpMinInitial === 'number') ? rec.bpMinInitial : null
+      previousBpMin: (!inProgress && typeof rec.bpMinInitial === 'number') ? rec.bpMinInitial : null
     });
     rec.bpMin = resolved.bpMin;
     var segments = buildStudyBPSegments(rec, resolved.bpMin);

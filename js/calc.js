@@ -523,6 +523,15 @@
           isIntInRange(r.planMin | 0, 0, MAX_MIN_PER_RECORD) &&
           isIntInRange(r.actualMin | 0, 0, MAX_MIN_PER_RECORD);
       }).map(function (r) {
+        /* APP-440 §5: BP対象時間 D。旧データは actualMin と同じにして、
+         * これまでに獲得したBPをそのまま維持する。 */
+        var bpMinValue = isIntInRange(r.bpMin, 0, MAX_MIN_PER_RECORD) ? r.bpMin : (r.actualMin | 0);
+        /* 初回BP上限。持っていない既存記録には、すでに確定している bpMin を入れる。
+         * ここを null のままにすると、旧記録を編集したときに上限が無くなり、
+         * 実績を600分へ書き換えるだけでBPを取れてしまう。
+         * 読み込み時に入れるだけなので、未編集の残高は変わらない。 */
+        var bpMinInitialValue = isIntInRange(r.bpMinInitial, 0, MAX_MIN_PER_RECORD)
+          ? r.bpMinInitial : bpMinValue;
         return {
           id: typeof r.id === 'string' ? r.id : 'r' + Math.random().toString(36).slice(2, 10),
           date: r.date,
@@ -542,14 +551,14 @@
            * bpMin は actualMin と同じにして、これまでに獲得したBPをそのまま維持する。
            * 新しい上限は今後の記録にだけ効く。 */
           extendedMin: isIntInRange(r.extendedMin, 0, MAX_MIN_PER_RECORD) ? r.extendedMin : 0,
-          bpMin: isIntInRange(r.bpMin, 0, MAX_MIN_PER_RECORD) ? r.bpMin : (r.actualMin | 0),
+          bpMin: bpMinValue,
           bpMultiplier: (typeof r.bpMultiplier === 'number' && isFinite(r.bpMultiplier) && r.bpMultiplier >= 0)
             ? r.bpMultiplier : 1,
           bpBoost: sanitizeBpBoost(r.bpBoost),
           /* APP-440 §5: 編集でBPを増やせないようにするための上限。
            * タイマー記録は宣言済み時間(計画+延長)が上限になるので持たない。
            * 手入力は宣言済み時間が無いため、作成時の実績を上限として覚えておく。 */
-          bpMinInitial: isIntInRange(r.bpMinInitial, 0, MAX_MIN_PER_RECORD) ? r.bpMinInitial : null,
+          bpMinInitial: bpMinInitialValue,
           timerUsed: r.timerUsed === true,
           bpActions: Array.isArray(r.bpActions)
             ? r.bpActions.filter(function (k) {

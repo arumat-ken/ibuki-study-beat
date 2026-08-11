@@ -1611,3 +1611,51 @@ test('APP-440 §4 T-3-7: BPを使い切っていても残高は0で止まり、�
   assert.ok(after <= before, '削除で増えない');
   assert.deepEqual(state.shop.owned.costume, ['socks'], '購入済みアイテムは失われない');
 });
+
+test('APP-440 §5: 既存記録にも初回BP上限が入る(旧記録を編集して稼げない)', () => {
+  // 更新前からある記録は bpMinInitial を持たない。ここを null のままにすると、
+  // 実績を600分へ書き換えるだけでBPを取れてしまう。
+  const s = C.sanitizeState({
+    schemaVersion: 3,
+    records: [
+      // 旧タイマー記録(計画30分・実績30分)
+      { id: 'r1', date: '2026-08-01', subjectId: 'eng', content: 'timer', planMin: 30, actualMin: 30, bp: 80 },
+      // 旧手入力記録(bpMin を持っている)
+      { id: 'r2', date: '2026-08-01', subjectId: 'eng', content: 'manual', planMin: 0, actualMin: 45, bpMin: 45, bp: 45 }
+    ]
+  }, '2026-08-11');
+
+  assert.equal(s.records[0].bpMinInitial, 30, '旧タイマー記録は確定済みの30分が上限');
+  assert.equal(s.records[1].bpMinInitial, 45, '旧手入力記録は確定済みの45分が上限');
+
+  // 読み込むだけではBP残高が変わらない
+  assert.equal(s.records[0].bp, 80);
+  assert.equal(s.records[1].bp, 45);
+  assert.equal(C.calcBpBalance(s), 125, '読み込みで残高が動かない');
+});
+
+test('APP-440 §5: 旧記録を600分へ編集してもBP対象は増えない', () => {
+  const s = C.sanitizeState({
+    schemaVersion: 3,
+    records: [
+      { id: 'r1', date: '2026-08-01', subjectId: 'eng', content: 'timer', planMin: 30, actualMin: 30, bp: 80 },
+      { id: 'r2', date: '2026-08-01', subjectId: 'eng', content: 'manual', planMin: 0, actualMin: 45, bpMin: 45, bp: 45 }
+    ]
+  }, '2026-08-11');
+
+  // 旧タイマー記録: timerUsed が false でも、初回BP上限で止まる
+  const timerEdited = C.resolveBpMinutes({
+    actualMin: 600, planMin: 30, extendedMin: 0,
+    manualEntry: !s.records[0].timerUsed,          // 旧記録なので false → 手入力扱い
+    previousBpMin: s.records[0].bpMinInitial
+  });
+  assert.equal(timerEdited.bpMin, 30, '旧タイマー記録は30分以下');
+  assert.ok(timerEdited.cappedByPrevious);
+
+  // 旧手入力記録も同じ
+  const manualEdited = C.resolveBpMinutes({
+    actualMin: 600, planMin: 0, extendedMin: 0,
+    manualEntry: true, previousBpMin: s.records[1].bpMinInitial
+  });
+  assert.equal(manualEdited.bpMin, 45, '旧手入力記録は45分以下');
+});
