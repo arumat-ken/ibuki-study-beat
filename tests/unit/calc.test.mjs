@@ -894,3 +894,48 @@ test('summarizeBp: 記録がゼロでも0で割らない', () => {
   assert.equal(sum.average, 0);
   assert.equal(sum.bestDate, null);
 });
+
+/* ==================================================================
+ * Codexレビュー Q5: 壊れた開始時刻を読み込まない
+ * ================================================================== */
+
+test('isSaneTimestamp: 未来・NaN・無限大・古すぎる値を受け付けない', () => {
+  const now = Date.now();
+  assert.ok(C.isSaneTimestamp(now - 60 * 1000), '1分前は正常');
+  assert.ok(C.isSaneTimestamp(now + 30 * 1000), '30秒の時計ずれは許す');
+  assert.ok(!C.isSaneTimestamp(now + 60 * 60 * 1000), '1時間先は不正');
+  assert.ok(!C.isSaneTimestamp(NaN));
+  assert.ok(!C.isSaneTimestamp(Infinity));
+  assert.ok(!C.isSaneTimestamp(-Infinity));
+  assert.ok(!C.isSaneTimestamp('123'), '文字列は不正');
+  assert.ok(!C.isSaneTimestamp(null));
+  assert.ok(!C.isSaneTimestamp(undefined));
+  assert.ok(!C.isSaneTimestamp(now - 40 * 24 * 60 * 60 * 1000), '40日前は古すぎる');
+});
+
+test('sanitizeState: 壊れた開始時刻の学習セッションは復元しない', () => {
+  const now = Date.now();
+  const bad = [NaN, Infinity, now + 3 * 60 * 60 * 1000, now - 60 * 24 * 60 * 60 * 1000, '123', null];
+  bad.forEach((ts) => {
+    const st = C.defaultState('2026-08-11');
+    st.activeSession = { recordId: 'r1', startTs: ts, pausedAccum: 0, pausedAt: null };
+    const out = C.sanitizeState(JSON.parse(JSON.stringify(st)), '2026-08-11');
+    assert.equal(out.activeSession, null, '開始時刻 ' + String(ts) + ' は復元しない');
+  });
+});
+
+test('sanitizeState: 正常な学習セッションは復元する', () => {
+  const st = C.defaultState('2026-08-11');
+  const ts = Date.now() - 10 * 60 * 1000;
+  st.activeSession = { recordId: 'r1', startTs: ts, pausedAccum: 5000, pausedAt: null };
+  const out = C.sanitizeState(JSON.parse(JSON.stringify(st)), '2026-08-11');
+  assert.equal(out.activeSession.startTs, ts);
+  assert.equal(out.activeSession.pausedAccum, 5000);
+});
+
+test('sanitizeState: 一時停止の蓄積が負や壊れた値なら0にする', () => {
+  const st = C.defaultState('2026-08-11');
+  st.activeSession = { recordId: 'r1', startTs: Date.now() - 60000, pausedAccum: -999, pausedAt: null };
+  const out = C.sanitizeState(JSON.parse(JSON.stringify(st)), '2026-08-11');
+  assert.equal(out.activeSession.pausedAccum, 0, '負の値は0にする(経過時間を水増しできないように)');
+});

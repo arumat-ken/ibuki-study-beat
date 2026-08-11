@@ -1624,15 +1624,27 @@ async function test17_sessionGuards() {
   console.log('\n■ 試験17: 学習セッションを不用意に失わないためのガード(APP-471)');
   await freshPage(true);
 
-  async function startAndAge(name, minutes) {
+  // 予定を1件作り、その予定から学習を始める。
+  // 「学習を開始する」は予定が残っていると選択モーダルを出すため、
+  // 予定を作る → その予定をタップ、の2段階にして手順を確定させる。
+  async function makePlan(name) {
     await nav('today');
-    await page.click('#btn-start-study');
-    await page.waitForSelector('#modal-back.open');
+    await page.click('#btn-add-plan');
+    await page.waitForSelector('#m-subject');
     await page.selectOption('#m-subject', { label: '英語' });
     await page.fill('#m-content', name);
     await page.fill('#m-plan', '60');
     await page.click('#m-save');
+    await page.waitForTimeout(300);
+  }
+
+  async function startPlan(name) {
+    await nav('today');
+    await page.click('#today-plans .plan-item:has-text("' + name + '")');
     await page.waitForSelector('#timer-card:visible');
+  }
+
+  async function ageSession(minutes) {
     await page.evaluate((m) => {
       const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
       st.activeSession.startTs -= m * 60 * 1000;
@@ -1640,6 +1652,12 @@ async function test17_sessionGuards() {
     }, minutes);
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForSelector('#timer-card:visible');
+  }
+
+  async function startAndAge(name, minutes) {
+    await makePlan(name);
+    await startPlan(name);
+    await ageSession(minutes);
   }
 
   /* --- 画面を移動しても、アプリを閉じても続く --- */
@@ -1702,9 +1720,97 @@ async function test17_sessionGuards() {
     JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession);
   ok('17-12 セッションが残らない', cleared === null, JSON.stringify(cleared));
 
-  /* 「取り消しを押したときに元の予定が消えていた場合」の分岐は、
-   * 知らせが出ている数秒のあいだに予定を削除する必要があり、画面操作では再現できない。
-   * 防御用のコードとして残すが、自動試験の対象からは外す。 */
+  /* --- Codexレビュー Q4-2: 学習中の予定を削除しても時間を失わない（実際の削除UIから） --- */
+  await startAndAge('削除ガードの検証', 25);
+  await nav('record');
+  await page.waitForTimeout(300);
+  // 一覧の🗑から削除しようとする
+  const delBtn = page.locator('.rec-item .rec-actions button', { hasText: '🗑' })
+    .first();
+  const hasDel = await delBtn.count();
+  if (hasDel) {
+    await delBtn.click();
+    await page.waitForTimeout(400);
+  }
+  const guardTxt = (await page.textContent('#modal-back')).replace(/\s+/g, '');
+  ok('17-13 学習中の予定を消そうとすると止められる',
+    guardTxt.includes('いま学習中の予定'), guardTxt.slice(0, 50));
+  ok('17-14 未保存の時間を具体的に示す', guardTxt.includes('25分'), guardTxt.slice(0, 60));
+  ok('17-15 終了して記録する選択肢がある', await page.isVisible('#dl-finish'));
+
+  // 「やめる」を選べば、記録もタイマーも無事
+  await page.click('#dl-cancel');
+  await page.waitForTimeout(300);
+  await nav('today');
+  await page.waitForTimeout(200);
+  ok('17-16 やめるとタイマーが続く(時間を失わない)', await page.isVisible('#timer-card'));
+  const stillThere = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const r = st.records.find((x) => (x.content || '').includes('削除ガードの検証'));
+    return r ? !r.deletedAt : null;
+  });
+  ok('17-17 記録も削除されていない', stillThere === true, String(stillThere));
+
+  /* --- Codexレビュー Q6-1: 取り消し待ちの時間が勉強時間に入らない --- */
+  await page.click('#btn-discard');
+  await page.waitForSelector('#m-ok');
+  await page.click('#m-ok');
+  await page.waitForTimeout(2500);          // 2.5秒ぶん待ってから戻す
+  await page.click('#toast-action');
+  await page.waitForTimeout(400);
+  const afterUndo = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const s = st.activeSession;
+    if (!s) return null;
+    return { elapsedMin: Math.floor((Date.now() - s.startTs - s.pausedAccum) / 60000),
+             pausedAccum: s.pausedAccum };
+  });
+  ok('17-18 取り消し待ちの時間が一時停止として除かれる',
+    afterUndo && afterUndo.pausedAccum >= 2000, JSON.stringify(afterUndo));
+  ok('17-19 取り消し後の経過時間が水増しされない',
+    afterUndo && afterUndo.elapsedMin === 25, JSON.stringify(afterUndo));
+
+  /* --- Codexレビュー Q6-2: 別の学習が始まっていたら上書きしない --- */
+  const prevRecordId = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession.recordId);
+  await page.click('#btn-discard');
+  await page.waitForSelector('#m-ok');
+  await page.click('#m-ok');
+  await page.waitForTimeout(300);
+  // 先に別の学習を始めてしまう(前のセッションとは別の予定)
+  await makePlan('別セッションの検証');
+  await startPlan('別セッションの検証');
+  await page.waitForTimeout(300);
+  // 前のセッションの「元に戻す」が残っていれば押してみる
+  if (await page.isVisible('#toast-action')) {
+    await page.click('#toast-action');
+    await page.waitForTimeout(300);
+  }
+  const nowRecordId = await page.evaluate(() =>
+    (JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession || {}).recordId);
+  ok('17-20 別の学習を始めた後は、前のセッションで上書きされない',
+    nowRecordId && nowRecordId !== prevRecordId,
+    'prev=' + prevRecordId + ' now=' + nowRecordId);
+
+  /* --- Codexレビュー Q4-1: 削除済みの予定からは学習を始められない --- */
+  const startedOnDeleted = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    // 適当な記録をごみ箱へ入れ、そのIDで開始を試みる
+    const target = st.records.find((r) => !r.deletedAt && r.id !== (st.activeSession || {}).recordId);
+    if (!target) return 'no-target';
+    target.deletedAt = Date.now();
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+    return target.id;
+  });
+  if (startedOnDeleted !== 'no-target') {
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForTimeout(400);
+    const inList = await page.evaluate((id) =>
+      !!document.querySelector('#today-plans .plan-item[data-id="' + id + '"]'), startedOnDeleted);
+    ok('17-21 ごみ箱に入れた予定は今日の一覧から消える(開始できない)', !inList, String(inList));
+  } else {
+    ok('17-21 ごみ箱に入れた予定は今日の一覧から消える(開始できない)', true, '対象なし');
+  }
 
   await shot('68-session-guard');
 }

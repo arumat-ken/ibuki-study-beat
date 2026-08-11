@@ -531,8 +531,9 @@
   });
 
   function startSessionForRecord(recordId) {
-    var rec = state.records.find(function (r) { return r.id === recordId; });
-    if (!rec) return;
+    // 削除済みの予定では学習を始めない(Codexレビュー Q4-1)
+    var rec = state.records.find(function (r) { return r.id === recordId && !r.deletedAt; });
+    if (!rec) { toast('その予定は見つからないよ', true); return; }
     state.activeSession = { recordId: recordId, startTs: Date.now(), pausedAccum: 0, pausedAt: null };
     save();
     renderToday();
@@ -614,18 +615,32 @@
       );
       $('m-close').onclick = $('m-cancel').onclick = closeModal;
       $('m-ok').onclick = function () {
-        // 取り消せるように、やめた内容を控えておく(APP-471)
+        // 取り消せるように、やめた内容と「やめた時刻」を控えておく(APP-471)
         var discarded = state.activeSession;
+        var discardedAt = Date.now();
         state.activeSession = null;
         save(); closeModal(); renderToday();
         toast(lostMin >= 1 ? C.fmtDuration(lostMin) + 'を記録せずにやめたよ' : '記録せずにやめたよ',
           false, '元に戻す', function () {
+            // すでに別の学習が始まっていたら、それを壊さない(Codexレビュー Q6-2)
+            if (state.activeSession) {
+              toast('別の学習が始まっているので戻せなかったよ', true);
+              return;
+            }
             // 元の記録がまだあるときだけ戻す
             var still = state.records.find(function (r) {
               return r.id === discarded.recordId && !r.deletedAt;
             });
             if (!still) { toast('元の予定が見つからないので戻せなかったよ', true); return; }
-            state.activeSession = discarded;
+            // やめてから戻すまでの時間は勉強していないので、経過に含めない
+            // (Codexレビュー Q6-1)
+            var waitedMs = Math.max(0, Date.now() - discardedAt);
+            state.activeSession = {
+              recordId: discarded.recordId,
+              startTs: discarded.startTs,
+              pausedAccum: (discarded.pausedAccum || 0) + waitedMs,
+              pausedAt: discarded.pausedAt
+            };
             save(); renderToday();
             toast('学習を再開したよ！');
           });
@@ -1129,6 +1144,39 @@
   function deleteRecord(id) {
     var rec = state.records.find(function (r) { return r.id === id; });
     if (!rec) return;
+
+    /* 学習中の予定は、そのまま消すと未保存の経過時間ごと失われる。
+     * 「タイマーが動き続ける」不具合を「勉強した時間が消える」不具合に
+     * すり替えないよう、削除の入口で止めて先に終わらせてもらう
+     * (Codexレビュー Q4-2)。 */
+    if (state.activeSession && state.activeSession.recordId === id) {
+      var runningMin = Math.floor(sessionElapsedMs() / 60000);
+      openModal(
+        '<h3>いま学習中の予定だよ<button class="icon-btn" id="m-close">✕</button></h3>' +
+        '<p class="small" style="margin-bottom:6px">' +
+        'この予定はいまタイマーが動いていて、' +
+        (runningMin >= 1
+          ? '<b style="color:var(--gold-bright)">' + C.fmtDuration(runningMin) + '</b>ぶんがまだ保存されていないよ。'
+          : 'まだ保存されていない時間があるよ。') +
+        '</p>' +
+        '<p class="small muted" style="margin-bottom:12px">先に終わらせてから消してね。</p>' +
+        '<button class="btn primary block" id="dl-finish">終了して記録する ✓</button>' +
+        '<button class="btn block" id="dl-discard" style="margin-top:8px">記録せずに終了して削除する</button>' +
+        '<button class="btn block" id="dl-cancel" style="margin-top:8px">やめる</button>'
+      );
+      $('m-close').onclick = $('dl-cancel').onclick = closeModal;
+      $('dl-finish').onclick = function () {
+        closeModal();
+        openFinishModal(rec);   // 保存が終われば、あらためて削除できる
+      };
+      $('dl-discard').onclick = function () {
+        state.activeSession = null;
+        save(); closeModal();
+        deleteRecord(id);       // タイマーを止めたので、通常の削除へ進む
+      };
+      return;
+    }
+
     rec.deletedAt = Date.now();
     save(); renderRecordList(); renderToday();
     toast('削除しました(ごみ箱へ移動)', false, '元に戻す', function () {
