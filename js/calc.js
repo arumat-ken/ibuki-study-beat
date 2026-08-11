@@ -798,7 +798,18 @@
     segments.forEach(function (s) {
       if (!s || typeof s !== 'object') return;
       if (typeof s.from !== 'number' || !isFinite(s.from)) return;
-      var to = (typeof s.to === 'number' && isFinite(s.to)) ? s.to : now;
+      var to;
+      if (s.to === null) {
+        /* null だけが「いま進行中」を表す。書き込み側は必ず to: null を明示する。 */
+        to = now;
+      } else if (typeof s.to === 'number' && isFinite(s.to)) {
+        to = s.to;
+      } else {
+        /* 壊れた終了時刻('x' / {} / Infinity / 欠落)は捨てる。
+         * now で閉じると、壊れた区間を「いままで学習していた」ことにしてしまい、
+         * 時間制アイテムの倍率対象を水増しできる。推測して補わない。 */
+        return;
+      }
       if (to <= s.from) return;
       out.push({ from: s.from, to: to });
     });

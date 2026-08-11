@@ -891,6 +891,32 @@ test('APP-440 §3: normalizeSegments は進行中を now で閉じ、壊れた�
   assert.equal(out[1].to, now, '進行中の区間は now で閉じる');
 });
 
+test('APP-440 §3: 壊れた終了時刻は now で閉じず、区間ごと捨てる', () => {
+  // to: null 以外の「数値でない終了時刻」を now で閉じると、
+  // 壊れた区間を「いままで学習していた」ことにでき、倍率の対象を水増しできる。
+  const now = T0 + 30 * M;
+  assert.deepEqual(C.normalizeSegments([
+    { from: T0, to: 'x' },
+    { from: T0, to: {} },
+    { from: T0, to: Infinity }
+  ], now), [], '壊れた to は捨てる');
+
+  // 終了時刻そのものが無い場合も、進行中とは判断できないので捨てる
+  assert.deepEqual(C.normalizeSegments([{ from: T0 }], now), [], 'to が無い区間も捨てる');
+  assert.deepEqual(C.normalizeSegments([{ from: T0, to: NaN }], now), [], 'NaN も捨てる');
+
+  // null だけが進行中を表す
+  const alive = C.normalizeSegments([{ from: T0, to: null }], now);
+  assert.equal(alive.length, 1);
+  assert.equal(alive[0].to, now);
+
+  // 壊れた区間ぶんの倍率が乗らないことまで確認する
+  const boost = C.applyTimedBoost({
+    segments: [{ from: T0, to: 'x' }], startedAt: T0, durationMs: 60 * M, consumedMs: 0, now
+  });
+  assert.equal(boost.boostMinutes, 0, '壊れた区間に倍率は乗らない');
+});
+
 test('APP-440 §3: segmentsOverlapMs は重複区間を二重に数えない', () => {
   // 0-10分 と 5-15分 が重なっている。単純合計なら20分だが、実際に勉強したのは15分。
   const ms = C.segmentsOverlapMs([seg(0, 10), seg(5, 15)], T0, T0 + 60 * M);
