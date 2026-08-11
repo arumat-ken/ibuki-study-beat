@@ -101,7 +101,9 @@ async function addRecord({ date, subjectLabel, content, kind = null, plan = '', 
   }
   await page.fill('#rf-plan', String(plan));
   await page.fill('#rf-actual', String(actual));
-  // 得点欄は前回の値が残るため、テスト以外では必ず空にする
+  // 得点欄は前回の値が残るため、テスト以外では必ず空にする。
+  // 種別が「テスト」のときは欄が出ていなければ異常なので、待って確実に扱う。
+  if (kind === 'テスト') await page.waitForSelector('#rf-score-row', { state: 'visible' });
   if (await page.isVisible('#rf-score-row')) {
     await page.fill('#rf-score', kind === 'テスト' && score !== '' ? String(score) : '');
     await page.fill('#rf-maxscore', kind === 'テスト' && maxScore !== '' ? String(maxScore) : '');
@@ -1662,6 +1664,9 @@ async function test16_timerAutoStop() {
   ok('T-1-1 計画時間でタイマーが自動停止し完了画面が出る', await page.isVisible('#timer-completed'));
   const doneText = await page.textContent('#timer-completed');
   ok('T-1-1 完了画面に60分と出る', /1時間|60分/.test(doneText), doneText);
+  /* 完了したのにコーチが「集中してるね」のままだと、画面と実態が食い違う */
+  const greetAfter = await page.textContent('#today-greeting');
+  ok('T-1-1 完了後はコーチの言葉も完了に変わる', !/集中してるね/.test(greetAfter), greetAfter);
   await shot('70-timer-completed');
 
   /* --- T-1-2: 完了画面で何もしないまま放置しても増えない --- */
@@ -2135,21 +2140,16 @@ async function test19_newsSlotOnRestore() {
   await addNews('ニュース4');
   ok('T-3-1 4本目にBPが付き、BP付きは3本のまま', await bpNewsCount() === 3, String(await bpNewsCount()));
 
-  /* ここで「元に戻す」を押しても、枠が埋まっているのでBPは戻らない */
+  /* T-3-3: 枠が空いている状態で「元に戻す」を押すとBPごと復活する。
+   * 条件付きにせず、トーストの「元に戻す」が出るまで待って必ず押す。 */
   await page.click('.news-item:has-text("ニュース4") [data-act="del"]');
-  await page.waitForTimeout(200);
-  await addNews('ニュース5');
-  await page.click('.news-item:has-text("ニュース5") [data-act="del"]');
-  await page.waitForTimeout(200);
-  await addNews('ニュース6');
+  await page.waitForSelector('#toast-action');
   const beforeUndo = await bpNewsCount();
-  if (await page.isVisible('#toast .toast-action')) {
-    await page.click('#toast .toast-action');
-    await page.waitForTimeout(300);
-  }
+  ok('T-3-3 削除直後はBP付きが2本', beforeUndo === 2, String(beforeUndo));
+  await page.click('#toast-action');
+  await page.waitForTimeout(300);
   const afterUndo = await bpNewsCount();
-  ok('T-3-2 枠が埋まっていれば元に戻してもBPは戻らない', afterUndo <= C_NEWS_LIMIT,
-    `前=${beforeUndo}, 後=${afterUndo}`);
+  ok('T-3-3 枠が空いていればBPごと復活する', afterUndo === 3, `前=${beforeUndo}, 後=${afterUndo}`);
   ok('T-3-5 どの時点でもBP付きは3本を超えない', afterUndo <= C_NEWS_LIMIT, String(afterUndo));
 
   /* 5本目以降を足してもBP付きは3本を超えない */
@@ -2514,6 +2514,56 @@ async function test22_trashRestoreRecalc() {
   await shot('75-trash-restore');
 }
 
+async function test23_narrowScreens() {
+  console.log('\n■ 試験23: APP-440で追加した画面の実表示確認(320px / 390px)');
+  const T0 = new Date(2026, 7, 11, 10, 0, 0).getTime();
+
+  for (const width of [320, 390]) {
+    await freshPageWithClock(T0);
+    await page.setViewportSize({ width, height: 700 });
+    await startPlanTimer({ content: '表示確認' + width, plan: 30 });
+    await page.waitForSelector('#timer-card:visible');
+
+    /* 学習中のカード */
+    let overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2);
+    ok(`${width}px 学習中のタイマーカードで横スクロールが出ない`, !overflow);
+
+    /* 完了画面(延長ボタン4つ + 休憩 + 今日はここまで) */
+    await page.clock.fastForward(30 * 60 * 1000);
+    await page.waitForSelector('#timer-completed');
+    overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2);
+    ok(`${width}px 完了画面で横スクロールが出ない`, !overflow);
+
+    /* 延長ボタンが画面内に収まっているか */
+    const extFits = await page.evaluate((w) => {
+      return Array.prototype.every.call(document.querySelectorAll('[data-ext]'), function (b) {
+        const r = b.getBoundingClientRect();
+        return r.left >= -1 && r.right <= w + 1 && r.height >= 32;
+      });
+    }, width);
+    ok(`${width}px 延長ボタンが画面内に収まり、押せる大きさがある`, extFits);
+
+    /* 文字が切れていないか(ボタンの中身がはみ出していないか) */
+    const textFits = await page.evaluate(() => {
+      return Array.prototype.every.call(document.querySelectorAll('[data-ext]'), function (b) {
+        return b.scrollWidth <= b.clientWidth + 1;
+      });
+    });
+    ok(`${width}px 延長ボタンの文字が切れない`, textFits);
+
+    await shot(width === 320 ? '76-completed-320px' : '77-completed-390px');
+
+    /* 保存モーダルも確認する */
+    await page.click('#btn-finish');
+    await page.waitForSelector('#m-actual');
+    overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2);
+    ok(`${width}px 保存モーダルで横スクロールが出ない`, !overflow);
+    await page.click('#m-save');
+    await page.waitForTimeout(300);
+    if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  }
+}
+
 /* ============ 実行 ============ */
 browser = await chromium.launch();
 try {
@@ -2539,6 +2589,7 @@ try {
   await test20_editRecalcBp();
   await test21_dailyActionBonuses();
   await test22_trashRestoreRecalc();
+  await test23_narrowScreens();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

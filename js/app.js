@@ -576,6 +576,10 @@
       confirmCompletedSession(rec, prog);
       card.style.display = '';
       renderCompletedCard(card, rec, prog);
+      /* 完了したのにコーチが「集中してるね」のままだと、画面と実態が食い違う。
+       * カードだけ描き直す経路(タイマーの自動停止)でも、あいさつを更新する。 */
+      if ($('today-greeting')) $('today-greeting').textContent = greeting();
+      renderBpBalanceIfAny();
       return;
     }
 
@@ -711,6 +715,11 @@
    *
    * BPは完了の時点で確定済み。ここのボタンは「今の記録が有効か」を問うものではなく、
    * 「この先どうするか」を選ぶもの。放置しても損はせず、得もしない。 */
+  /* 完了時に残高表示があれば更新する。無い版でも落ちないようにする。 */
+  function renderBpBalanceIfAny() {
+    if (typeof renderBpBalance === 'function') renderBpBalance();
+  }
+
   function renderCompletedCard(card, rec, prog) {
     var sub = subjectById(rec.subjectId);
     var min = prog.minutes;
