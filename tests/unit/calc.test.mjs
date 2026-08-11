@@ -699,3 +699,137 @@ test('sanitizeState: dailyBonusesは既知の行動ボーナスキーだけを�
   assert.equal(out.dailyBonuses['bad-date'], undefined, '不正な日付キーは除外される');
   assert.deepEqual(out.dailyBonuses['2026-08-07'], { reflection: true });
 });
+
+/* ==================================================================
+ * APP-460: 科目ごとの学習種別
+ * ================================================================== */
+
+test('studyKindsFor: 科目ごとに、その科目でやる勉強の選択肢を返す', () => {
+  const soc = C.studyKindsFor('soc');
+  assert.ok(soc.includes('一問一答'), '社会には一問一答がある');
+  assert.ok(soc.includes('流れ・つながりの整理'), '社会には流れの整理がある');
+  assert.ok(!soc.includes('読解'), '社会に「読解」は出さない');
+  assert.ok(!soc.includes('演習'), '社会に「演習」は出さない');
+
+  const math = C.studyKindsFor('math');
+  assert.ok(math.includes('公式・定理の確認'), '数学には公式・定理の確認がある');
+  assert.ok(!math.includes('暗記'), '数学に素の「暗記」は出さない');
+  assert.ok(!math.includes('読解'), '数学に「読解」は出さない');
+
+  assert.ok(C.studyKindsFor('eng').includes('リスニング'), '英語にはリスニングがある');
+  assert.ok(C.studyKindsFor('jpn').includes('古文'), '国語には古文がある');
+  assert.ok(C.studyKindsFor('sci').includes('実験・図表の読み取り'), '理科には実験・図表がある');
+});
+
+test('studyKindsFor: 全科目に「テスト」が必ず含まれる(点数欄の出し分けに使うため)', () => {
+  ['eng', 'math', 'jpn', 'sci', 'soc', 'other', 'ユーザーが作った科目'].forEach((id) => {
+    assert.ok(C.studyKindsFor(id).includes(C.TEST_KIND), id + ' に テスト がある');
+  });
+});
+
+test('studyKindsFor: 自作科目・その他は共通の選択肢を返す', () => {
+  assert.deepEqual(C.studyKindsFor('other'), C.STUDY_KINDS);
+  assert.deepEqual(C.studyKindsFor('s_custom_1'), C.STUDY_KINDS);
+});
+
+test('studyKindsFor: 返り値を書き換えても定義は壊れない(複製を返す)', () => {
+  const a = C.studyKindsFor('soc');
+  a.push('壊す');
+  assert.ok(!C.studyKindsFor('soc').includes('壊す'), '次に呼んでも影響がない');
+});
+
+test('studyKindsFor: 選択肢は5〜8個に収める(多すぎると選ぶのが負担になる)', () => {
+  ['eng', 'math', 'jpn', 'sci', 'soc', 'other'].forEach((id) => {
+    const n = C.studyKindsFor(id).length;
+    assert.ok(n >= 5 && n <= 8, id + ' は5〜8個 (実際は' + n + ')');
+  });
+});
+
+test('defaultStudyKindFor: 科目ごとの初期値を返し、その科目の一覧に含まれる', () => {
+  assert.equal(C.defaultStudyKindFor('math'), '問題演習');
+  assert.equal(C.defaultStudyKindFor('soc'), '用語の暗記');
+  assert.equal(C.defaultStudyKindFor('eng'), '単語・熟語');
+  ['eng', 'math', 'jpn', 'sci', 'soc', 'other', 'zzz'].forEach((id) => {
+    assert.ok(C.studyKindsFor(id).includes(C.defaultStudyKindFor(id)),
+      id + ' の初期値がその科目の一覧にある');
+  });
+});
+
+test('isValidStudyKind: 旧データの値も新しい値も有効なまま扱う', () => {
+  ['暗記', '演習', '読解', '講義', '復習', 'テスト', 'その他'].forEach((k) => {
+    assert.ok(C.isValidStudyKind(k), '旧データの「' + k + '」は有効');
+  });
+  assert.ok(C.isValidStudyKind('一問一答'));
+  assert.ok(C.isValidStudyKind('公式・定理の確認'));
+  assert.ok(!C.isValidStudyKind('存在しない種別'));
+});
+
+test('validateRecord: 科目と学習種別の組合せは検証しない(科目を変えても記録は壊れない)', () => {
+  const subjects = C.DEFAULT_SUBJECTS;
+  const rec = {
+    id: 'r1', date: '2026-08-10', subjectId: 'soc', content: '公民',
+    kind: '公式・定理の確認',   // 数学の種別を社会に付けた状態
+    planMin: 30, actualMin: 30, score: null, maxScore: null, reflection: ''
+  };
+  assert.ok(C.validateRecord(rec, subjects).ok,
+    '科目をまたいだ種別でも保存できる(過去の記録を無効にしないため)');
+});
+
+test('sanitizeState: 旧データの学習種別を「その他」へ書き換えない', () => {
+  const st = C.defaultState('2026-08-10');
+  st.records.push({
+    id: 'r_old', date: '2026-08-10', subjectId: 'soc', content: '旧記録',
+    kind: '暗記', planMin: 30, actualMin: 30, score: null, maxScore: null,
+    reflection: '', createdAt: 1, updatedAt: 1, deletedAt: null
+  });
+  st.records.push({
+    id: 'r_bad', date: '2026-08-10', subjectId: 'soc', content: '不正',
+    kind: '存在しない種別', planMin: 30, actualMin: 30, score: null, maxScore: null,
+    reflection: '', createdAt: 1, updatedAt: 1, deletedAt: null
+  });
+  const out = C.sanitizeState(JSON.parse(JSON.stringify(st)), '2026-08-10');
+  assert.equal(out.records.find((r) => r.id === 'r_old').kind, '暗記', '旧データはそのまま残る');
+  assert.equal(out.records.find((r) => r.id === 'r_bad').kind, 'その他', '不正な値だけ「その他」になる');
+});
+
+test('学習種別に重複した文言が無い(同じ意味の語を並べない)', () => {
+  ['eng', 'math', 'jpn', 'sci', 'soc', 'other'].forEach((id) => {
+    const list = C.studyKindsFor(id);
+    assert.equal(new Set(list).size, list.length, id + ' に重複が無い');
+  });
+});
+
+/* ==================================================================
+ * APP-460/461: 第三者レビューで見つかった不具合の再発防止
+ * ================================================================== */
+
+test('studyKindsFor: プロトタイプ由来のキーでも落ちない(toString / constructor / __proto__)', () => {
+  ['toString', 'constructor', '__proto__', 'hasOwnProperty', 'valueOf'].forEach((id) => {
+    const list = C.studyKindsFor(id);
+    assert.ok(Array.isArray(list), id + ' で配列が返る');
+    assert.deepEqual(list, C.STUDY_KINDS, id + ' は共通の選択肢になる');
+    assert.equal(typeof C.defaultStudyKindFor(id), 'string', id + ' の初期値が文字列');
+  });
+});
+
+test('studyKindsFor: 科目idが空・null・数値でも落ちない', () => {
+  ['', null, undefined, 0, 123].forEach((id) => {
+    assert.ok(Array.isArray(C.studyKindsFor(id)), String(id) + ' で配列が返る');
+  });
+});
+
+test('テストはすべての科目の選択肢に含まれる(科目を変えても得点が消えない前提)', () => {
+  // 「テスト」がどの科目にもあるため、科目変更時に種別を保てる。
+  // 1つでも欠けると、科目を変えた瞬間に得点欄が閉じて保存時にscoreがnullになる。
+  const ids = ['eng', 'math', 'jpn', 'sci', 'soc', 'other', '自作科目'];
+  ids.forEach((id) => {
+    assert.ok(C.studyKindsFor(id).indexOf(C.TEST_KIND) !== -1, id + ' に ' + C.TEST_KIND);
+  });
+  // 科目をまたいで同じ種別を保てるか(実装側 refreshKindForSubject の前提)
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = 0; j < ids.length; j++) {
+      assert.ok(C.studyKindsFor(ids[j]).indexOf(C.TEST_KIND) !== -1,
+        ids[i] + ' → ' + ids[j] + ' でテストを保てる');
+    }
+  }
+});

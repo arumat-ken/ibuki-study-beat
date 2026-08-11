@@ -5,11 +5,11 @@
 
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
-  var APP_VERSION = '4.1.0';
+  var APP_VERSION = '4.1.2';
   /* リリース表示用(画面右上)。更新のたびに日付を上げる。
    * モデル名は「未記録」固定とする(実行時のモデル識別子を断定してリポジトリの
    * 成果物に書き出さない方針のため。推測での記載はしない)。 */
-  var BUILD_DATE = '2026-08-09';
+  var BUILD_DATE = '2026-08-10';
   var BUILD_UPDATER = 'Claude Code';
   var BUILD_MODEL = '未記録';
 
@@ -399,25 +399,65 @@
       return '<option value="' + esc(s.id) + '"' + (s.id === selectedId ? ' selected' : '') + '>' + esc(s.name) + '</option>';
     }).join('');
   }
-  function kindOptions(selected) {
-    return C.STUDY_KINDS.map(function (k) {
-      return '<option value="' + k + '"' + (k === selected ? ' selected' : '') + '>' + k + '</option>';
+  /* 学習種別は科目ごとに変える(APP-460)。
+   * 選択中の値がその科目の一覧に無い場合(科目を変えた・旧データを編集した)は、
+   * 一覧の末尾にそのまま残して選択状態にする。過去の記録の値を勝手に書き換えない。 */
+  function firstSubjectId() {
+    var visible = state.settings.subjects.filter(function (s) { return s.visible; });
+    return visible.length ? visible[0].id : '';
+  }
+
+  function kindOptions(selected, subjectId) {
+    var kinds = C.studyKindsFor(subjectId);
+    if (selected && kinds.indexOf(selected) === -1) kinds = kinds.concat([selected]);
+    return kinds.map(function (k) {
+      return '<option value="' + esc(k) + '"' + (k === selected ? ' selected' : '') + '>' + esc(k) + '</option>';
     }).join('');
+  }
+
+  /* 科目を変えたら、その科目の学習種別に入れ替える。
+   * 入れ替え後の値で点数欄の出し分けも更新する。 */
+  /* 記録画面の学習種別が、どの科目のものとして作られているか。
+   * 設定で科目を消した・並べ替えたときに一覧を作り直す判定に使う。 */
+  var rfKindSubjectId = null;
+
+  /* 科目を変えたときの学習種別の入れ替え。
+   * いま選んでいる種別が新しい科目にもあるなら、それを保つ。
+   * 「テスト」はどの科目にもあるため、科目を変えても得点欄が閉じず、
+   * 入力済みの得点が保存時に消えることがない。 */
+  function refreshKindForSubject(kindEl, subjectId, scoreRowEl, openStyle) {
+    var keep = kindEl.value;
+    var next = C.studyKindsFor(subjectId).indexOf(keep) !== -1
+      ? keep
+      : C.defaultStudyKindFor(subjectId);
+    kindEl.innerHTML = kindOptions(next, subjectId);
+    if (scoreRowEl) {
+      scoreRowEl.style.display = kindEl.value === C.TEST_KIND ? (openStyle || '') : 'none';
+    }
+  }
+
+  function bindKindToSubject(subjectSelId, kindSelId, scoreRowId) {
+    var subjEl = $(subjectSelId), kindEl = $(kindSelId);
+    if (!subjEl || !kindEl) return;
+    subjEl.addEventListener('change', function () {
+      refreshKindForSubject(kindEl, subjEl.value, scoreRowId ? $(scoreRowId) : null, '');
+      if (subjectSelId === 'rf-subject') rfKindSubjectId = subjEl.value;
+    });
   }
 
   $('btn-add-plan').addEventListener('click', function () { openPlanModal(null); });
   function openPlanModal(thenStart) {
     openModal(
       '<h3>今日の予定を追加<button class="icon-btn" id="m-close">✕</button></h3>' +
-      '<div class="field-row">' +
       '<div class="field"><label>科目</label><select id="m-subject">' + subjectOptions() + '</select></div>' +
-      '<div class="field"><label>学習種別</label><select id="m-kind">' + kindOptions('暗記') + '</select></div>' +
-      '</div>' +
+      '<div class="field"><label>学習種別</label><select id="m-kind">' +
+        kindOptions(C.defaultStudyKindFor(firstSubjectId()), firstSubjectId()) + '</select></div>' +
       '<div class="field"><label>内容</label><input type="text" id="m-content" placeholder="例: 英単語 20語" maxlength="100"></div>' +
       '<div class="field"><label>計画時間(分)</label><input type="number" id="m-plan" min="1" max="720" inputmode="numeric" value="30"></div>' +
       '<button class="btn primary block big" id="m-save">' + (thenStart ? 'この内容で開始する ▶' : '予定に追加する') + '</button>'
     );
     $('m-close').onclick = closeModal;
+    bindKindToSubject('m-subject', 'm-kind', null);
     $('m-save').onclick = function () {
       var rec = {
         id: nextId('r'),
@@ -899,15 +939,21 @@
     var subjSel = $('rf-subject');
     var cur = subjSel.value;
     subjSel.innerHTML = subjectOptions(cur);
-    if ($('rf-kind').options.length === 0) $('rf-kind').innerHTML = kindOptions('暗記');
+    // 設定で科目を消した・並べ替えたときは選択が別の科目へ移る。
+    // その場合は学習種別の一覧も作り直す(古い科目の一覧が残らないように)。
+    if ($('rf-kind').options.length === 0 || rfKindSubjectId !== subjSel.value) {
+      $('rf-kind').innerHTML = kindOptions(C.defaultStudyKindFor(subjSel.value), subjSel.value);
+      rfKindSubjectId = subjSel.value;
+    }
     if (!$('rf-date').value) $('rf-date').value = todayStr();
-    $('rf-score-row').style.display = $('rf-kind').value === 'テスト' ? '' : 'none';
+    $('rf-score-row').style.display = $('rf-kind').value === C.TEST_KIND ? '' : 'none';
     renderRecordList();
   }
 
   $('rf-kind').addEventListener('change', function () {
-    $('rf-score-row').style.display = this.value === 'テスト' ? '' : 'none';
+    $('rf-score-row').style.display = this.value === C.TEST_KIND ? '' : 'none';
   });
+  bindKindToSubject('rf-subject', 'rf-kind', 'rf-score-row');
 
   $('record-form').addEventListener('submit', function (e) {
     e.preventDefault();
@@ -988,8 +1034,8 @@
       '<div class="field"><label>科目</label><select id="m-subject">' + subjectOptions(rec.subjectId) + '</select></div>' +
       '</div>' +
       '<div class="field"><label>内容</label><input type="text" id="m-content" maxlength="100" value="' + esc(rec.content) + '"></div>' +
+      '<div class="field"><label>学習種別</label><select id="m-kind">' + kindOptions(rec.kind, rec.subjectId) + '</select></div>' +
       '<div class="field-row">' +
-      '<div class="field"><label>学習種別</label><select id="m-kind">' + kindOptions(rec.kind) + '</select></div>' +
       '<div class="field"><label>計画(分)</label><input type="number" id="m-plan" min="0" max="720" inputmode="numeric" value="' + rec.planMin + '"></div>' +
       '<div class="field"><label>実績(分)</label><input type="number" id="m-actual" min="0" max="720" inputmode="numeric" value="' + rec.actualMin + '"></div>' +
       '</div>' +
@@ -1002,7 +1048,10 @@
     );
     $('m-close').onclick = closeModal;
     $('m-kind').onchange = function () {
-      $('m-score-row').style.display = this.value === 'テスト' ? 'flex' : 'none';
+      $('m-score-row').style.display = this.value === C.TEST_KIND ? 'flex' : 'none';
+    };
+    $('m-subject').onchange = function () {
+      refreshKindForSubject($('m-kind'), this.value, $('m-score-row'), 'flex');
     };
     $('m-save').onclick = function () {
       var kind = $('m-kind').value;
@@ -2006,15 +2055,31 @@
     renderBoostCard();
   }
 
+  /* 開いたパネルを画面内に送る(APP-461)。
+   * パネルはボタンより下、装備・ショップカードのさらに後ろに置かれているため、
+   * 画面の外で開いていた。ボタンを押しても何も変わらないように見え、
+   * 「ボタンが反応しない」「メッセージが入力できない」という不具合になっていた。 */
+  function revealPanel(el) {
+    if (!el || el.style.display === 'none') return;
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    try {
+      el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    } catch (e) {
+      el.scrollIntoView(true);   // 古いブラウザ向け
+    }
+  }
+
   $('btn-pose').addEventListener('click', function () {
     var p = $('pose-panel');
     p.style.display = p.style.display === 'none' ? '' : 'none';
     $('chat-panel').style.display = 'none';
+    revealPanel(p);
   });
   $('btn-chat').addEventListener('click', function () {
     var p = $('chat-panel');
     p.style.display = p.style.display === 'none' ? '' : 'none';
     $('pose-panel').style.display = 'none';
+    revealPanel(p);
     if (p.style.display !== 'none') {
       renderChatLog();
       renderQuickAsks();
@@ -2272,6 +2337,7 @@
     if (panel === 'ai') return openAIPanel();
     if (panel === 'axis') return openAxisModal();
     if (panel === 'data') return openDataPanel();
+    if (panel === 'report') return openReportPanel();
     if (panel === 'about') return openAboutPanel();
   }
 
@@ -2606,9 +2672,112 @@
     };
   }
 
+  /* ================= 不具合の報告(APP-461) =================
+   * 外部通信ゼロのため、アプリから送信はしない。
+   * 状況が分かる定型文を組み立ててコピーし、親がLINEやGitHubへ貼れるようにする。 */
+
+  function buildReportText(userText) {
+    var lines = [];
+    lines.push('【IBUKI STUDY BEAT 不具合レポート】');
+    lines.push('');
+    lines.push('■ 何が起きたか');
+    lines.push(userText && userText.trim() ? userText.trim() : '(未記入)');
+    lines.push('');
+    lines.push('■ 環境(自動で入ります)');
+    lines.push('アプリ版: ver.' + APP_VERSION + ' (' + BUILD_DATE + ')');
+    lines.push('発生日時: ' + new Date().toLocaleString('ja-JP'));
+    lines.push('画面幅: ' + window.innerWidth + ' x ' + window.innerHeight);
+    lines.push('ホーム画面から起動: ' +
+      (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches ? 'はい' : 'いいえ'));
+    lines.push('端末: ' + (navigator.userAgent || '不明').slice(0, 160));
+    lines.push('オフライン対応: ' + ('serviceWorker' in navigator ? '有効' : '無効'));
+    lines.push('');
+    lines.push('■ データの規模(中身は含みません)');
+    try {
+      lines.push('学習記録: ' + (state.records || []).filter(function (r) { return !r.deletedAt; }).length + '件');
+      lines.push('ニュース: ' + (state.news || []).length + '件');
+      lines.push('受験イベント: ' + (state.events || []).length + '件');
+      lines.push('科目: ' + (state.settings.subjects || []).length + '件');
+      lines.push('保存容量: 約' + Math.round((localStorage.getItem(KEY) || '').length / 1024) + ' KB');
+    } catch (e) {
+      lines.push('(データの読み取りに失敗しました)');
+    }
+    lines.push('');
+    lines.push('※ 学習内容・振り返りの本文は含めていません。');
+    return lines.join('\n');
+  }
+
+  function openReportPanel() {
+    openModal(
+      '<h3>不具合を報告する<button class="icon-btn" id="m-close">✕</button></h3>' +
+      '<div class="small" style="line-height:1.8;margin-bottom:10px">' +
+      'うまく動かないところを書いて「コピーする」を押すと、報告用の文章ができます。' +
+      'LINEやメールに貼って送ってね。<br>' +
+      '<b>学習の内容や振り返りの中身は入りません。</b>' +
+      '</div>' +
+      '<div class="field"><label>どこで、何が起きた?</label>' +
+      '<textarea id="rp-text" maxlength="500" rows="4" ' +
+      'placeholder="例: コーチのメッセージボタンを押しても何も出てこない"></textarea></div>' +
+      '<div class="field"><label>送られる内容(自動)</label>' +
+      '<pre id="rp-preview" class="report-preview"></pre></div>' +
+      '<button class="btn primary block" id="rp-copy">📋 コピーする</button>' +
+      '<div class="small" style="margin-top:10px;line-height:1.8">' +
+      'コピーしたら、LINEで送るか、GitHubの Issues に貼り付けてください。' +
+      '</div>'
+    );
+    $('m-close').onclick = closeModal;
+    function refresh() { $('rp-preview').textContent = buildReportText($('rp-text').value); }
+    $('rp-text').addEventListener('input', refresh);
+    refresh();
+    $('rp-copy').onclick = function () {
+      copyToClipboard(buildReportText($('rp-text').value)).then(function (okCopy) {
+        toast(okCopy ? 'コピーしたよ！LINEなどに貼り付けてね' : 'コピーできなかった。長押しで選んでコピーしてね', !okCopy);
+      });
+    };
+  }
+
+  /* ================= アップデートのお知らせ(APP-461) =================
+   * 新しい版が届いたら、設定タブに赤い点を出す。
+   * ホーム画面のアイコン自体へのバッジは、iOSでは通知の許可が要るため
+   * 使える場合だけ静かに付ける(許可は求めない)。 */
+
+  var updateWaiting = false;
+  var pendingUpdateWorker = null;
+
+  function setUpdateBadge(on) {
+    updateWaiting = !!on;
+    var btn = document.querySelector('.nav-btn[data-screen="settings"]');
+    if (btn) btn.classList.toggle('has-update', updateWaiting);
+    var item = document.querySelector('.settings-item[data-panel="about"] .dot');
+    if (item) item.remove();
+    if (updateWaiting) {
+      var about = document.querySelector('.settings-item[data-panel="about"]');
+      if (about) {
+        var d = document.createElement('span');
+        d.className = 'dot';
+        about.insertBefore(d, about.querySelector('.chev'));
+      }
+    }
+    /* setAppBadge は Promise を返す。許可の無い環境では拒否されるため、
+     * 同期の try だけでは拾えない。両方で握りつぶす。 */
+    try {
+      var op = updateWaiting
+        ? (navigator.setAppBadge && navigator.setAppBadge(1))
+        : (navigator.clearAppBadge && navigator.clearAppBadge());
+      if (op && typeof op.catch === 'function') op.catch(function () { /* 許可なし */ });
+    } catch (e) { /* 使えない環境では何もしない */ }
+  }
+
   function openAboutPanel() {
+    var updateBlock = updateWaiting
+      ? '<div class="field" style="margin-bottom:12px">' +
+        '<button class="btn primary block" id="ab-update">🔄 いますぐ更新する</button>' +
+        '<div class="small" style="margin-top:6px">新しいバージョンが届いています。学習の記録は消えません。</div>' +
+        '</div>'
+      : '';
     openModal(
       '<h3>サポート・ヘルプ<button class="icon-btn" id="m-close">✕</button></h3>' +
+      updateBlock +
       '<div class="small" style="line-height:1.9">' +
       '<b>IBUKI STUDY BEAT</b> ver. ' + APP_VERSION + '<br>' +
       '一歩一歩が、未来のステージをつくる。<br><br>' +
@@ -2621,6 +2790,23 @@
       '</div>'
     );
     $('m-close').onclick = closeModal;
+    if (updateWaiting && $('ab-update')) {
+      $('ab-update').onclick = function () {
+        if (!pendingUpdateWorker) { toast('更新の準備ができていないよ。少し待ってね', true); return; }
+        // 待機していた版が失効していることがある。その場合は赤い点を残し、
+        // 画面を閉じずに次の手順を伝える(更新できないまま行き止まりにしない)。
+        try {
+          pendingUpdateWorker.postMessage({ type: 'SKIP_WAITING' });
+        } catch (e) {
+          pendingUpdateWorker = null;
+          toast('更新できなかったよ。アプリを閉じてもう一度開いてね', true);
+          return;
+        }
+        toast('更新中…少し待ってね');
+        setUpdateBadge(false);
+        closeModal();
+      };
+    }
   }
 
   /* ================= 起動 ================= */
@@ -2678,6 +2864,11 @@
   }
 
   /* --- アップデート検知(Service Worker) --- */
+
+  /* 受け入れ試験から更新バッジの表示を確認するための入口。
+   * Service Workerの更新は試験環境で再現しづらいため、ここだけ公開する。 */
+  window.__isbSetUpdateBadge = setUpdateBadge;
+
   function setupServiceWorker() {
     if (!('serviceWorker' in navigator) || location.protocol !== 'https:') return;
 
@@ -2692,6 +2883,8 @@
     navigator.serviceWorker.register('sw.js').then(function (reg) {
       function offerUpdate(worker) {
         if (!worker) return;
+        setUpdateBadge(true);
+        pendingUpdateWorker = worker;
         showCenterMessage({
           img: 'cele_streak7.png',
           title: '新しいバージョンがあるよ！',
@@ -2700,6 +2893,7 @@
           buttonLabel: '🔄 いますぐ更新する',
           onConfirm: function () {
             toast('更新中…少し待ってね');
+            setUpdateBadge(false);
             worker.postMessage({ type: 'SKIP_WAITING' });
           }
         });
@@ -2730,8 +2924,13 @@
     $('app-version').textContent = 'ver. ' + APP_VERSION;
     $('app-build').textContent = '更新日 ' + BUILD_DATE + ' ・ 更新 ' + BUILD_UPDATER + ' ・ モデル ' + BUILD_MODEL;
     $('rf-date').value = todayStr();
-    $('rf-kind').innerHTML = kindOptions('暗記');
     $('rf-subject').innerHTML = subjectOptions();
+    $('rf-kind').innerHTML = kindOptions(
+      C.defaultStudyKindFor($('rf-subject').value), $('rf-subject').value);
+    rfKindSubjectId = $('rf-subject').value;
+    /* 前回の更新通知が残っていることがあるため、起動時にいったん消す。
+     * 本当に待機中の版があれば、この直後の setupServiceWorker が付け直す。 */
+    setUpdateBadge(false);
     renderToday();
     showWelcomeMessage();
     if (storageWarning) toast(storageWarning, true);

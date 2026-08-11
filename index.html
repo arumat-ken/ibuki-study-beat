@@ -99,11 +99,11 @@
           <label for="rf-content">内容</label>
           <input type="text" id="rf-content" placeholder="例: 英単語 20語" maxlength="100">
         </div>
+        <div class="field">
+          <label for="rf-kind">学習種別</label>
+          <select id="rf-kind"></select>
+        </div>
         <div class="field-row">
-          <div class="field">
-            <label for="rf-kind">学習種別</label>
-            <select id="rf-kind"></select>
-          </div>
           <div class="field">
             <label for="rf-plan">計画(分)</label>
             <input type="number" id="rf-plan" min="0" max="720" inputmode="numeric" placeholder="30">
@@ -256,6 +256,7 @@
       <button class="settings-item" data-panel="ai"><span class="ico">🤖</span>AI連携設定<span class="chev">›</span></button>
       <button class="settings-item" data-panel="axis"><span class="ico">📈</span>グラフ・Y軸設定<span class="chev">›</span></button>
       <button class="settings-item" data-panel="data"><span class="ico">💾</span>データ管理<span class="chev">›</span></button>
+      <button class="settings-item" data-panel="report"><span class="ico">🐞</span>不具合を報告する<span class="chev">›</span></button>
       <button class="settings-item" data-panel="about"><span class="ico">❓</span>サポート・ヘルプ<span class="chev">›</span></button>
     </div>
   </section>
@@ -280,7 +281,7 @@
       <svg viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M4 21v-2a6 6 0 016-6h4a6 6 0 016 6v2"/></svg>コーチ
     </button>
     <button class="nav-btn" data-screen="settings">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34h0a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55h0a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87v0a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z"/></svg>設定
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1 1.55V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1-1.55 1.7 1.7 0 00-1.87.34l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.7 1.7 0 00.34-1.87 1.7 1.7 0 00-1.55-1H3a2 2 0 110-4h.09a1.7 1.7 0 001.55-1 1.7 1.7 0 00-.34-1.87l-.06-.06a2 2 0 112.83-2.83l.06.06a1.7 1.7 0 001.87.34h0a1.7 1.7 0 001-1.55V3a2 2 0 114 0v.09a1.7 1.7 0 001 1.55h0a1.7 1.7 0 001.87-.34l.06-.06a2 2 0 112.83 2.83l-.06.06a1.7 1.7 0 00-.34 1.87v0a1.7 1.7 0 001.55 1H21a2 2 0 110 4h-.09a1.7 1.7 0 00-1.55 1z"/></svg>設定<span class="dot"></span>
     </button>
   </div>
 </nav>

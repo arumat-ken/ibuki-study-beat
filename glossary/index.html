@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>用語集 | IBUKI STUDY BEAT</title>
+<meta name="description" content="IBUKI STUDY BEAT の用語集。検索してすぐ引ける。">
+<meta name="theme-color" content="#0b0b10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="用語集">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<style>
+  :root {
+    --bg: #0b0b10;
+    --panel: #14141c;
+    --panel-2: #1b1b25;
+    --line: #2a2a36;
+    --gold: #d9b24a;
+    --gold-light: #f0c75e;
+    --gold-pale: #f7e3a8;
+    --text: #e8e6e3;
+    --muted: #9a978f;
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    font-size: 16px;
+    line-height: 1.75;
+    -webkit-text-size-adjust: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 20;
+    padding: calc(var(--safe-t) + 10px) 14px 10px;
+    background: rgba(11, 11, 16, .94);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .title-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: 9px; }
+  h1 { margin: 0; font-size: 17px; letter-spacing: .04em; color: var(--gold-light); }
+  .meta { font-size: 11px; color: var(--muted); margin-left: auto; white-space: nowrap; }
+
+  .search-wrap { position: relative; }
+  #q {
+    width: 100%; padding: 12px 40px 12px 40px;
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--line); border-radius: 12px;
+    font-size: 16px; font-family: inherit;
+    appearance: none;
+  }
+  #q:focus { outline: none; border-color: var(--gold); }
+  #q::placeholder { color: #6d6a63; }
+  /* Safari draws its own clear button; we supply a themed one. */
+  #q::-webkit-search-cancel-button,
+  #q::-webkit-search-decoration { appearance: none; -webkit-appearance: none; display: none; }
+  .search-icon, .clear-btn {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    width: 22px; height: 22px; color: var(--muted);
+  }
+  .search-icon { left: 11px; pointer-events: none; }
+  .clear-btn {
+    right: 10px; border: 0; background: none; padding: 0;
+    color: var(--muted); font-size: 20px; line-height: 1; cursor: pointer;
+    display: none;
+  }
+  .clear-btn.on { display: block; }
+
+  .chips { display: flex; gap: 7px; overflow-x: auto; padding: 9px 0 1px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: 0 0 auto; padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel);
+    color: var(--muted); font-size: 12px; cursor: pointer;
+  }
+  .chip.on { border-color: var(--gold); color: var(--gold-light); background: #1d1a12; }
+
+  main { padding: 14px 14px calc(var(--safe-b) + 40px); }
+  .count { font-size: 12px; color: var(--muted); margin: 2px 0 12px; }
+
+  .sec-head {
+    margin: 22px 0 10px; font-size: 12px; letter-spacing: .12em;
+    color: var(--gold); text-transform: none; font-weight: 600;
+  }
+  .sec-head:first-child { margin-top: 4px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 13px 15px; margin: 0 0 10px;
+  }
+  .card h2 { margin: 0 0 6px; font-size: 16px; color: var(--gold-pale); line-height: 1.5; }
+  .card p { margin: 0 0 8px; }
+  .card p:last-child, .card ul:last-child, .card table:last-child { margin-bottom: 0; }
+  .card ul { margin: 0 0 8px; padding-left: 1.2em; }
+  .card li { margin-bottom: 3px; }
+  .card a { color: var(--gold-light); }
+  code {
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 5px; font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .tw { overflow-x: auto; margin: 0 0 8px; -webkit-overflow-scrolling: touch; }
+  table { border-collapse: collapse; font-size: 13.5px; min-width: 100%; }
+  th, td {
+    border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top;
+    min-width: 8.5em;   /* let wide tables scroll rather than wrap to 3 characters */
+  }
+  th { background: var(--panel-2); color: var(--gold); white-space: nowrap; }
+  details { margin: 0 0 8px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  pre {
+    overflow-x: auto; background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px; font-size: 12px; margin: 8px 0 0;
+    -webkit-overflow-scrolling: touch;
+  }
+  mark { background: #4a3a12; color: var(--gold-pale); border-radius: 3px; padding: 0 1px; }
+
+  .empty { text-align: center; color: var(--muted); padding: 44px 10px; font-size: 14px; }
+  .status { text-align: center; color: var(--muted); padding: 44px 10px; font-size: 14px; }
+  .status .err { color: #e08a7a; }
+
+  footer {
+    padding: 18px 14px calc(var(--safe-b) + 26px);
+    border-top: 1px solid var(--line); margin-top: 26px;
+    font-size: 12px; color: var(--muted); text-align: center;
+  }
+  footer a { color: var(--gold); text-decoration: none; }
+  footer .sep { opacity: .4; margin: 0 8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="title-row">
+    <h1>用語集</h1>
+    <span class="meta" id="meta"></span>
+  </div>
+  <div class="search-wrap">
+    <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+         stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+    <input id="q" type="search" inputmode="search" enterkeyhint="search" autocomplete="off"
+           autocorrect="off" autocapitalize="off" spellcheck="false"
+           placeholder="言葉で検索（例: BP、マージ、PWA）">
+    <button class="clear-btn" id="clear" aria-label="消去">&times;</button>
+  </div>
+  <div class="chips" id="chips"></div>
+</header>
+
+<main>
+  <div class="count" id="count"></div>
+  <div id="list"><div class="status" id="status">読み込み中…</div></div>
+</main>
+
+<footer>
+  <a href="../">アプリを開く</a>
+  <span class="sep">|</span>
+  <a href="https://github.com/arumat-ken/ibuki-study-beat/blob/main/docs/GLOSSARY.md">原文を見る</a>
+  <div style="margin-top:8px">言葉が増えたら原文が更新され、次に開いたときに反映されます。</div>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+
+  var SOURCE = '../docs/GLOSSARY.md';
+
+  // ---------------------------------------------------------------- markdown
+  function esc(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function inline(s) {
+    // order matters: code spans are protected first
+    var codes = [];
+    s = s.replace(/`([^`]+)`/g, function (_, c) {
+      codes.push(c);
+      return '\u0000' + (codes.length - 1) + '\u0000';
+    });
+    s = esc(s);
+    s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, function (_, t, u) {
+      var safe = /^(https?:|\.|\/|#)/.test(u) ? u : '#';
+      return '<a href="' + safe + '" target="_blank" rel="noopener">' + t + '</a>';
+    });
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/\u0000(\d+)\u0000/g, function (_, i) {
+      return '<code>' + esc(codes[+i]) + '</code>';
+    });
+    return s;
+  }
+
+  function isTableSep(line) {
+    return /^\s*\|?[\s:-]*-[-\s:|]*\|?\s*$/.test(line) && line.indexOf('-') >= 0;
+  }
+
+  function cells(line) {
+    var t = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+    return t.split('|').map(function (c) { return c.trim(); });
+  }
+
+  function render(md) {
+    var lines = md.split('\n');
+    var out = [];
+    var i = 0;
+    while (i < lines.length) {
+      var line = lines[i];
+
+      if (/^\s*```/.test(line)) {                                  // fenced block
+        var lang = line.trim().replace(/^```/, '').trim();
+        var buf = [];
+        i++;
+        while (i < lines.length && !/^\s*```/.test(lines[i])) { buf.push(lines[i]); i++; }
+        i++;
+        var label = lang === 'mermaid' ? '図（テキスト表示）' : (lang || 'コード');
+        out.push('<details><summary>' + esc(label) + '</summary><pre>' +
+                 esc(buf.join('\n')) + '</pre></details>');
+        continue;
+      }
+
+      if (line.indexOf('|') >= 0 && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+        var head = cells(line);
+        i += 2;
+        var rows = [];
+        while (i < lines.length && lines[i].indexOf('|') >= 0 && lines[i].trim() !== '') {
+          rows.push(cells(lines[i])); i++;
+        }
+        var h = '<div class="tw"><table><thead><tr>' +
+          head.map(function (c) { return '<th>' + inline(c) + '</th>'; }).join('') +
+          '</tr></thead><tbody>' +
+          rows.map(function (r) {
+            return '<tr>' + r.map(function (c) { return '<td>' + inline(c) + '</td>'; }).join('') + '</tr>';
+          }).join('') + '</tbody></table></div>';
+        out.push(h);
+        continue;
+      }
+
+      if (/^\s*[-*]\s+/.test(line)) {                              // list
+        var items = [];
+        while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) {
+          items.push('<li>' + inline(lines[i].replace(/^\s*[-*]\s+/, '')) + '</li>');
+          i++;
+        }
+        out.push('<ul>' + items.join('') + '</ul>');
+        continue;
+      }
+
+      if (line.trim() === '') { i++; continue; }
+
+      var para = [];                                               // paragraph
+      while (i < lines.length && lines[i].trim() !== '' &&
+             !/^\s*```/.test(lines[i]) && !/^\s*[-*]\s+/.test(lines[i]) &&
+             !/^#{1,6}\s/.test(lines[i]) && lines[i].indexOf('|') < 0) {
+        para.push(lines[i].trim()); i++;
+      }
+      if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); continue; }
+      i++;                                                          // safety
+    }
+    return out.join('');
+  }
+
+  // ------------------------------------------------------------------ parse
+  function parse(md) {
+    var lines = md.split('\n');
+    var sections = [];
+    var cur = null, entry = null, preamble = [], updated = '';
+
+    function pushEntry() {
+      if (entry && cur) { cur.entries.push(entry); entry = null; }
+    }
+
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i];
+      var m3 = l.match(/^###\s+(.*)$/);
+      var m2 = l.match(/^##\s+(.*)$/);
+      var m1 = l.match(/^#\s+(.*)$/);
+
+      if (m1) { continue; }
+      if (m2) {
+        pushEntry();
+        cur = { title: m2[1].trim(), intro: [], entries: [] };
+        sections.push(cur);
+        continue;
+      }
+      if (m3) {
+        pushEntry();
+        entry = { title: m3[1].trim(), body: [] };
+        continue;
+      }
+      if (entry) entry.body.push(l);
+      else if (cur) cur.intro.push(l);
+      else {
+        preamble.push(l);
+        var mu = l.match(/最終更新:\s*([0-9]{4}-[0-9]{2}-[0-9]{2})/);
+        if (mu) updated = mu[1];
+      }
+    }
+    pushEntry();
+
+    // Sections with no ### become a single card of their own.
+    var cards = [];
+    sections.forEach(function (s) {
+      if (s.entries.length === 0) {
+        cards.push({ section: null, title: s.title, md: s.intro.join('\n') });
+      } else {
+        if (s.intro.join('').trim() !== '') {
+          cards.push({ section: s.title, title: s.title, md: s.intro.join('\n'), isIntro: true });
+        }
+        s.entries.forEach(function (e) {
+          cards.push({ section: s.title, title: e.title, md: e.body.join('\n') });
+        });
+      }
+    });
+    return { cards: cards, sections: sections, updated: updated };
+  }
+
+  // ------------------------------------------------------------------- view
+  var listEl = document.getElementById('list');
+  var countEl = document.getElementById('count');
+  var chipsEl = document.getElementById('chips');
+  var qEl = document.getElementById('q');
+  var clearEl = document.getElementById('clear');
+  var metaEl = document.getElementById('meta');
+
+  var DATA = null;
+  var activeSection = null;
+
+  function norm(s) { return s.toLowerCase(); }
+
+  function build() {
+    var q = norm(qEl.value.trim());
+    var frag = document.createDocumentFragment();
+    var shown = 0, lastSection = null;
+
+    DATA.cards.forEach(function (c) {
+      if (activeSection && c.section !== activeSection && c.title !== activeSection) return;
+      var hay = norm(c.title + '\n' + c.md);
+      if (q && hay.indexOf(q) < 0) return;
+
+      if (c.section && c.section !== lastSection) {
+        var sh = document.createElement('div');
+        sh.className = 'sec-head';
+        sh.textContent = c.section;
+        frag.appendChild(sh);
+        lastSection = c.section;
+      }
+      if (!c.section) lastSection = null;
+
+      var card = document.createElement('article');
+      card.className = 'card';
+      card.innerHTML = '<h2>' + esc(c.title) + '</h2>' + render(c.md);
+      if (q) highlight(card, qEl.value.trim());
+      frag.appendChild(card);
+      shown++;
+    });
+
+    listEl.innerHTML = '';
+    if (shown === 0) {
+      var e = document.createElement('div');
+      e.className = 'empty';
+      e.textContent = '「' + qEl.value.trim() + '」は見つかりませんでした。';
+      listEl.appendChild(e);
+      countEl.textContent = '';
+    } else {
+      listEl.appendChild(frag);
+      countEl.textContent = q ? shown + ' 件' : '全 ' + shown + ' 件';
+    }
+    clearEl.classList.toggle('on', qEl.value !== '');
+  }
+
+  function highlight(root, term) {
+    if (!term) return;
+    var lc = term.toLowerCase();
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var nodes = [], n;
+    while ((n = walker.nextNode())) {
+      if (n.parentNode.nodeName === 'MARK') continue;
+      if (n.nodeValue.toLowerCase().indexOf(lc) >= 0) nodes.push(n);
+    }
+    nodes.forEach(function (node) {
+      var text = node.nodeValue, frag = document.createDocumentFragment(), idx = 0;
+      var low = text.toLowerCase(), p;
+      while ((p = low.indexOf(lc, idx)) >= 0) {
+        if (p > idx) frag.appendChild(document.createTextNode(text.slice(idx, p)));
+        var mk = document.createElement('mark');
+        mk.textContent = text.slice(p, p + term.length);
+        frag.appendChild(mk);
+        idx = p + term.length;
+      }
+      if (idx < text.length) frag.appendChild(document.createTextNode(text.slice(idx)));
+      node.parentNode.replaceChild(frag, node);
+    });
+  }
+
+  function buildChips() {
+    var names = [];
+    DATA.cards.forEach(function (c) {
+      var key = c.section || c.title;
+      if (names.indexOf(key) < 0) names.push(key);
+    });
+    chipsEl.innerHTML = '';
+    var all = document.createElement('button');
+    all.className = 'chip on';
+    all.textContent = 'すべて';
+    all.onclick = function () { setSection(null, all); };
+    chipsEl.appendChild(all);
+    names.forEach(function (nm) {
+      var b = document.createElement('button');
+      b.className = 'chip';
+      b.textContent = nm;
+      b.onclick = function () { setSection(nm, b); };
+      chipsEl.appendChild(b);
+    });
+  }
+
+  function setSection(nm, btn) {
+    activeSection = nm;
+    Array.prototype.forEach.call(chipsEl.children, function (c) { c.classList.remove('on'); });
+    btn.classList.add('on');
+    build();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  var timer = null;
+  qEl.addEventListener('input', function () {
+    clearTimeout(timer);
+    timer = setTimeout(build, 60);
+  });
+  clearEl.addEventListener('click', function () {
+    qEl.value = '';
+    build();
+    qEl.focus();
+  });
+
+  function fail(msg) {
+    listEl.innerHTML = '<div class="status"><div class="err">' + esc(msg) + '</div>' +
+      '<div style="margin-top:10px">通信できるところで一度開くと、その後はオフラインでも読めます。</div></div>';
+  }
+
+  fetch(SOURCE, { cache: 'no-cache' })
+    .then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    })
+    .then(function (md) {
+      DATA = parse(md);
+      metaEl.textContent = DATA.updated ? '更新 ' + DATA.updated : '';
+      buildChips();
+      build();
+    })
+    .catch(function (e) {
+      fail('用語集を読み込めませんでした（' + e.message + '）');
+    });
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () { /* offline is optional */ });
+    });
+  }
+})();
+</script>
+</body>
+</html>

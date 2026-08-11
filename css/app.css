@@ -55,7 +55,8 @@ select { appearance: none; -webkit-appearance: none; background-image: linear-gr
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--gold-dim); border-color: var(--gold); }
 input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; }
 
-.app { max-width: 520px; margin: 0 auto; position: relative; z-index: 1; padding-bottom: calc(var(--nav-h) + var(--safe-b) + 12px); }
+/* 一番下の項目が下部ナビに詰まって見えないよう、ナビの高さ+余白を空ける。 */
+.app { max-width: 520px; margin: 0 auto; position: relative; z-index: 1; padding-bottom: calc(var(--nav-h) + var(--safe-b) + 28px); }
 
 /* ---------- 画面共通 ---------- */
 .screen { display: none; padding: 0 14px 8px; }
@@ -151,6 +152,25 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
 }
 .nav-btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .nav-btn.active { color: var(--gold-bright); }
+/* アップデートが届いたことを示す赤い点(APP-461) */
+.nav-btn { position: relative; }
+.nav-btn .dot {
+  position: absolute; top: 8px; left: 50%; margin-left: 6px;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: #E8604C; border: 1.5px solid rgba(13, 13, 18, 0.96);
+  display: none;
+}
+.nav-btn.has-update .dot { display: block; }
+.report-preview {
+  background: var(--panel-2, #1b1b25); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px; font-size: 0.68rem; line-height: 1.6;
+  max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+  color: var(--dim); margin: 0; -webkit-overflow-scrolling: touch;
+}
+.settings-item .dot {
+  width: 9px; height: 9px; border-radius: 50%; background: #E8604C;
+  display: inline-block; margin-left: 6px; vertical-align: middle;
+}
 
 /* ---------- キャラクター(BEATスター) — 確定デザインの画像 ---------- */
 .char-img {
