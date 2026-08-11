@@ -3030,10 +3030,11 @@ async function test27_itemImages() {
       }, width);
       ok(`${width}px ${tab}: 横スクロールが出ない`, !layout.overflow);
       ok(`${width}px ${tab}: 名称と価格・ボタンが重ならない`, !layout.clipped);
+      /* ショップを開いたまま撮る。閉じてから撮ると画像が写らない。 */
+      if (tab === 'costume') await shot(width === 320 ? '80-shop-images-320px' : '81-shop-images-390px');
       await page.click('#m-close');
       await page.waitForTimeout(150);
     }
-    await shot(width === 320 ? '80-shop-images-320px' : '81-shop-images-390px');
   }
 
   /* --- 各画面のヘッダーが狭い幅でくっつかないこと ---
