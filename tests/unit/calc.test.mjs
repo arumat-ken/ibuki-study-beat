@@ -1149,3 +1149,165 @@ test('APP-440 §5: 倍率は記録ごとに差し替えられる(装備・アイ
   assert.equal(r.records[0].bp, 25);
   assert.equal(r.records[0].multiplier, 2.5);
 });
+
+/* ==================================================================
+ * APP-440 段階2: sanitizeState の後方互換処理
+ * 設計書 §8「旧データの移行」/ 受入試験 T-6-4
+ * ================================================================== */
+
+function oldState(over) {
+  return Object.assign({ schemaVersion: 3 }, over);
+}
+
+test('APP-440 §8 T-6-4: 旧セッションに segments を新設しない(実績を失わせない)', () => {
+  // ここで segments: [] を書くと Array.isArray が新形式と判定し、
+  // 区間の合計0分が確認済み実績Cになる。旧セッションの学習時間が消える。
+  const s = C.sanitizeState(oldState({
+    activeSession: { recordId: 'r1', startTs: T0, pausedAccum: 10 * M }
+  }), '2026-08-11');
+  assert.ok(!('segments' in s.activeSession), 'フィールドごと未定義のまま');
+  assert.equal(s.activeSession.startTs, T0, '従来式に必要な値は保つ');
+  assert.equal(s.activeSession.pausedAccum, 10 * M);
+});
+
+test('APP-440 §8: 空配列・壊れた配列の segments はフィールドごと落とす', () => {
+  // 空配列を保持すると C=0 になる。壊れた配列も同じ。従来式へ倒す。
+  [[], [{ from: 'x' }], [{ to: 5 }], [null, 3, 'a'], [{ from: 200, to: 100 }]].forEach((segments) => {
+    const s = C.sanitizeState(oldState({
+      activeSession: { recordId: 'r1', startTs: T0, segments }
+    }), '2026-08-11');
+    assert.ok(!('segments' in s.activeSession), JSON.stringify(segments) + ' は落とす');
+  });
+});
+
+test('APP-440 §8: 妥当な segments はそのまま保つ(to: null は null のまま)', () => {
+  const s = C.sanitizeState(oldState({
+    activeSession: {
+      recordId: 'r1', startTs: T0,
+      segments: [{ from: T0, to: T0 + 10 * M }, { from: T0 + 20 * M, to: null }, { from: 'x', to: 1 }]
+    }
+  }), '2026-08-11');
+  assert.equal(s.activeSession.segments.length, 2, '壊れた区間だけ捨てる');
+  assert.equal(s.activeSession.segments[1].to, null, '進行中は null のまま。読み込みで時刻を作らない');
+});
+
+test('APP-440 §8: 旧記録の bpMin は actualMin と同じ(既存のBPを維持する)', () => {
+  const s = C.sanitizeState(oldState({
+    records: [{ id: 'r1', date: '2026-08-01', subjectId: 'eng', content: '英単語', planMin: 30, actualMin: 28 }]
+  }), '2026-08-11');
+  const r = s.records[0];
+  assert.equal(r.bpMin, 28, '新しい上限は今後の記録にだけ効く');
+  assert.equal(r.extendedMin, 0);
+  assert.equal(r.bpMultiplier, 1);
+  assert.deepEqual(r.bpActions, []);
+});
+
+test('APP-440 §8: 保存済みの bpMin / bpActions は上書きしない', () => {
+  const s = C.sanitizeState(oldState({
+    records: [{
+      id: 'r1', date: '2026-08-01', subjectId: 'eng', content: '英単語',
+      planMin: 60, actualMin: 90, extendedMin: 30, bpMin: 45, bpMultiplier: 2.5,
+      bpActions: ['planAchieved', 'unknownKey', 123]
+    }]
+  }), '2026-08-11');
+  const r = s.records[0];
+  assert.equal(r.bpMin, 45);
+  assert.equal(r.extendedMin, 30);
+  assert.equal(r.bpMultiplier, 2.5);
+  assert.deepEqual(r.bpActions, ['planAchieved'], '未知のキーと非文字列は捨てる');
+});
+
+test('APP-440 §5: createdAt を持たない旧記録はIDから作成日時を復元する', () => {
+  const ts = 1786400000000;
+  const id = 'r' + ts.toString(36) + '7';
+  assert.equal(C.createdAtFromId(id), ts);
+  // 復元できないIDは0(その日の最古)。例外にしない。
+  [null, undefined, 123, '', 'abc', 'r' + (1000).toString(36)].forEach((bad) => {
+    assert.equal(C.createdAtFromId(bad), 0, String(bad));
+  });
+  const s = C.sanitizeState(oldState({
+    records: [{ id, date: '2026-08-01', subjectId: 'eng', content: 'x', planMin: 10, actualMin: 10 }]
+  }), '2026-08-11');
+  assert.equal(s.records[0].createdAt, ts);
+});
+
+test('APP-440 §8: 発動中アイテムは有効区間だけ逆算し、消費量を仮定しない', () => {
+  const expiresAt = T0 + 20 * M;   // フィーバー(30分)を発動して10分経過した状態
+  const s = C.sanitizeState(oldState({
+    shop: { activeBoosts: [{ itemId: 'fever_time', expiresAt }] }
+  }), '2026-08-11');
+  const b = s.shop.activeBoosts[0];
+  assert.equal(b.durationMs, 30 * M);
+  assert.equal(b.startedAt, expiresAt - 30 * M, '有効区間の開始を expiresAt から逆算');
+  assert.equal(b.consumedMs, 0, '過去の消費は仮定しない');
+
+  // consumedMs=0 でも得にはならない。使えるのは移行後の区間と有効区間の重なりだけ。
+  const after = C.applyTimedBoost({
+    segments: [{ from: T0, to: T0 + 60 * M }],   // 移行後に60分勉強した
+    startedAt: b.startedAt, durationMs: b.durationMs, consumedMs: b.consumedMs
+  });
+  assert.equal(after.boostMinutes, 20, '有効区間の残り20分ぶんだけ');
+});
+
+test('APP-440 §8 T-2-14: 期限切れのアイテムは移行で復活しない', () => {
+  const expiresAt = T0 - 10 * M;   // 既に期限切れ
+  const s = C.sanitizeState(oldState({
+    shop: { activeBoosts: [{ itemId: 'energy_drink', expiresAt }] }
+  }), '2026-08-11');
+  const b = s.shop.activeBoosts[0];
+  const r = C.applyTimedBoost({
+    segments: [{ from: T0, to: T0 + 60 * M }],   // 期限後に勉強した
+    startedAt: b.startedAt, durationMs: b.durationMs, consumedMs: b.consumedMs
+  });
+  assert.equal(r.boostMinutes, 0, '使える分数は0。移行で復活しない');
+});
+
+test('APP-440 §8: 時間で効かないアイテムには有効区間を作らない', () => {
+  const s = C.sanitizeState(oldState({
+    shop: {
+      activeBoosts: [
+        { itemId: 'spotlight', expiresAt: T0 },      // その日1日
+        { itemId: 'recovery', expiresAt: T0 }        // 連続記録の保険
+      ]
+    }
+  }), '2026-08-11');
+  s.shop.activeBoosts.forEach((b) => {
+    assert.ok(!('durationMs' in b), b.itemId + ' に持ち時間は無い');
+    assert.ok(!('startedAt' in b), b.itemId + ' に有効区間は無い');
+  });
+  assert.equal(C.consumableDurationMs('spotlight'), 0);
+  assert.equal(C.consumableDurationMs('unknown_item'), 0);
+});
+
+test('APP-440 §8: 保存済みの startedAt / consumedMs は逆算で上書きしない', () => {
+  const s = C.sanitizeState(oldState({
+    shop: {
+      activeBoosts: [{
+        itemId: 'energy_drink', expiresAt: T0 + 60 * M,
+        startedAt: T0, durationMs: 60 * M, consumedMs: 25 * M
+      }]
+    }
+  }), '2026-08-11');
+  const b = s.shop.activeBoosts[0];
+  assert.equal(b.startedAt, T0);
+  assert.equal(b.consumedMs, 25 * M, '消費済みの時間を巻き戻さない');
+});
+
+test('APP-440 §8: 壊れたデータを読み込んでもBP残高と確定済み記録が変わらない', () => {
+  const base = {
+    records: [{
+      id: 'r1', date: '2026-08-01', subjectId: 'eng', content: '英単語',
+      planMin: 30, actualMin: 28, bp: 120
+    }],
+    shop: { bpBalance: 5000, activeBoosts: [] }
+  };
+  const clean = C.sanitizeState(oldState(base), '2026-08-11');
+  const broken = C.sanitizeState(oldState(Object.assign({}, base, {
+    activeSession: { recordId: 'r1', startTs: T0, segments: [{ from: 'x', to: {} }, null] },
+    shop: { bpBalance: 5000, activeBoosts: [{ itemId: 'energy_drink', expiresAt: 'x' }] }
+  })), '2026-08-11');
+  assert.equal(broken.records[0].bp, clean.records[0].bp, '確定済みのBPは動かない');
+  assert.equal(broken.shop.bpBalance, clean.shop.bpBalance, '残高も動かない');
+  assert.equal(broken.shop.activeBoosts.length, 0, '壊れたアイテムは捨てる');
+  assert.ok(!('segments' in broken.activeSession), '壊れた区間で新形式にしない');
+});

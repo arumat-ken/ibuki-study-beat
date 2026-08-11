@@ -132,6 +132,47 @@
    * 記録1件を検証する。
    * @returns {ok:boolean, errors:string[]}
    */
+  /* ---------- APP-440 §8: 旧データの読み込みに使う小道具 ---------- */
+
+  /* 記録IDは 'r' + Date.now().toString(36) + 連番 で作られる(js/app.js の nextId)。
+   * createdAt を持たない旧データは、ここから作成日時を復元する。
+   * 復元できなければ 0(その日の最古)として扱う。既に上限内で確定済みのため、
+   * 順序が変わっても総額は動かない。 */
+  var ID_TS_MIN = 1577836800000;   // 2020-01-01。これより古い値は復元失敗とみなす
+  var ID_TS_MAX = 4102444800000;   // 2100-01-01
+
+  function createdAtFromId(id) {
+    if (typeof id !== 'string') return 0;
+    var m = /^[a-z]([0-9a-z]{8})/.exec(id);
+    if (!m) return 0;
+    var ts = parseInt(m[1], 36);
+    if (!isFinite(ts) || ts < ID_TS_MIN || ts > ID_TS_MAX) return 0;
+    return ts;
+  }
+
+  /* 保存済みの学習区間を検証する。推測して補わず、壊れた区間は捨てる。
+   * normalizeSegments と違い「いま」を持ち込まないので、to: null は null のまま残す。 */
+  function sanitizeSegments(segments) {
+    if (!Array.isArray(segments)) return [];
+    var out = [];
+    segments.forEach(function (s) {
+      if (!s || typeof s !== 'object') return;
+      if (typeof s.from !== 'number' || !isFinite(s.from)) return;
+      if (s.to === null) { out.push({ from: s.from, to: null }); return; }
+      if (typeof s.to !== 'number' || !isFinite(s.to)) return;
+      if (s.to <= s.from) return;
+      out.push({ from: s.from, to: s.to });
+    });
+    return out;
+  }
+
+  /* 消費アイテムの持ち時間(ミリ秒)。時間で効かないアイテムは0。 */
+  function consumableDurationMs(itemId) {
+    var item = consumableById(itemId);
+    if (!item || typeof item.durationMin !== 'number') return 0;
+    return item.durationMin * 60000;
+  }
+
   function validateRecord(rec, subjects) {
     var errors = [];
     if (!rec || typeof rec !== 'object') return { ok: false, errors: ['記録データが不正です'] };
@@ -443,10 +484,22 @@
           score: isIntInRange(r.score, 0, 10000) ? r.score : null,
           maxScore: isIntInRange(r.maxScore, 1, 10000) ? r.maxScore : null,
           reflection: typeof r.reflection === 'string' ? r.reflection.slice(0, 300) : '',
-          createdAt: typeof r.createdAt === 'number' ? r.createdAt : 0,
+          createdAt: typeof r.createdAt === 'number' ? r.createdAt : createdAtFromId(r.id),
           updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : 0,
           deletedAt: typeof r.deletedAt === 'number' ? r.deletedAt : null,
-          bp: isIntInRange(r.bp, 0, DAILY_BP_CAP) ? r.bp : 0
+          bp: isIntInRange(r.bp, 0, DAILY_BP_CAP) ? r.bp : 0,
+          /* APP-440 §8: 旧データの既定値。
+           * bpMin は actualMin と同じにして、これまでに獲得したBPをそのまま維持する。
+           * 新しい上限は今後の記録にだけ効く。 */
+          extendedMin: isIntInRange(r.extendedMin, 0, MAX_MIN_PER_RECORD) ? r.extendedMin : 0,
+          bpMin: isIntInRange(r.bpMin, 0, MAX_MIN_PER_RECORD) ? r.bpMin : (r.actualMin | 0),
+          bpMultiplier: (typeof r.bpMultiplier === 'number' && isFinite(r.bpMultiplier) && r.bpMultiplier >= 0)
+            ? r.bpMultiplier : 1,
+          bpActions: Array.isArray(r.bpActions)
+            ? r.bpActions.filter(function (k) {
+              return typeof k === 'string' && Object.prototype.hasOwnProperty.call(ACTION_BONUS_BP, k);
+            })
+            : []
         };
       });
     }
@@ -497,6 +550,17 @@
         pausedAccum: typeof parsed.activeSession.pausedAccum === 'number' ? parsed.activeSession.pausedAccum : 0,
         pausedAt: typeof parsed.activeSession.pausedAt === 'number' ? parsed.activeSession.pausedAt : null
       };
+      /* APP-440 §3・§8: segments は既定値を持たないフィールドとして扱う。
+       *
+       * ここで `segments: []` を書くと、判別式 Array.isArray(segments) が
+       * 新形式と見なし、区間の合計0分が確認済み実績Cになる。
+       * 旧セッションを読み込むだけで、それまでの学習時間が消える。
+       *
+       * 妥当な区間が1つ以上あるときだけフィールドを生やす。
+       * 空配列・壊れた配列は「無かったこと」にして従来式(startTs - pausedAccum)へ倒す。
+       * 区間が無い状態は時間制アイテムの重なりも0なので、BPが増える方向には働かない。 */
+      var keptSegments = sanitizeSegments(parsed.activeSession.segments);
+      if (keptSegments.length) out.activeSession.segments = keptSegments;
     }
     if (Array.isArray(parsed.poseUnlocks)) {
       out.poseUnlocks = parsed.poseUnlocks.filter(function (p) { return typeof p === 'string'; });
@@ -540,7 +604,26 @@
         return b && typeof b === 'object' && typeof b.itemId === 'string' && consumableById(b.itemId) &&
           typeof b.expiresAt === 'number';
       }).map(function (b) {
-        return { id: typeof b.id === 'string' ? b.id : 'ab' + Math.random().toString(36).slice(2, 10), itemId: b.itemId, kind: typeof b.kind === 'string' ? b.kind : '', expiresAt: b.expiresAt };
+        var out2 = {
+          id: typeof b.id === 'string' ? b.id : 'ab' + Math.random().toString(36).slice(2, 10),
+          itemId: b.itemId,
+          kind: typeof b.kind === 'string' ? b.kind : '',
+          expiresAt: b.expiresAt
+        };
+        /* APP-440 §8: 発動中アイテムの移行。
+         * 消費量は仮定せず(consumedMs = 0)、有効区間だけを expiresAt から逆算する。
+         * 得にはならない。使えるのは「移行後に作られた segments と有効区間の重なり」
+         * だけで、有効区間は expiresAt で終わるため。 */
+        var durationMs = consumableDurationMs(b.itemId);
+        if (durationMs > 0) {
+          out2.durationMs = (typeof b.durationMs === 'number' && isFinite(b.durationMs) && b.durationMs >= 0)
+            ? b.durationMs : durationMs;
+          out2.startedAt = (typeof b.startedAt === 'number' && isFinite(b.startedAt))
+            ? b.startedAt : (b.expiresAt - out2.durationMs);
+          out2.consumedMs = (typeof b.consumedMs === 'number' && isFinite(b.consumedMs) && b.consumedMs >= 0)
+            ? b.consumedMs : 0;
+        }
+        return out2;
       });
     }
     if (isDateStr(sh.feverLastUsedDate)) out.shop.feverLastUsedDate = sh.feverLastUsedDate;
@@ -1744,6 +1827,9 @@
     PLAN_ACHIEVED_MIN_ACTUAL_MIN: PLAN_ACHIEVED_MIN_ACTUAL_MIN,
     DAILY_ONCE_ACTIONS: DAILY_ONCE_ACTIONS,
     bpOrder: bpOrder,
+    createdAtFromId: createdAtFromId,
+    sanitizeSegments: sanitizeSegments,
+    consumableDurationMs: consumableDurationMs,
     normalizeSegments: normalizeSegments,
     segmentsOverlapMs: segmentsOverlapMs,
     applyTimedBoost: applyTimedBoost,
