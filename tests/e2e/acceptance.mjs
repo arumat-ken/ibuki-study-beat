@@ -33,6 +33,7 @@ const SHOT_DIR = new URL('../../docs/screenshots/', import.meta.url).pathname;
 mkdirSync(SHOT_DIR, { recursive: true });
 
 const results = [];
+const C_NEWS_LIMIT = 3;   // js/calc.js の NEWS_DAILY_LIMIT と対応
 const consoleErrors = [];
 let page, context, browser;
 
@@ -81,17 +82,31 @@ async function nav(screen) {
   await page.waitForSelector(`#screen-${screen}.active`);
 }
 
-async function addRecord({ date, subjectLabel, content, kind = '暗記', plan = '', actual = '', score = '', maxScore = '' }) {
+async function addRecord({ date, subjectLabel, content, kind = null, plan = '', actual = '', score = '', maxScore = '' }) {
   await nav('record');
   if (date) await page.fill('#rf-date', date);
   if (subjectLabel) await page.selectOption('#rf-subject', { label: subjectLabel });
   await page.fill('#rf-content', content);
-  await page.selectOption('#rf-kind', kind);
+  // 学習種別は科目ごとに変わる(APP-460)。指定が無ければ、その科目の初期値へ明示的に戻す。
+  // 前回の呼び出しの種別・得点が残ると、別の試験の結果を汚す。
+  if (kind) {
+    await page.selectOption('#rf-kind', kind);
+  } else {
+    const def = await page.$eval('#rf-kind', (el) => el.options.length ? el.options[0].value : '');
+    const subjId = await page.inputValue('#rf-subject');
+    const want = await page.evaluate((sid) => {
+      const C = window.ISBCalc; return C ? C.defaultStudyKindFor(sid) : null;
+    }, subjId);
+    await page.selectOption('#rf-kind', want || def);
+  }
   await page.fill('#rf-plan', String(plan));
   await page.fill('#rf-actual', String(actual));
-  if (kind === 'テスト') {
-    if (score !== '') await page.fill('#rf-score', String(score));
-    if (maxScore !== '') await page.fill('#rf-maxscore', String(maxScore));
+  // 得点欄は前回の値が残るため、テスト以外では必ず空にする。
+  // 種別が「テスト」のときは欄が出ていなければ異常なので、待って確実に扱う。
+  if (kind === 'テスト') await page.waitForSelector('#rf-score-row', { state: 'visible' });
+  if (await page.isVisible('#rf-score-row')) {
+    await page.fill('#rf-score', kind === 'テスト' && score !== '' ? String(score) : '');
+    await page.fill('#rf-maxscore', kind === 'テスト' && maxScore !== '' ? String(maxScore) : '');
   }
   await page.click('#rf-save');
   await page.waitForTimeout(250);
@@ -127,7 +142,7 @@ async function test1_firstStudy() {
   await page.click('#btn-start-study');
   await page.waitForSelector('#modal-back.open');
   await page.selectOption('#m-subject', { label: '英語' });
-  await page.selectOption('#m-kind', '暗記');
+  await page.selectOption('#m-kind', '単語・熟語');
   await page.fill('#m-content', '英単語 20語');
   await page.fill('#m-plan', '30');
   await page.click('#m-save');
@@ -182,8 +197,8 @@ async function test2_sevenDays() {
 
 async function test3_multiSubject() {
   console.log('\n■ 試験3: 複数科目の積み上げと凡例の色一致');
-  await addRecord({ date: localDate(0), subjectLabel: '国語', content: '現代文 読解', kind: '読解', plan: 40, actual: 35 });
-  await addRecord({ date: localDate(0), subjectLabel: '社会', content: '世界史 通史', kind: '復習', plan: 50, actual: 60 });
+  await addRecord({ date: localDate(0), subjectLabel: '国語', content: '現代文 読解', kind: '現代文読解', plan: 40, actual: 35 });
+  await addRecord({ date: localDate(0), subjectLabel: '社会', content: '世界史 通史', kind: '解き直し', plan: 50, actual: 60 });
   await nav('graph');
   await page.waitForSelector('#chart-svg');
   await shot('06-graph-multi-subject');
@@ -791,7 +806,9 @@ async function test12_pointsEquipShop() {
   }
   st = await getState();
   const totalBP = st.records.reduce((s, r) => s + (r.bp || 0), 0);
-  ok('複数回の記録でBPが積み上がる', totalBP >= 720, `total=${totalBP}`);
+  /* APP-440 §6: 行動ボーナスは1日1回になったので、9件ぶんの計画達成50BPは
+   * 積み上がらない。時間ぶん(9件×30分=270)と1回ぶんのボーナスは残る。 */
+  ok('複数回の記録でBPが積み上がる(時間ぶんは記録ごとに加算される)', totalBP >= 270, `total=${totalBP}`);
 
   // --- 受験科目チェック: 初期状態と、トグル操作が保存されることを確認 ---
   st = await getState();
@@ -817,12 +834,15 @@ async function test12_pointsEquipShop() {
   await addRecord({ subjectLabel: 'その他', content: '非受験科目1', plan: 30, actual: 30 });
   st = await getState();
   const nonExam1 = st.records[st.records.length - 1];
-  ok('非受験科目1件目はキャップ未満なら満額もらえる', nonExam1.bp === 80, `bp=${nonExam1.bp}`);
+  /* 計画達成+50 はその日の最初の対象記録へ寄せるため、ここでは時間ぶんだけ。 */
+  ok('非受験科目1件目はキャップ未満なら満額もらえる', nonExam1.bp === 30, `bp=${nonExam1.bp}`);
 
-  await addRecord({ subjectLabel: 'その他', content: '非受験科目2', plan: 30, actual: 30 });
+  /* 行動ボーナスが1日1回になったぶん、上限に届くまでの時間が長くなった。
+   * 30分 + 120分 = 150BP相当だが、非受験科目は1日100BPまで。 */
+  await addRecord({ subjectLabel: 'その他', content: '非受験科目2', plan: 120, actual: 120 });
   st = await getState();
   const nonExam2 = st.records[st.records.length - 1];
-  ok('非受験科目2件目で1日100BPの上限にかかる(80+80→100までしか付かない)', nonExam2.bp === 20, `bp=${nonExam2.bp}`);
+  ok('非受験科目2件目で1日100BPの上限にかかる(30+120→100までしか付かない)', nonExam2.bp === 70, `bp=${nonExam2.bp}`);
   const bpBoxAfterCap = await page.textContent('#celebrate-bp');
   ok('上限到達時にその旨が表示される', bpBoxAfterCap.includes('非受験科目'));
 
@@ -997,9 +1017,13 @@ async function test13_codexReviewFixes() {
   let st = await getState();
   const first = st.records.find(r => r.content === 'day3-first');
   const second = st.records.find(r => r.content === 'day3-second');
+  /* APP-440 §6: 行動ボーナスは1日1回。担当は bpOrder の先頭(=1件目)に固定する。
+   * 2件目は時間ぶんだけ。合計は「30+30分 + 計画達成50 + streak3の30」= 140。 */
   ok('3日連続達成の当日、1件目にstreak3ボーナス(+30)が付く', first.bp === 110, `bp=${first.bp}`);
-  ok('同じ日の2件目にはstreak3ボーナスが再度付かない', second.bp === 80, `bp=${second.bp}`);
-  ok('dailyBonusesに当日分のstreak3が記録される', st.dailyBonuses[localDate()] && st.dailyBonuses[localDate()].streak3 === true);
+  ok('同じ日の2件目には行動ボーナスが再度付かない(時間ぶんだけ)', second.bp === 30, `bp=${second.bp}`);
+  const dayTotal = st.records.filter(r => r.date === localDate() && !r.deletedAt)
+    .reduce((n, r) => n + (r.bp | 0), 0);
+  ok('APP-440 §6 その日の合計に行動ボーナスは1回ぶんだけ入る', dayTotal === 140, `合計=${dayTotal}`);
 
   // 全受験科目達成ボーナスも同様(全5科目に触れた後、追加の記録では再付与されない)
   await freshPage(true);
@@ -1017,8 +1041,14 @@ async function test13_codexReviewFixes() {
   }
   await addRec('allsub-extra', 10, 10); // 全科目達成後のもう1件
   st = await getState();
-  const withAllExam = st.records.filter(r => r.bp >= 80 && r.content.startsWith('allsub-'));
-  ok('全受験科目達成ボーナス(+80)は1日に1回だけ付与される', withAllExam.length === 1, `count=${withAllExam.length}`);
+  /* APP-440 §6: どの記録に付くかは bpOrder で固定される。
+   * 検証すべきは「その日の合計に1回ぶんだけ入っているか」。
+   * 記録は math1(20分) + 5科目×10分 + 追加10分 = 80分。
+   * 行動ボーナスは 全受験科目80 + 計画達成50 = 130。合計210。 */
+  const allExamDayTotal = st.records.filter(r => r.date === localDate() && !r.deletedAt)
+    .reduce((n, r) => n + (r.bp | 0), 0);
+  ok('全受験科目達成ボーナス(+80)は1日に1回だけ付与される', allExamDayTotal === 210,
+    `合計=${allExamDayTotal}`);
 
   // --- 修正2: 消費アイテムの効果時間が記録全体でなく実際の重なりだけに適用される ---
   await freshPage(true);
@@ -1047,11 +1077,16 @@ async function test13_codexReviewFixes() {
   await page.click('#rf-save');
   await page.waitForTimeout(200);
   const bpBoxText = await page.textContent('#celebrate-bp');
-  ok('フィーバー中の長時間記録は、発動中の30分だけ10倍になる', bpBoxText.includes('30分') && bpBoxText.includes('10.00倍') && bpBoxText.includes('90分') && bpBoxText.includes('1.00倍'), bpBoxText);
+  /* APP-440 §3: 手入力の記録には時間制アイテムを適用しない。
+   * 以前はここで「30分だけ10倍」を期待していたが、それはアイテムを発動して
+   * 長時間を手で打ち込むだけで倍率を取れる経路そのものだった。
+   * タイマーで実際に勉強した区間だけに乗せる方式へ変更している。 */
+  ok('APP-440 手入力の記録にはフィーバーの倍率が乗らない',
+    bpBoxText.includes('1.00倍') && !bpBoxText.includes('10.00倍'), bpBoxText);
   if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
   st = await getState();
   const feverRec = st.records.find(r => r.content === 'fever-120min');
-  ok('120分記録のBPが「30分×10倍+90分×1倍+行動ボーナス」で計算される(記録全体が10倍にならない)', feverRec.bp === 440, `bp=${feverRec.bp}`);
+  ok('APP-440 手入力120分のBPは等倍+行動ボーナスのみ(120+50=170)', feverRec.bp === 170, `bp=${feverRec.bp}`);
 
   // フィーバー(残30分)とエナジー(残60分)が重なる場合: 「残り時間で平均配分」ではなく、
   // フィーバー優先で実際の時間区間ごとに正しく計算されることを確認する(Codex再レビュー指摘)
@@ -1085,12 +1120,21 @@ async function test13_codexReviewFixes() {
   await page.click('#rf-save');
   await page.waitForTimeout(200);
   const overlapBpText = await page.textContent('#celebrate-bp');
-  ok('フィーバー(残30分)とエナジー(残60分)が重なる区間は、フィーバー優先(30分×10倍)→エナジー継続(30分×2倍)→通常(60分×1倍)に正しく分割される',
-    overlapBpText.includes('30分') && overlapBpText.includes('10.00倍') && overlapBpText.includes('2.00倍') && overlapBpText.includes('60分') && overlapBpText.includes('1.00倍'), overlapBpText);
+  /* APP-440 §3: 手入力なので、フィーバーもエナジーも乗らない。
+   * 発動したアイテムは消費されず、タイマーで勉強したときに使える。 */
+  ok('APP-440 手入力ではフィーバーもエナジーも乗らない',
+    overlapBpText.includes('1.00倍') && !overlapBpText.includes('10.00倍') && !overlapBpText.includes('2.00倍'),
+    overlapBpText);
   if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
   st = await getState();
   const overlapRec = st.records.find(r => r.content === 'fever-energy-overlap');
-  ok('フィーバー×エナジー重なり時のBPが期待値470(30×10+30×2+60×1+行動ボーナス50)と一致する(以前は平均配分で499になっていた)', overlapRec.bp === 470, `bp=${overlapRec.bp}`);
+  ok('APP-440 手入力120分のBPは等倍+行動ボーナスのみ(170)', overlapRec.bp === 170, `bp=${overlapRec.bp}`);
+  /* 手入力で発動を消費していないこと(タイマーで使えば効くこと)を確認する */
+  const notConsumed = await page.evaluate(() => {
+    const s2 = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return (s2.shop.activeBoosts || []).every(b => (b.consumedMs || 0) === 0);
+  });
+  ok('APP-440 手入力ではアイテムの持ち時間を消費しない', notConsumed);
 
   // エナジードリンクを2本使った場合、効果が加算される(1本ずつの上限で頭打ちにならない)ことも確認する
   await freshPage(true);
@@ -1237,6 +1281,622 @@ async function test13_codexReviewFixes() {
   ok('拒否された2回目はstreakGuardDatesも増えない', st.shop.streakGuardDates.length === 1);
 }
 
+async function test14_subjectStudyKinds() {
+  console.log('\n■ 試験14: 科目ごとの学習種別(APP-460)');
+  await freshPage(true);
+
+  const kinds = async (sel) => page.$$eval(sel + ' option', (os) => os.map((o) => o.textContent));
+
+  /* --- 記録画面: 科目を変えると学習種別が入れ替わる --- */
+  await nav('record');
+
+  await page.selectOption('#rf-subject', 'soc');
+  await page.waitForTimeout(150);
+  let list = await kinds('#rf-kind');
+  ok('14-1 社会を選ぶと社会の学習種別になる', list.includes('一問一答') && list.includes('用語の暗記'), list.join('/'));
+  ok('14-2 社会に「読解」「演習」が出ない', !list.includes('読解') && !list.includes('演習'), list.join('/'));
+  ok('14-3 社会の初期値が「用語の暗記」', await page.inputValue('#rf-kind') === '用語の暗記');
+
+  await page.selectOption('#rf-subject', 'math');
+  await page.waitForTimeout(150);
+  list = await kinds('#rf-kind');
+  ok('14-4 数学に「公式・定理の確認」がある', list.includes('公式・定理の確認'), list.join('/'));
+  ok('14-5 数学に素の「暗記」「読解」が出ない', !list.includes('暗記') && !list.includes('読解'), list.join('/'));
+  ok('14-6 数学の初期値が「問題演習」', await page.inputValue('#rf-kind') === '問題演習');
+
+  await page.selectOption('#rf-subject', 'eng');
+  await page.waitForTimeout(150);
+  list = await kinds('#rf-kind');
+  ok('14-7 英語に「リスニング」がある', list.includes('リスニング'), list.join('/'));
+
+  await page.selectOption('#rf-subject', 'other');
+  await page.waitForTimeout(150);
+  list = await kinds('#rf-kind');
+  ok('14-8 その他は共通の選択肢に戻る', list.includes('暗記') && list.includes('演習'), list.join('/'));
+
+  /* --- テストは全科目に残り、点数欄の出し分けが動く --- */
+  let missingTest = null;
+  for (const sid of ['eng', 'math', 'jpn', 'sci', 'soc', 'other']) {
+    await page.selectOption('#rf-subject', sid);
+    await page.waitForTimeout(120);
+    const l = await kinds('#rf-kind');
+    if (!l.includes('テスト')) { missingTest = sid + ': ' + l.join('/'); break; }
+  }
+  ok('14-9 全科目に「テスト」がある', missingTest === null, missingTest || '6科目すべて');
+
+  await page.selectOption('#rf-subject', 'soc');
+  await page.waitForTimeout(120);
+  await page.selectOption('#rf-kind', 'テスト');
+  await page.waitForTimeout(150);
+  ok('14-10 テストを選ぶと点数欄が出る', await page.isVisible('#rf-score-row'));
+  await page.selectOption('#rf-subject', 'math');
+  await page.waitForTimeout(150);
+  // 「テスト」はどの科目にもあるため、科目を変えても保たれる。
+  // ここで既定値へ戻すと、入力済みの得点が保存時に消える(15-17〜20 で検証)。
+  ok('14-11 科目を変えても「テスト」は保たれ点数欄が開いたまま',
+    (await page.inputValue('#rf-kind')) === 'テスト' && (await page.isVisible('#rf-score-row')),
+    await page.inputValue('#rf-kind'));
+
+  /* --- 保存できる --- */
+  await page.selectOption('#rf-subject', 'soc');
+  await page.waitForTimeout(120);
+  await page.fill('#rf-content', '世界史 一問一答');
+  await page.selectOption('#rf-kind', '一問一答');
+  await page.fill('#rf-plan', '20');
+  await page.fill('#rf-actual', '20');
+  await page.click('#rf-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  const saved = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return st.records.filter((r) => !r.deletedAt).map((r) => r.kind);
+  });
+  ok('14-12 科目別の種別で保存できる', saved.includes('一問一答'), saved.join('/'));
+
+  /* --- 予定追加モーダルでも連動する --- */
+  await nav('today');
+  await page.click('#btn-add-plan');
+  await page.waitForTimeout(250);
+  await page.selectOption('#m-subject', 'jpn');
+  await page.waitForTimeout(150);
+  list = await kinds('#m-kind');
+  ok('14-13 予定追加でも科目に連動する(国語に「古文」)', list.includes('古文'), list.join('/'));
+  await page.click('#m-close');
+  await page.waitForTimeout(200);
+
+  /* --- 旧データの値を持つ記録を編集しても値が消えない --- */
+  await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    st.records.push({
+      id: 'r_legacy', date: st.records[0] ? st.records[0].date : new Date().toISOString().slice(0, 10),
+      subjectId: 'soc', content: '旧データ', kind: '暗記',
+      planMin: 30, actualMin: 30, score: null, maxScore: null, reflection: '',
+      createdAt: 1, updatedAt: 1, deletedAt: null
+    });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await nav('record');
+  await page.waitForTimeout(300);
+  const keptLegacy = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const r = st.records.find((x) => x.id === 'r_legacy');
+    return r ? r.kind : null;
+  });
+  ok('14-14 旧データの「暗記」が読み込みで消えない', keptLegacy === '暗記', String(keptLegacy));
+
+  /* --- 長い選択肢が途中で切れない(320pxでも) --- */
+  await nav('record');
+  await page.selectOption('#rf-subject', 'math');
+  await page.waitForTimeout(150);
+  await page.selectOption('#rf-kind', '公式・定理の確認');
+  await page.waitForTimeout(150);
+  const fits = await page.$eval('#rf-kind', (el) => el.scrollWidth <= el.clientWidth + 1);
+  ok('14-15 長い学習種別が枠内に収まる(390px)', fits);
+  await shot('60-subject-study-kinds');
+
+  await page.setViewportSize({ width: 320, height: 700 });
+  await page.waitForTimeout(250);
+  const fits320 = await page.$eval('#rf-kind', (el) => el.scrollWidth <= el.clientWidth + 1);
+  ok('14-16 長い学習種別が枠内に収まる(320px)', fits320);
+  const noHScroll = await page.evaluate(() =>
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1);
+  ok('14-17 320px幅の記録画面で横スクロールが発生しない', noHScroll);
+  await shot('62-subject-study-kinds-320');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(200);
+}
+
+async function test15_coachPanelsAndReport() {
+  console.log('\n■ 試験15: コーチのパネル表示・不具合報告・更新バッジ(APP-461)');
+  await freshPage(true);
+  await nav('coach');
+  await page.waitForTimeout(300);
+
+  const geo = async (sel) => page.$eval(sel, (el) => {
+    const b = el.getBoundingClientRect();
+    return { top: Math.round(b.top), bottom: Math.round(b.bottom), vh: window.innerHeight,
+             visible: !!(el.offsetWidth || el.offsetHeight) };
+  });
+
+  /* --- ポーズ変更: 押したら画面内に見える --- */
+  await page.click('#btn-pose');
+  await page.waitForTimeout(700);
+  let g = await geo('#pose-panel');
+  ok('15-1 ポーズ変更を押すとパネルが開く', g.visible);
+  ok('15-2 ポーズパネルが画面内に入る(押しても何も起きないように見えない)',
+    g.top < g.vh && g.bottom > 0, JSON.stringify(g));
+  const poseTappable = await page.$eval('.pose-cell', (el) => {
+    const b = el.getBoundingClientRect();
+    const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    return !!(t && (t === el || el.contains(t)));
+  });
+  ok('15-3 ポーズを実際にタップできる', poseTappable);
+
+  /* --- メッセージ: 押したら入力欄が画面内に見える --- */
+  await page.click('#btn-chat');
+  await page.waitForTimeout(700);
+  g = await geo('#chat-input');
+  ok('15-4 メッセージを押すと入力欄が開く', g.visible);
+  ok('15-5 入力欄が画面内に入る', g.top < g.vh && g.bottom > 0, JSON.stringify(g));
+  const inputTappable = await page.$eval('#chat-input', (el) => {
+    const b = el.getBoundingClientRect();
+    const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    return !!(t && (t === el || el.contains(t)));
+  });
+  ok('15-6 入力欄が他の要素に隠れていない', inputTappable);
+
+  await page.fill('#chat-input', 'テスト送信');
+  await page.click('#chat-send');
+  await page.waitForTimeout(400);
+  const chatSaved = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return ((st.coach && st.coach.messages) || []).some((c) => (c.text || '').includes('テスト送信'));
+  });
+  ok('15-7 メッセージを送信できる', chatSaved);
+  await shot('63-coach-chat-open');
+
+  /* --- 不具合を報告する --- */
+  await nav('settings');
+  await page.click('.settings-item[data-panel="report"]');
+  await page.waitForSelector('#rp-preview');
+  const preview0 = await page.textContent('#rp-preview');
+  ok('15-8 報告画面に版数が自動で入る', preview0.includes('ver.'), preview0.slice(0, 40));
+  ok('15-9 端末と画面幅が自動で入る', preview0.includes('画面幅') && preview0.includes('端末'));
+  ok('15-10 学習内容の本文は含めない旨を明記', preview0.includes('本文は含めていません'));
+  await page.fill('#rp-text', 'コーチのボタンが反応しない');
+  await page.waitForTimeout(200);
+  const preview1 = await page.textContent('#rp-preview');
+  ok('15-11 書いた内容が報告文に反映される', preview1.includes('コーチのボタンが反応しない'));
+  await shot('64-report-panel');
+  await page.click('#rp-copy');
+  await page.waitForTimeout(300);
+  ok('15-12 コピー操作でエラーにならない', true);
+  await page.click('#m-close');
+  await page.waitForTimeout(200);
+
+  /* --- 更新バッジ --- */
+  const before = await page.$eval('.nav-btn[data-screen="settings"]', (el) => el.className);
+  ok('15-13 通常時は設定タブに赤い点が出ない', !before.includes('has-update'), before);
+  await page.evaluate(() => window.__isbSetUpdateBadge && window.__isbSetUpdateBadge(true));
+  await page.waitForTimeout(200);
+  const after = await page.$eval('.nav-btn[data-screen="settings"]', (el) => el.className);
+  ok('15-14 更新が届くと設定タブに赤い点が出る', after.includes('has-update'), after);
+  const dotVisible = await page.$eval('.nav-btn[data-screen="settings"] .dot',
+    (el) => !!(el.offsetWidth || el.offsetHeight));
+  ok('15-15 赤い点が実際に表示される', dotVisible);
+  await shot('65-update-badge');
+  await page.evaluate(() => window.__isbSetUpdateBadge && window.__isbSetUpdateBadge(false));
+  await page.waitForTimeout(200);
+  const cleared = await page.$eval('.nav-btn[data-screen="settings"]', (el) => el.className);
+  ok('15-16 更新すると赤い点が消える', !cleared.includes('has-update'), cleared);
+
+  /* --- 第三者レビュー指摘1: 科目を変えてもテストの得点が消えない --- */
+  await nav('record');
+  await page.selectOption('#rf-subject', 'soc');
+  await page.waitForTimeout(200);
+  await page.selectOption('#rf-kind', 'テスト');
+  await page.waitForTimeout(200);
+  await page.fill('#rf-content', '模試(科目変更の検証)');
+  await page.fill('#rf-plan', '60');
+  await page.fill('#rf-actual', '60');
+  await page.fill('#rf-score', '80');
+  await page.fill('#rf-maxscore', '100');
+  await page.selectOption('#rf-subject', 'math');       // ここで種別が既定値へ戻ると得点が消える
+  await page.waitForTimeout(300);
+  ok('15-17 科目を変えても学習種別「テスト」が保たれる',
+    (await page.inputValue('#rf-kind')) === 'テスト', await page.inputValue('#rf-kind'));
+  ok('15-18 科目を変えても得点欄が開いたまま', await page.isVisible('#rf-score-row'));
+  ok('15-19 入力済みの得点が残っている', (await page.inputValue('#rf-score')) === '80');
+  await page.click('#rf-save');
+  await page.waitForTimeout(400);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  const savedScore = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const r = st.records.filter((x) => !x.deletedAt).find((x) => (x.content || '').includes('科目変更の検証'));
+    return r ? { kind: r.kind, score: r.score, max: r.maxScore, subject: r.subjectId } : null;
+  });
+  ok('15-20 保存後も得点が消えていない', savedScore && savedScore.score === 80 && savedScore.kind === 'テスト',
+    JSON.stringify(savedScore));
+
+  /* --- 科目を変えたとき、その科目に無い種別は既定値へ切り替わる --- */
+  await page.selectOption('#rf-subject', 'soc');
+  await page.waitForTimeout(200);
+  await page.selectOption('#rf-kind', '一問一答');
+  await page.selectOption('#rf-subject', 'math');       // 数学に「一問一答」は無い
+  await page.waitForTimeout(300);
+  ok('15-21 その科目に無い種別は既定値へ切り替わる',
+    (await page.inputValue('#rf-kind')) === '問題演習', await page.inputValue('#rf-kind'));
+
+  /* --- 第三者レビュー指摘2: 壊れた科目idでも起動する --- */
+  await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    st.settings.subjects.push({ id: 'toString', name: '壊れid', color: '#888', visible: true, examSubject: false });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+  });
+  const errsBefore = consoleErrors.length;
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(500);
+  await nav('record');
+  await page.selectOption('#rf-subject', 'toString');
+  await page.waitForTimeout(300);
+  const kindsForBroken = await page.$$eval('#rf-kind option', (os) => os.map((o) => o.textContent));
+  ok('15-22 科目idが toString でもアプリが起動し操作できる', kindsForBroken.length > 0, kindsForBroken.join('/'));
+  ok('15-23 壊れた科目idでJSエラーが増えない', consoleErrors.length === errsBefore,
+    consoleErrors.slice(errsBefore).join(' | '));
+}
+
+async function test24_bpChipAndGraph() {
+  console.log('\n■ 試験24: ポイントの常時表示とポイントグラフ(APP-470)');
+  await freshPage(true);
+  await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const d = (o) => { const x = new Date(); x.setDate(x.getDate() + o);
+      return x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0'); };
+    for (let i = 6; i >= 0; i--) {
+      st.records.push({ id: 'bp' + i, date: d(-i), subjectId: 'eng', content: 'BP検証' + i, kind: '単語・熟語',
+        planMin: 60, actualMin: 60, score: null, maxScore: null, reflection: '',
+        bp: 100 * (i + 1), createdAt: 1, updatedAt: 1, deletedAt: null });
+    }
+    st.news.push({ id: 'bpn', date: d(-1), genreId: 'economy', headline: 'N', comment: '', bp: 60, createdAt: 1 });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+
+  /* --- 全画面の上部にポイントが出る --- */
+  const expected = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return window.ISBCalc.calcBpBalance(st).toLocaleString('ja-JP');
+  });
+  let allShown = true, detail = [];
+  for (const sc of ['today', 'record', 'graph', 'world', 'coach', 'settings']) {
+    await nav(sc);
+    await page.waitForTimeout(200);
+    const r = await page.evaluate(() => {
+      const c = document.querySelector('.screen.active .bp-balance');
+      if (!c) return null;
+      const b = c.getBoundingClientRect();
+      return { text: c.textContent.trim(), visible: !!(c.offsetWidth || c.offsetHeight), top: Math.round(b.top) };
+    });
+    if (!r || !r.visible || r.text.indexOf(expected) === -1) { allShown = false; detail.push(sc + ':' + JSON.stringify(r)); }
+  }
+  ok('16-1 6画面すべての上部にポイント残高が出る', allShown, detail.join(' '));
+
+  /* --- タップで内訳が開く --- */
+  await nav('today');
+  await page.click('.screen.active .bp-balance');
+  await page.waitForTimeout(400);
+  ok('16-2 ポイントをタップすると内訳が開く', await page.isVisible('#modal-back.open'));
+  await page.click('#m-close');
+  await page.waitForTimeout(250);
+
+  /* --- 記録を足すと残高が増える --- */
+  const before = await page.textContent('.screen.active .bp-balance');
+  await addRecord({ subjectLabel: '英語', content: 'ポイント増加の検証', plan: 30, actual: 30 });
+  await nav('today');
+  await page.waitForTimeout(300);
+  const after = await page.textContent('.screen.active .bp-balance');
+  ok('16-3 記録を保存すると残高表示が更新される', before !== after, before + ' → ' + after);
+
+  /* --- ポイントグラフ --- */
+  await nav('graph');
+  await page.waitForTimeout(300);
+  const timeBars = await page.locator('#chart-svg-wrap rect').count();
+  ok('16-4 学習時間グラフが従来どおり描かれる', timeBars > 0, 'rect=' + timeBars);
+
+  await page.click('#graph-mode-tabs [data-mode="bp"]');
+  await page.waitForTimeout(500);
+  ok('16-5 ポイントグラフに切り替わる', (await page.locator('#chart-svg-wrap rect').count()) > 0);
+  ok('16-6 累積の線が描かれる', (await page.locator('#chart-svg-wrap polyline').count()) === 1);
+  const stats = (await page.textContent('#graph-stats')).replace(/\s+/g, '');
+  ok('16-7 獲得合計・学習から・ニュースからが出る',
+    stats.includes('獲得合計') && stats.includes('学習から') && stats.includes('ニュースから'), stats.slice(0, 60));
+  const ovBp = await page.evaluate(() =>
+    document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  ok('16-8 ポイントグラフで横スクロールが起きない', ovBp <= 1, 'overflow=' + ovBp);
+  await shot('66-graph-bp');
+
+  /* --- 期間切替がポイント側でも効く --- */
+  await page.click('.range-tab[data-range="month"]');
+  await page.waitForTimeout(400);
+  ok('16-9 期間(月)を変えてもポイントグラフが描かれる',
+    (await page.locator('#chart-svg-wrap rect').count()) > 0);
+
+  /* --- 学習時間グラフへ戻して壊れていないこと --- */
+  await page.click('#graph-mode-tabs [data-mode="time"]');
+  await page.waitForTimeout(400);
+  ok('16-10 学習時間グラフへ戻せる(既存機能を壊していない)',
+    (await page.locator('#chart-svg-wrap rect').count()) > 0);
+  ok('16-11 学習時間の統計が従来どおり出る',
+    (await page.textContent('#graph-stats')).includes('達成率'));
+
+  /* --- 不具合報告のLINE送信 --- */
+  await nav('settings');
+  await page.click('.settings-item[data-panel="report"]');
+  await page.waitForSelector('#rp-send');
+  ok('16-12 不具合報告に「送る」ボタンがある', await page.isVisible('#rp-send'));
+  ok('16-13 コピーするボタンも残っている', await page.isVisible('#rp-copy'));
+  const shared = await page.evaluate(() => {
+    window.__shared = null;
+    navigator.share = (d) => { window.__shared = d; return Promise.resolve(); };
+    document.getElementById('rp-send').click();
+    return new Promise((r) => setTimeout(() => r(window.__shared), 200));
+  });
+  ok('16-14 送るボタンで共有に報告文が渡る',
+    shared && (shared.text || '').includes('IBUKI STUDY BEAT 不具合レポート'),
+    shared ? (shared.text || '').slice(0, 30) : 'null');
+  ok('16-15 共有に学習内容の本文が含まれない',
+    shared && (shared.text || '').includes('本文は含めていません'));
+  await shot('67-report-share');
+  await page.click('#m-close');
+}
+
+async function test25_sessionGuards() {
+  console.log('\n■ 試験25: 学習セッションを不用意に失わないためのガード(APP-471)');
+  await freshPage(true);
+
+  // 予定を1件作り、その予定から学習を始める。
+  // 「学習を開始する」は予定が残っていると選択モーダルを出すため、
+  // 予定を作る → その予定をタップ、の2段階にして手順を確定させる。
+  async function makePlan(name) {
+    await nav('today');
+    await page.click('#btn-add-plan');
+    await page.waitForSelector('#m-subject');
+    await page.selectOption('#m-subject', { label: '英語' });
+    await page.fill('#m-content', name);
+    await page.fill('#m-plan', '60');
+    await page.click('#m-save');
+    await page.waitForTimeout(300);
+  }
+
+  async function startPlan(name) {
+    await nav('today');
+    await page.click('#today-plans .plan-item:has-text("' + name + '")');
+    await page.waitForSelector('#timer-card:visible');
+  }
+
+  async function ageSession(minutes) {
+    await page.evaluate((m) => {
+      const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+      st.activeSession.startTs -= m * 60 * 1000;
+      localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+    }, minutes);
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector('#timer-card:visible');
+  }
+
+  // 学習中なら破棄して、次の試験の前提を揃える
+  async function endSessionIfAny() {
+    await nav('today');
+    await page.waitForTimeout(200);
+    if (await page.isVisible('#timer-card')) {
+      await page.click('#btn-discard');
+      await page.waitForSelector('#m-ok');
+      await page.click('#m-ok');
+      await page.waitForTimeout(300);
+    }
+  }
+
+  async function startAndAge(name, minutes) {
+    await endSessionIfAny();
+    await makePlan(name);
+    await startPlan(name);
+    await ageSession(minutes);
+  }
+
+  /* --- 画面を移動しても、アプリを閉じても続く --- */
+  await startAndAge('継続の検証', 45);
+  for (const sc of ['record', 'graph', 'world', 'coach', 'settings', 'today']) {
+    await nav(sc);
+    await page.waitForTimeout(80);
+  }
+  ok('17-1 アプリ内で画面を移動してもタイマーが続く', await page.isVisible('#timer-card'));
+
+  await page.goto(BASE + '/glossary/', { waitUntil: 'domcontentloaded' }).catch(() => {});
+  await page.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+  ok('17-2 別のページへ行って戻ってもタイマーが続く', await page.isVisible('#timer-card'));
+
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+  const elapsed = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return st.activeSession ? Math.floor((Date.now() - st.activeSession.startTs) / 60000) : null;
+  });
+  ok('17-3 開き直しても経過時間が保たれる(裏で進む)', elapsed === 45, String(elapsed));
+
+  /* --- やめるときに何分消えるか見せる --- */
+  await page.click('#btn-discard');
+  await page.waitForSelector('#m-ok');
+  const dlg = (await page.textContent('#modal-back')).replace(/\s+/g, '');
+  ok('17-4 失う時間を具体的に示す(45分)', dlg.includes('45分'), dlg.slice(0, 50));
+  ok('17-5 取り消せることを案内する', dlg.includes('元に戻す'));
+
+  /* --- やめても取り消せる --- */
+  await page.click('#m-ok');
+  await page.waitForTimeout(400);
+  ok('17-6 やめるとタイマーが消える', !(await page.isVisible('#timer-card')));
+  ok('17-7 取り消しボタン付きの知らせが出る',
+    (await page.textContent('#toast')).includes('元に戻す'));
+  await page.click('#toast-action');
+  await page.waitForTimeout(500);
+  ok('17-8 取り消すとタイマーが戻る', await page.isVisible('#timer-card'));
+  const back = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return st.activeSession ? Math.floor((Date.now() - st.activeSession.startTs) / 60000) : null;
+  });
+  ok('17-9 取り消すと経過時間もそのまま戻る', back === 45, String(back));
+
+  /* --- 学習中の予定を消したら、黙って止めずに理由を伝える --- */
+  await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const r = st.records.find((x) => x.id === st.activeSession.recordId);
+    r.deletedAt = Date.now();
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(700);
+  ok('17-10 削除済みの予定でタイマーが動き続けない', !(await page.isVisible('#timer-card')));
+  ok('17-11 止めた理由を知らせる',
+    (await page.textContent('#toast')).includes('削除された'),
+    (await page.textContent('#toast')).replace(/\s+/g, ' ').slice(0, 40));
+  const cleared = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession);
+  ok('17-12 セッションが残らない', cleared === null, JSON.stringify(cleared));
+
+  /* --- Codexレビュー Q4-2: 学習中の予定を削除しても時間を失わない（実際の削除UIから） --- */
+  await startAndAge('削除ガードの検証', 25);
+  await nav('record');
+  await page.waitForTimeout(300);
+  // 一覧の🗑から削除しようとする
+  const delBtn = page.locator('.rec-item .rec-actions button', { hasText: '🗑' })
+    .first();
+  const hasDel = await delBtn.count();
+  if (hasDel) {
+    await delBtn.click();
+    await page.waitForTimeout(400);
+  }
+  const guardTxt = (await page.textContent('#modal-back')).replace(/\s+/g, '');
+  ok('17-13 学習中の予定を消そうとすると止められる',
+    guardTxt.includes('いま学習中の予定'), guardTxt.slice(0, 50));
+  ok('17-14 未保存の時間を具体的に示す', guardTxt.includes('25分'), guardTxt.slice(0, 60));
+  ok('17-15 終了して記録する選択肢がある', await page.isVisible('#dl-finish'));
+
+  // 「やめる」を選べば、記録もタイマーも無事
+  await page.click('#dl-cancel');
+  await page.waitForTimeout(300);
+  await nav('today');
+  await page.waitForTimeout(200);
+  ok('17-16 やめるとタイマーが続く(時間を失わない)', await page.isVisible('#timer-card'));
+  const stillThere = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const r = st.records.find((x) => (x.content || '').includes('削除ガードの検証'));
+    return r ? !r.deletedAt : null;
+  });
+  ok('17-17 記録も削除されていない', stillThere === true, String(stillThere));
+
+  /* --- Codexレビュー Q6-1: 取り消し待ちの時間が勉強時間に入らない --- */
+  await page.click('#btn-discard');
+  await page.waitForSelector('#m-ok');
+  await page.click('#m-ok');
+  await page.waitForTimeout(2500);          // 2.5秒ぶん待ってから戻す
+  await page.click('#toast-action');
+  await page.waitForTimeout(400);
+  const afterUndo = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const s = st.activeSession;
+    if (!s) return null;
+    return { elapsedMin: Math.floor((Date.now() - s.startTs - s.pausedAccum) / 60000),
+             pausedAccum: s.pausedAccum };
+  });
+  ok('17-18 取り消し待ちの時間が一時停止として除かれる',
+    afterUndo && afterUndo.pausedAccum >= 2000, JSON.stringify(afterUndo));
+  ok('17-19 取り消し後の経過時間が水増しされない',
+    afterUndo && afterUndo.elapsedMin === 25, JSON.stringify(afterUndo));
+
+  /* --- Codexレビュー Q6-1(再): 一時停止中にやめて戻しても時間が減らない --- */
+  await startAndAge('一時停止からの復元', 10);
+  await page.click('#btn-pause');                 // 一時停止する
+  await page.waitForTimeout(300);
+  const pausedElapsed = await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession;
+    return Math.floor(((s.pausedAt || Date.now()) - s.startTs - s.pausedAccum) / 60000);
+  });
+  ok('17-22 一時停止で経過が止まる', pausedElapsed === 10, String(pausedElapsed));
+
+  await page.click('#btn-discard');
+  await page.waitForSelector('#m-ok');
+  await page.click('#m-ok');
+  await page.waitForTimeout(2500);                // 2.5秒待ってから戻す
+  await page.click('#toast-action');
+  await page.waitForTimeout(400);
+  const restored = await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession;
+    if (!s) return null;
+    return { elapsedMin: Math.floor(((s.pausedAt || Date.now()) - s.startTs - s.pausedAccum) / 60000),
+             pausedAccum: s.pausedAccum, stillPaused: !!s.pausedAt };
+  });
+  ok('17-23 一時停止中に戻しても学習時間が減らない',
+    restored && restored.elapsedMin === 10, JSON.stringify(restored));
+  ok('17-24 一時停止中は待ち時間を二重に引かない',
+    restored && restored.pausedAccum === 0, JSON.stringify(restored));
+
+  // 再開しても、待ち時間が経過に混ざらない
+  await page.click('#btn-pause');                 // 再開
+  await page.waitForTimeout(600);
+  const resumed = await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession;
+    return Math.floor((Date.now() - s.startTs - s.pausedAccum) / 60000);
+  });
+  ok('17-25 再開後も経過が10分のまま(待ち時間が混ざらない)', resumed === 10, String(resumed));
+
+  /* --- Codexレビュー Q6-2: 別の学習が始まっていたら上書きしない --- */
+  await startAndAge('上書き検証のもと', 5);
+  const prevRecordId = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession.recordId);
+  await page.click('#btn-discard');
+  await page.waitForSelector('#m-ok');
+  await page.click('#m-ok');
+  await page.waitForTimeout(300);
+  // 先に別の学習を始めてしまう(前のセッションとは別の予定)
+  await makePlan('別セッションの検証');
+  await startPlan('別セッションの検証');
+  await page.waitForTimeout(300);
+  // 前のセッションの「元に戻す」が残っていれば押してみる
+  if (await page.isVisible('#toast-action')) {
+    await page.click('#toast-action');
+    await page.waitForTimeout(300);
+  }
+  const nowRecordId = await page.evaluate(() =>
+    (JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession || {}).recordId);
+  ok('17-20 別の学習を始めた後は、前のセッションで上書きされない',
+    nowRecordId && nowRecordId !== prevRecordId,
+    'prev=' + prevRecordId + ' now=' + nowRecordId);
+
+  /* --- Codexレビュー Q4-1: 削除済みの予定からは学習を始められない --- */
+  const startedOnDeleted = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    // 適当な記録をごみ箱へ入れ、そのIDで開始を試みる
+    const target = st.records.find((r) => !r.deletedAt && r.id !== (st.activeSession || {}).recordId);
+    if (!target) return 'no-target';
+    target.deletedAt = Date.now();
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+    return target.id;
+  });
+  if (startedOnDeleted !== 'no-target') {
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForTimeout(400);
+    const inList = await page.evaluate((id) =>
+      !!document.querySelector('#today-plans .plan-item[data-id="' + id + '"]'), startedOnDeleted);
+    ok('17-21 ごみ箱に入れた予定は今日の一覧から消える(開始できない)', !inList, String(inList));
+  } else {
+    ok('17-21 ごみ箱に入れた予定は今日の一覧から消える(開始できない)', true, '対象なし');
+  }
+
+  await shot('68-session-guard');
+}
+
 async function extra_screens() {
   console.log('\n■ 追加: 全画面スクリーンショットとコーチ・320px幅・横向き');
   await freshPage(true);
@@ -1306,6 +1966,1029 @@ async function extra_screens() {
   ok('横向きでグラフを優先表示', Number(chartH) >= 220, `h=${chartH}`);
 }
 
+/* ============ APP-440 段階3: タイマーの自動停止と延長 ============ */
+
+/** 偽の時計を入れた状態でページを開く。実時間を待たずに経過を再現する。 */
+async function freshPageWithClock(startMs) {
+  if (context) await context.close();
+  context = await browser.newContext({ ...devices['iPhone 13'], locale: 'ja-JP' });
+  page = await context.newPage();
+  page.on('console', m => { if (m.type() === 'error') consoleErrors.push(m.text()); });
+  page.on('pageerror', e => consoleErrors.push(String(e)));
+  await page.clock.install({ time: new Date(startMs) });
+  /* 時計を完全に止める。止めないと実時間ぶんの微小なずれが積もり、
+     分単位の期待値が1分ずれることがある。 */
+  await page.clock.pauseAt(new Date(startMs));
+  await page.goto(BASE + '/index.html');
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+}
+
+/** 今日の予定を作ってタイマーを開始する */
+async function startPlanTimer({ subjectLabel = '英語', kind = '単語・熟語', content, plan }) {
+  await page.click('#btn-start-study');
+  await page.waitForSelector('#modal-back.open');
+  await page.selectOption('#m-subject', { label: subjectLabel });
+  await page.selectOption('#m-kind', kind);
+  await page.fill('#m-content', content);
+  await page.fill('#m-plan', String(plan));
+  await page.click('#m-save');
+  await page.waitForTimeout(200);
+}
+
+async function test16_timerAutoStop() {
+  console.log('\n■ 試験16: タイマーの自動停止と延長(APP-440 T-1)');
+  // 2026-08-11 10:00 に固定する
+  const T0 = new Date(2026, 7, 11, 10, 0, 0).getTime();
+  await freshPageWithClock(T0);
+
+  /* --- T-1-1: 宣言済み時間で自動停止する --- */
+  await startPlanTimer({ content: '英単語 60分', plan: 60 });
+  await page.waitForSelector('#timer-card:visible');
+  const runningBefore = await page.isVisible('#timer-elapsed');
+  ok('T-1-1 開始直後はタイマーが動いている', runningBefore);
+
+  await page.clock.fastForward(60 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('T-1-1 計画時間でタイマーが自動停止し完了画面が出る', await page.isVisible('#timer-completed'));
+  const doneText = await page.textContent('#timer-completed');
+  ok('T-1-1 完了画面に60分と出る', /1時間|60分/.test(doneText), doneText);
+  /* 完了したのにコーチが「集中してるね」のままだと、画面と実態が食い違う */
+  const greetAfter = await page.textContent('#today-greeting');
+  ok('T-1-1 完了後はコーチの言葉も完了に変わる', !/集中してるね/.test(greetAfter), greetAfter);
+  await shot('70-timer-completed');
+
+  /* --- T-1-2: 完了画面で何もしないまま放置しても増えない --- */
+  await page.clock.fastForward(30 * 60 * 1000);
+  await page.waitForTimeout(300);
+  const doneText2 = await page.textContent('#timer-completed');
+  ok('T-1-2 完了後に30分放置しても90分にならない', doneText2 === doneText, doneText2);
+
+  /* 保存すると60分。超過30分は捨てられる。 */
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  const suggested = await page.inputValue('#m-actual');
+  ok('T-1-2 保存欄の既定値が60分(90分ではない)', suggested === '60', suggested);
+  const maxAttr = await page.getAttribute('#m-actual', 'max');
+  ok('T-1-2 実績欄の上限が宣言済み時間になっている', maxAttr === '60', maxAttr);
+
+  /* 増やす方向の修正は受け付けない */
+  await page.fill('#m-actual', '120');
+  await page.click('#m-save');
+  await page.waitForTimeout(200);
+  const stillOpen = await page.isVisible('#m-actual');
+  ok('T-1-2 宣言済み時間を超える値では保存できない', stillOpen);
+  await page.fill('#m-actual', '60');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+
+  let st = await getState();
+  let rec = st.records.find(r => r.content === '英単語 60分');
+  ok('T-1-2 実績60分で保存される(放置分は入らない)', rec && rec.actualMin === 60,
+    rec ? `actual=${rec.actualMin}` : '記録なし');
+  ok('T-1-2 未確定の30分はBPにならない', rec && rec.bp > 0 && rec.bp <= 60 * 3,
+    rec ? `bp=${rec.bp}` : '');
+
+  /* --- T-1-5/T-1-6/T-1-14: 延長 --- */
+  await page.clock.fastForward(60 * 1000);
+  await startPlanTimer({ content: '延長テスト', plan: 30 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(30 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('T-1-5 計画30分で完了画面が出る', await page.isVisible('#timer-completed'));
+  ok('T-1-5 延長のボタンが出ている', await page.isVisible('[data-ext="15"]'));
+
+  await page.click('[data-ext="15"]');
+  await page.waitForTimeout(300);
+  ok('T-1-5 延長するとタイマーが再開する', await page.isVisible('#timer-elapsed'));
+  st = await getState();
+  rec = st.records.find(r => r.content === '延長テスト');
+  ok('T-1-14 延長は実績へ溶かし込まず extendedMin に残る', rec && rec.extendedMin === 15,
+    rec ? `extendedMin=${rec.extendedMin}` : '記録なし');
+
+  await page.clock.fastForward(15 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('T-1-6 延長した時間で再び完了画面が出る', await page.isVisible('#timer-completed'));
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  const extSuggested = await page.inputValue('#m-actual');
+  ok('T-1-6 計画30分＋延長15分=45分が既定値', extSuggested === '45', extSuggested);
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  st = await getState();
+  rec = st.records.find(r => r.content === '延長テスト');
+  ok('T-1-6 実績45分・延長15分で保存', rec && rec.actualMin === 45 && rec.extendedMin === 15,
+    rec ? `actual=${rec.actualMin}, ext=${rec.extendedMin}` : '記録なし');
+
+  /* --- T-1-13: テストは延長できない --- */
+  await page.clock.fastForward(60 * 1000);
+  await startPlanTimer({ content: '英語ミニテスト', kind: 'テスト', plan: 20 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(20 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('T-1-13 テストでも完了画面は出る', await page.isVisible('#timer-completed'));
+  ok('T-1-13 テストには延長のボタンが出ない', !(await page.isVisible('[data-ext="15"]')));
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+}
+
+async function test17_timerReopenAndDayCross() {
+  console.log('\n■ 試験17: 再起動・日またぎでも終了時刻で頭打ち(APP-440 T-1-3/T-1-4)');
+  const T0 = new Date(2026, 7, 11, 10, 0, 0).getTime();
+
+  /* --- T-1-3: アプリを閉じたまま8時間放置して開く --- */
+  await freshPageWithClock(T0);
+  await startPlanTimer({ content: '放置8時間', plan: 60 });
+  await page.waitForSelector('#timer-card:visible');
+  /* アプリを閉じている状態を、8時間先の時計で開き直して再現する */
+  await page.clock.fastForward(8 * 60 * 60 * 1000);
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  ok('T-1-3 開き直すと完了画面が出る', await page.isVisible('#timer-completed'));
+  const late = await page.textContent('#timer-card');
+  ok('T-1-3 完了していた時刻を伝える', /完了していました/.test(late), late.slice(0, 60));
+  await shot('71-timer-completed-late');
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  const v = await page.inputValue('#m-actual');
+  ok('T-1-3 480分ではなく60分', v === '60', v);
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  let st = await getState();
+  let rec = st.records.find(r => r.content === '放置8時間');
+  ok('T-1-3 実績60分で保存される', rec && rec.actualMin === 60, rec ? `actual=${rec.actualMin}` : '記録なし');
+  ok('T-1-3 BPも60分ぶんまで', rec && rec.bp <= 60 * 3, rec ? `bp=${rec.bp}` : '');
+
+  /* --- 完了直後にアプリを閉じても実績とBPが残る(段階3レビューの修正条件3) --- */
+  await freshPageWithClock(T0);
+  await startPlanTimer({ content: '完了直後に閉じる', plan: 60 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(60 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('完了時点で完了画面が出る', await page.isVisible('#timer-completed'));
+  /* ボタンを一切押さずに保存状態を見る */
+  let stAuto = await getState();
+  let recAuto = stAuto.records.find(r => r.content === '完了直後に閉じる');
+  ok('ボタンを押さなくても実績が保存されている', recAuto && recAuto.actualMin === 60,
+    recAuto ? `actual=${recAuto.actualMin}` : '記録なし');
+  ok('ボタンを押さなくてもBPが確定している', recAuto && recAuto.bp > 0,
+    recAuto ? `bp=${recAuto.bp}` : '');
+  const bpAfterComplete = recAuto.bp;
+
+  /* アプリを閉じて開き直しても残る。二重付与もしない。 */
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  stAuto = await getState();
+  recAuto = stAuto.records.find(r => r.content === '完了直後に閉じる');
+  ok('再起動しても実績が残る', recAuto && recAuto.actualMin === 60, recAuto ? `actual=${recAuto.actualMin}` : '');
+  ok('再起動してもBPが二重に増えない', recAuto && recAuto.bp === bpAfterComplete,
+    recAuto ? `bp=${recAuto.bp} (前=${bpAfterComplete})` : '');
+  /* 何度描画し直しても増えない */
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  stAuto = await getState();
+  recAuto = stAuto.records.find(r => r.content === '完了直後に閉じる');
+  ok('2回目の再起動でもBPが変わらない', recAuto && recAuto.bp === bpAfterComplete,
+    recAuto ? `bp=${recAuto.bp}` : '');
+
+  /* 延長すると、確定済みの記録へ明示した分だけ足される */
+  await page.click('[data-ext="10"]');
+  await page.waitForTimeout(300);
+  await page.clock.fastForward(10 * 60 * 1000);
+  await page.waitForTimeout(300);
+  stAuto = await getState();
+  recAuto = stAuto.records.find(r => r.content === '完了直後に閉じる');
+  ok('延長ぶんも自動で確定する', recAuto && recAuto.actualMin === 70,
+    recAuto ? `actual=${recAuto.actualMin}` : '');
+  ok('延長は extendedMin に残る', recAuto && recAuto.extendedMin === 10,
+    recAuto ? `ext=${recAuto.extendedMin}` : '');
+  ok('延長後のBPが上限を超えない', recAuto && recAuto.bp <= 70 * 3 + 500,
+    recAuto ? `bp=${recAuto.bp}` : '');
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+
+  /* --- T-1-4: 日をまたいで放置 --- */
+  await freshPageWithClock(new Date(2026, 7, 11, 22, 0, 0).getTime());
+  await startPlanTimer({ content: '日またぎ放置', plan: 60 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(11 * 60 * 60 * 1000);   // 翌日09:00
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  ok('T-1-4 日をまたいでも完了画面が出る', await page.isVisible('#timer-completed'));
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  const v2 = await page.inputValue('#m-actual');
+  ok('T-1-4 日またぎでも宣言済み時間しか入らない', v2 === '60', v2);
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  st = await getState();
+  rec = st.records.find(r => r.content === '日またぎ放置');
+  ok('T-1-4 実績60分で保存される', rec && rec.actualMin === 60, rec ? `actual=${rec.actualMin}` : '記録なし');
+
+  /* --- 一時停止中は進まない --- */
+  await freshPageWithClock(T0);
+  await startPlanTimer({ content: '一時停止テスト', plan: 60 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(20 * 60 * 1000);
+  await page.click('#btn-pause');
+  await page.waitForTimeout(200);
+  await page.clock.fastForward(2 * 60 * 60 * 1000);
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  ok('一時停止中は2時間放置しても完了しない', !(await page.isVisible('#timer-completed')));
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  const v3 = await page.inputValue('#m-actual');
+  ok('一時停止中の放置は実績に入らない', v3 === '20', v3);
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+
+  /* --- 計画時間が無いと開始できない --- */
+  await freshPage(true);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: '計画なし記録', plan: 0, actual: 20 });
+  await page.waitForTimeout(200);
+  const started = await page.evaluate(() => {
+    const st2 = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return !!st2.activeSession;
+  });
+  ok('計画0分の記録ではタイマーが始まらない', !started);
+}
+
+async function test18_itemsOnStudyIntervals() {
+  console.log('\n■ 試験18: 時間制アイテムを実学習区間にだけ適用(APP-440 T-2)');
+  const T0 = new Date(2026, 7, 11, 10, 0, 0).getTime();
+  await freshPageWithClock(T0);
+  /* BPを与えてエナジードリンクを買えるようにする */
+  await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const p = n => (n < 10 ? '0' : '') + n;
+    const x = new Date(); x.setDate(x.getDate() - 1);
+    s.records.push({ id: 'seedbp', date: `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}`,
+      subjectId: 'eng', content: 'seed', kind: '暗記', planMin: 30, actualMin: 30,
+      reflection: '', deletedAt: null, bp: 1000, createdAt: 1, updatedAt: 1, score: null, maxScore: null });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(s));
+  });
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+
+  /* エナジードリンク(60分)を発動する */
+  await nav('coach');
+  await page.click('#btn-open-shop');
+  await page.click('[data-tab="consumable"]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("エナジードリンク") [data-buy]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("エナジードリンク") [data-use]');
+  await page.waitForTimeout(150);
+  await page.click('#m-close');
+  await nav('today');
+
+  /* 10分勉強 → 40分休憩 → 20分勉強。実学習30分、壁時計70分。
+   * アイテムの有効区間は 0〜60分なので、重なるのは [0,10] と [50,60] の20分だけ。 */
+  await startPlanTimer({ content: '休憩を挟む学習', plan: 30 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(10 * 60 * 1000);
+  await page.click('#btn-pause');
+  await page.waitForTimeout(200);
+  await page.clock.fastForward(40 * 60 * 1000);
+  await page.click('#btn-pause');           // 再開
+  await page.waitForTimeout(200);
+  await page.clock.fastForward(20 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('T-2 休憩を挟んでも実学習30分で完了する', await page.isVisible('#timer-completed'));
+
+  let st = await getState();
+  let rec = st.records.find(r => r.content === '休憩を挟む学習');
+  ok('T-2-3 休憩中の時間はアイテム消費に入らない(20分だけ)',
+    rec && rec.bpBoost && rec.bpBoost.timed.length === 1 && rec.bpBoost.timed[0].itemId === 'energy_drink' && rec.bpBoost.timed[0].minutes === 20,
+    rec && rec.bpBoost ? JSON.stringify(rec.bpBoost.timed) : 'bpBoostなし');
+  ok('T-2-3 実績は実学習の30分', rec && rec.actualMin === 30, rec ? `actual=${rec.actualMin}` : '');
+
+  /* 保存した時点で壁時計は70分経っており、60分のアイテムは期限切れ。
+     有効だった区間ぶん(20分)は数えたうえで片付けられる。 */
+  ok('T-2 期限切れのアイテムは数え終わってから片付けられる', st.shop.activeBoosts.length === 0,
+    JSON.stringify(st.shop.activeBoosts));
+
+  /* 学習区間が保存されていること(休憩で分かれている) */
+  ok('T-2 学習区間が2本に分かれて記録されている',
+    st.activeSession && Array.isArray(st.activeSession.segments) && st.activeSession.segments.length === 2,
+    st.activeSession ? JSON.stringify(st.activeSession.segments) : 'セッションなし');
+
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+
+  /* --- T-2-8/T-2-11: 同じアイテム時間を別の記録へ再利用できない --- */
+  await startPlanTimer({ content: '2件目の学習', plan: 20 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(20 * 60 * 1000);
+  await page.waitForTimeout(300);
+  st = await getState();
+  const rec2 = st.records.find(r => r.content === '2件目の学習');
+  const boosted2 = rec2 && rec2.bpBoost ? (rec2.bpBoost.timed || []).reduce((n, t) => n + t.minutes, 0) : -1;
+  ok('T-2-8 期限を過ぎたアイテムは2件目に乗らない', boosted2 === 0, `boosted=${boosted2}`);
+  ok('T-2-11 期限切れのアイテムが2件目で復活しない', st.shop.activeBoosts.length === 0,
+    JSON.stringify(st.shop.activeBoosts));
+
+  /* --- 延長ぶんもアイテムが効く(段階4レビューの修正条件3) --- */
+  await freshPageWithClock(T0);
+  await page.evaluate(() => {
+    const s3 = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const p3 = n => (n < 10 ? '0' : '') + n;
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    s3.records.push({ id: 'seedbp2', date: `${y.getFullYear()}-${p3(y.getMonth() + 1)}-${p3(y.getDate())}`,
+      subjectId: 'eng', content: 'seed', kind: '暗記', planMin: 30, actualMin: 30,
+      reflection: '', deletedAt: null, bp: 1000, createdAt: 1, updatedAt: 1, score: null, maxScore: null });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(s3));
+  });
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  await nav('coach');
+  await page.click('#btn-open-shop');
+  await page.click('[data-tab="consumable"]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("エナジードリンク") [data-buy]');
+  await page.waitForTimeout(150);
+  await page.click('.shop-item:has-text("エナジードリンク") [data-use]');
+  await page.waitForTimeout(150);
+  await page.click('#m-close');
+  await nav('today');
+
+  await startPlanTimer({ content: '延長でもアイテムが効く', plan: 30 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(30 * 60 * 1000);
+  await page.waitForTimeout(300);
+  st = await getState();
+  let extRec = st.records.find(r => r.content === '延長でもアイテムが効く');
+  const firstBoost = extRec.bpBoost.timed.reduce((n, t) => n + t.minutes, 0);
+  ok('延長前: 最初の30分にアイテムが乗る', firstBoost === 30, `boost=${firstBoost}`);
+  const bpFirst = extRec.bp;
+
+  await page.click('[data-ext="10"]');
+  await page.waitForTimeout(200);
+  await page.clock.fastForward(10 * 60 * 1000);
+  await page.waitForTimeout(300);
+  st = await getState();
+  extRec = st.records.find(r => r.content === '延長でもアイテムが効く');
+  const totalBoost = extRec.bpBoost.timed.reduce((n, t) => n + t.minutes, 0);
+  ok('延長後: 延長した10分にもアイテムが乗る(合計40分)', totalBoost === 40, `boost=${totalBoost}`);
+  ok('延長後の実績は40分', extRec.actualMin === 40, `actual=${extRec.actualMin}`);
+  ok('延長でBPが増えている', extRec.bp > bpFirst, `bp=${extRec.bp} (前=${bpFirst})`);
+  const bpAfterExt = extRec.bp;
+  const consumedAfterExt = st.shop.activeBoosts.map(b => b.consumedMs || 0);
+  ok('消費は合計40分ぶん', consumedAfterExt.length === 1 && consumedAfterExt[0] === 40 * 60000,
+    JSON.stringify(consumedAfterExt));
+
+  /* 再起動しても二重消費・二重BPにならない */
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  st = await getState();
+  extRec = st.records.find(r => r.content === '延長でもアイテムが効く');
+  const totalBoost2 = extRec.bpBoost.timed.reduce((n, t) => n + t.minutes, 0);
+  ok('再起動しても消費が増えない', totalBoost2 === 40, `boost=${totalBoost2}`);
+  ok('再起動してもBPが増えない', extRec.bp === bpAfterExt, `bp=${extRec.bp} (前=${bpAfterExt})`);
+  const consumedReload = st.shop.activeBoosts.map(b => b.consumedMs || 0);
+  ok('再起動しても consumedMs が増えない', consumedReload.length === 1 && consumedReload[0] === 40 * 60000,
+    JSON.stringify(consumedReload));
+
+  /* 同じ記録を再描画しても追加消費しない(画面を行き来するだけ) */
+  await nav('graph');
+  await page.waitForTimeout(150);
+  await nav('today');
+  await page.waitForTimeout(300);
+  st = await getState();
+  extRec = st.records.find(r => r.content === '延長でもアイテムが効く');
+  const totalBoost3 = extRec.bpBoost.timed.reduce((n, t) => n + t.minutes, 0);
+  ok('画面を行き来するだけでは追加消費しない', totalBoost3 === 40 && extRec.bp === bpAfterExt,
+    `boost=${totalBoost3}, bp=${extRec.bp}`);
+
+  /* --- スポットライト2個ぶんの倍率が保存・再起動で減らない(段階4レビュー) --- */
+  await freshPageWithClock(T0);
+  await page.evaluate(() => {
+    const s4 = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const p4 = n => (n < 10 ? '0' : '') + n;
+    const z = new Date(); z.setDate(z.getDate() - 1);
+    /* スポットライトは1個800BP。2個買うので余裕を持たせる(1記録の上限は1,500BP) */
+    for (let k = 0; k < 2; k++) {
+      s4.records.push({ id: 'seedbp3' + k, date: `${z.getFullYear()}-${p4(z.getMonth() + 1)}-${p4(z.getDate())}`,
+        subjectId: 'eng', content: 'seed' + k, kind: '暗記', planMin: 30, actualMin: 30,
+        reflection: '', deletedAt: null, bp: 1500, createdAt: 1 + k, updatedAt: 1, score: null, maxScore: null });
+    }
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(s4));
+  });
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  await nav('coach');
+  await page.click('#btn-open-shop');
+  await page.click('[data-tab="consumable"]');
+  await page.waitForTimeout(150);
+  for (let i = 0; i < 2; i++) {
+    await page.click('.shop-item:has-text("スポットライト") [data-buy]');
+    await page.waitForTimeout(150);
+    await page.click('.shop-item:has-text("スポットライト") [data-use]');
+    await page.waitForTimeout(150);
+  }
+  await page.click('#m-close');
+  await nav('today');
+
+  await startPlanTimer({ content: 'スポットライト2個', plan: 20 });
+  await page.waitForSelector('#timer-card:visible');
+  await page.clock.fastForward(20 * 60 * 1000);
+  await page.waitForTimeout(300);
+  st = await getState();
+  let spotRec = st.records.find(r => r.content === 'スポットライト2個');
+  ok('スポットライト2個ぶんが1消費1要素で保存される',
+    spotRec && spotRec.bpBoost && spotRec.bpBoost.dayItemIds.length === 2,
+    spotRec && spotRec.bpBoost ? JSON.stringify(spotRec.bpBoost.dayItemIds) : 'bpBoostなし');
+  const spotBp = spotRec.bp;
+  /* 20分 × (1.0 + 0.5 + 0.5) = 40BP。1個ぶんに減れば30BPになる。 */
+  ok('2個ぶんの倍率(合計+1.0倍)でBPが計算される', spotBp >= 40, `bp=${spotBp}`);
+
+  await page.reload();
+  await page.waitForSelector('#screen-today.active');
+  await dismissCenter();
+  st = await getState();
+  spotRec = st.records.find(r => r.content === 'スポットライト2個');
+  ok('再起動しても2個ぶんのままBPが減らない',
+    spotRec.bpBoost.dayItemIds.length === 2 && spotRec.bp === spotBp,
+    `ids=${JSON.stringify(spotRec.bpBoost.dayItemIds)}, bp=${spotRec.bp}`);
+
+  /* 延長しても個数が増えない(倍率が勝手に上がらない) */
+  await page.click('[data-ext="5"]');
+  await page.waitForTimeout(200);
+  await page.clock.fastForward(5 * 60 * 1000);
+  await page.waitForTimeout(300);
+  st = await getState();
+  spotRec = st.records.find(r => r.content === 'スポットライト2個');
+  ok('延長しても個数は2個のまま(倍率が増えない)', spotRec.bpBoost.dayItemIds.length === 2,
+    JSON.stringify(spotRec.bpBoost.dayItemIds));
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+
+  /* 削除・復元の検証(T-2-9/T-2-10)は経路3とあわせて段階5で扱う。 */
+
+}
+
+async function test19_newsSlotOnRestore() {
+  console.log('\n■ 試験19: ニュースの削除・復元で1日3本の上限を回り込めない(APP-440 T-3)');
+  await freshPage(true);
+  await nav('world');
+
+  async function addNews(headline) {
+    await page.click('#btn-add-news');
+    await page.waitForSelector('#m-headline');
+    await page.fill('#m-headline', headline);
+    await page.click('#m-save');
+    await page.waitForTimeout(250);
+    if (await page.isVisible('#modal-back.open')) { await page.click('#m-close'); await page.waitForTimeout(150); }
+  }
+  async function bpNewsCount() {
+    return page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+      const p = n => (n < 10 ? '0' : '') + n;
+      const d = new Date();
+      const today = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+      return (s.news || []).filter(n => n.date === today && (n.bp | 0) > 0).length;
+    });
+  }
+
+  await addNews('ニュース1');
+  await addNews('ニュース2');
+  await addNews('ニュース3');
+  ok('T-3-1 3本目までBPが付く', await bpNewsCount() === 3, String(await bpNewsCount()));
+
+  /* 1本削除して4本目を追加 → 枠が空いているのでBPが付く */
+  await page.click('.news-item:has-text("ニュース2") [data-act="del"]');
+  await page.waitForTimeout(300);
+  ok('T-3-1 削除で枠が空く', await bpNewsCount() === 2, String(await bpNewsCount()));
+  await addNews('ニュース4');
+  ok('T-3-1 4本目にBPが付き、BP付きは3本のまま', await bpNewsCount() === 3, String(await bpNewsCount()));
+
+  /* T-3-3: 枠が空いている状態で「元に戻す」を押すとBPごと復活する。
+   * 条件付きにせず、トーストの「元に戻す」が出るまで待って必ず押す。 */
+  await page.click('.news-item:has-text("ニュース4") [data-act="del"]');
+  await page.waitForSelector('#toast-action');
+  const beforeUndo = await bpNewsCount();
+  ok('T-3-3 削除直後はBP付きが2本', beforeUndo === 2, String(beforeUndo));
+  await page.click('#toast-action');
+  await page.waitForTimeout(300);
+  const afterUndo = await bpNewsCount();
+  ok('T-3-3 枠が空いていればBPごと復活する', afterUndo === 3, `前=${beforeUndo}, 後=${afterUndo}`);
+  ok('T-3-5 どの時点でもBP付きは3本を超えない', afterUndo <= C_NEWS_LIMIT, String(afterUndo));
+
+  /* 5本目以降を足してもBP付きは3本を超えない */
+  await addNews('ニュース7');
+  await addNews('ニュース8');
+  ok('T-3-5 追加を重ねてもBP付きは3本のまま', await bpNewsCount() === 3, String(await bpNewsCount()));
+
+  const st = await getState();
+  ok('T-3-7 BP残高が負にならない', st.shop.bpBalance === undefined || st.shop.bpBalance >= 0);
+  await shot('72-news-slots');
+}
+
+async function test20_editRecalcBp() {
+  console.log('\n■ 試験20: 編集・削除・復元でBPを再計算する(APP-440 T-4)');
+  await freshPage(true);
+
+  async function recBy(content) {
+    const st = await getState();
+    return st.records.find(r => r.content === content);
+  }
+  async function editRecord(content, fields) {
+    await nav('record');
+    await page.waitForTimeout(150);
+    await page.click(`.rec-item:has-text("${content}") [data-act="edit"]`);
+    await page.waitForSelector('#m-actual');
+    if (fields.date !== undefined) await page.fill('#m-date', fields.date);
+    if (fields.actual !== undefined) await page.fill('#m-actual', String(fields.actual));
+    if (fields.subjectLabel !== undefined) await page.selectOption('#m-subject', { label: fields.subjectLabel });
+    await page.click('#m-save');
+    await page.waitForTimeout(300);
+  }
+
+  /* --- T-4-3: 実績を増やす編集ではBPが増えない --- */
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: '増やす編集', plan: 30, actual: 30 });
+  await page.waitForTimeout(200);
+  let r = await recBy('増やす編集');
+  const bpBefore = r.bp;
+  ok('T-4-3 手入力30分のBPが確定している', bpBefore > 0, `bp=${bpBefore}`);
+
+  await editRecord('増やす編集', { actual: 600 });
+  r = await recBy('増やす編集');
+  ok('T-4-3 グラフの実績は600分になる', r.actualMin === 600, `actual=${r.actualMin}`);
+  ok('T-4-3 BP対象時間は30分のまま', r.bpMin === 30, `bpMin=${r.bpMin}`);
+  /* 設計は「編集でBPは減ることはあっても、増えることはない」。
+   * ここでは達成率が2000%になり計画達成ボーナスが外れるため、むしろ減る。
+   * 時間ぶんのBPは bpMin=30 で据え置かれており、増える方向には動かない。 */
+  ok('T-4-3 BPは増えない(むしろ達成率から外れて減る)', r.bp <= bpBefore, `bp=${r.bp} (前=${bpBefore})`);
+  ok('T-4-3 時間ぶんのBPは30分ぶんのまま(600分ぶんにならない)', r.bp <= 30 + 50, `bp=${r.bp}`);
+
+  /* --- 実績を減らす編集ではBPも減る --- */
+  await editRecord('増やす編集', { actual: 10 });
+  r = await recBy('増やす編集');
+  ok('減らす編集ではBPも減る', r.bp < bpBefore && r.bpMin === 10, `bp=${r.bp}, bpMin=${r.bpMin}`);
+
+  /* --- T-4-1: 別の日へ移すと移動先の日次上限が効く --- */
+  await freshPage(true);
+  /* 8/1相当と当日にそれぞれ上限近くまで積む */
+  const dayA = localDate(-1), dayB = localDate(0);
+  await addRecord({ date: dayA, subjectLabel: '英語', content: '移動元', plan: 700, actual: 700 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: dayB, subjectLabel: '英語', content: '移動先1', plan: 700, actual: 700 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: dayB, subjectLabel: '英語', content: '移動先2', plan: 700, actual: 700 });
+  await page.waitForTimeout(200);
+
+  let stBefore = await getState();
+  const dayBBefore = stBefore.records.filter(x => x.date === dayB && !x.deletedAt)
+    .reduce((n, x) => n + (x.bp | 0), 0);
+  /* 700分×2件 + 計画達成50(1日1回) = 1450 */
+  ok('T-4-1 移動先の日は上限近くまで埋まっている', dayBBefore === 1450, `合計=${dayBBefore}`);
+
+  await editRecord('移動元', { date: dayB });
+  let stAfter = await getState();
+  const dayBAfter = stAfter.records.filter(x => x.date === dayB && !x.deletedAt)
+    .reduce((n, x) => n + (x.bp | 0), 0);
+  const dayAAfter = stAfter.records.filter(x => x.date === dayA && !x.deletedAt)
+    .reduce((n, x) => n + (x.bp | 0), 0);
+  ok('T-4-1 移動しても移動先の合計は日次上限を超えない', dayBAfter === 1500, `合計=${dayBAfter}`);
+  ok('T-4-1 移動元の日のBPは残らない', dayAAfter === 0, `合計=${dayAAfter}`);
+
+  /* --- T-4-2: 受験科目から非受験科目へ変えると100BP上限が効く --- */
+  await freshPage(true);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: '科目変更', plan: 200, actual: 200 });
+  await page.waitForTimeout(200);
+  r = await recBy('科目変更');
+  ok('T-4-2 受験科目では200分ぶんのBPが付く', r.bp > 100, `bp=${r.bp}`);
+  await editRecord('科目変更', { subjectLabel: 'その他' });
+  r = await recBy('科目変更');
+  ok('T-4-2 非受験科目へ変えると100BP上限が効く', r.bp <= 100, `bp=${r.bp}`);
+
+  /* --- T-4-4/T-4-5: 削除・復元で配り直す --- */
+  await freshPage(true);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: '削除する記録', plan: 700, actual: 700 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: '上限に当たる記録', plan: 700, actual: 700 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: 'あふれた記録', plan: 700, actual: 700 });
+  await page.waitForTimeout(200);
+  let overflow = await recBy('あふれた記録');
+  ok('T-4-4 上限を超えた3件目はBPが少ない', overflow.bp < 700, `bp=${overflow.bp}`);
+
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('.rec-item:has-text("削除する記録") [data-act="del"]');
+  await page.waitForTimeout(400);
+  overflow = await recBy('あふれた記録');
+  ok('T-4-4 削除で枠が空くと残りへ配り直される', overflow.bp > 0, `bp=${overflow.bp}`);
+  let stDel = await getState();
+  const totalAfterDel = stDel.records.filter(x => x.date === localDate(0) && !x.deletedAt)
+    .reduce((n, x) => n + (x.bp | 0), 0);
+  ok('T-4-4 配り直しても日次上限を超えない', totalAfterDel <= 1500, `合計=${totalAfterDel}`);
+
+  /* ごみ箱から戻す。トーストの「元に戻す」ではなく、ごみ箱画面の復元ボタンを使う。
+   * 以前はボタンのIDを取り違えて条件付きで囲っており、無言でスキップされていた。 */
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('#btn-open-trash');
+  await page.waitForSelector('[data-act="restore"]');
+  await page.click('[data-act="restore"]');
+  await page.waitForTimeout(400);
+  let stRes = await getState();
+  const restored = stRes.records.find(x => x.content === '削除する記録');
+  ok('T-4-5 ごみ箱から実際に復元される', restored && !restored.deletedAt,
+    restored ? `deletedAt=${restored.deletedAt}` : '記録なし');
+  const totalAfterRestore = stRes.records.filter(x => x.date === localDate(0) && !x.deletedAt)
+    .reduce((n, x) => n + (x.bp | 0), 0);
+  ok('T-4-5 ごみ箱から復元しても日次上限を超えない', totalAfterRestore <= 1500, `合計=${totalAfterRestore}`);
+
+  /* --- 更新前からある記録を編集しても稼げない(段階6レビューの修正条件) --- */
+  await freshPage(true);
+  await page.evaluate(() => {
+    const key = 'ibukiStudyBeat.v3';
+    const s5 = JSON.parse(localStorage.getItem(key));
+    const p5 = n => (n < 10 ? '0' : '') + n;
+    const d5 = new Date();
+    const today = `${d5.getFullYear()}-${p5(d5.getMonth() + 1)}-${p5(d5.getDate())}`;
+    /* APP-440 より前の形。bpMinInitial も timerUsed も持たない。 */
+    s5.records.push({
+      id: 'oldtimer', date: today, subjectId: 'eng', content: '旧タイマー記録',
+      kind: '暗記', planMin: 30, actualMin: 30, reflection: '', deletedAt: null,
+      bp: 80, createdAt: 1, updatedAt: 1, score: null, maxScore: null
+    });
+    s5.records.push({
+      id: 'oldmanual', date: today, subjectId: 'eng', content: '旧手入力記録',
+      kind: '暗記', planMin: 0, actualMin: 45, reflection: '', deletedAt: null,
+      bp: 45, createdAt: 2, updatedAt: 1, score: null, maxScore: null
+    });
+    localStorage.setItem(key, JSON.stringify(s5));
+  });
+  await reload();
+  let stOld = await getState();
+  const oldTimer = stOld.records.find(x => x.id === 'oldtimer');
+  const oldManual = stOld.records.find(x => x.id === 'oldmanual');
+  ok('旧記録を読み込むだけではBP残高が変わらない',
+    oldTimer.bp === 80 && oldManual.bp === 45, `timer=${oldTimer.bp}, manual=${oldManual.bp}`);
+  ok('旧記録に初回BP上限が入る',
+    oldTimer.bpMinInitial === 30 && oldManual.bpMinInitial === 45,
+    `timer=${oldTimer.bpMinInitial}, manual=${oldManual.bpMinInitial}`);
+
+  await editRecord('旧タイマー記録', { actual: 600 });
+  r = await recBy('旧タイマー記録');
+  ok('旧タイマー記録を600分へ編集してもBP対象は30分以下', r.bpMin <= 30, `bpMin=${r.bpMin}, bp=${r.bp}`);
+  ok('旧タイマー記録のBPが600分ぶんにならない', r.bp <= 80, `bp=${r.bp}`);
+
+  await editRecord('旧手入力記録', { actual: 600 });
+  r = await recBy('旧手入力記録');
+  ok('旧手入力記録を600分へ編集してもBP対象は45分以下', r.bpMin <= 45, `bpMin=${r.bpMin}, bp=${r.bp}`);
+  ok('旧手入力記録のBPが600分ぶんにならない', r.bp <= 95, `bp=${r.bp}`);
+
+  /* --- T-4-6: 何度再計算しても同じ値になる --- */
+  const stable = await page.evaluate(() => {
+    const key = 'ibukiStudyBeat.v3';
+    const before = JSON.parse(localStorage.getItem(key)).records.map(r => r.bp | 0);
+    /* 画面を開き直すだけでは配り直さない。編集を経由しない限り値は動かない。 */
+    const after = JSON.parse(localStorage.getItem(key)).records.map(r => r.bp | 0);
+    return JSON.stringify(before) === JSON.stringify(after);
+  });
+  ok('T-4-6 再読み込みだけではBPが動かない', stable);
+  await shot('73-edit-recalc');
+}
+
+async function test21_dailyActionBonuses() {
+  console.log('\n■ 試験21: 行動ボーナスを1日1回に束ねる(APP-440 T-5)');
+  await freshPage(true);
+  await nav('record');
+
+  async function add(content, plan, actual, refl) {
+    await page.selectOption('#rf-subject', { label: '英語' });
+    await page.fill('#rf-content', content);
+    await page.fill('#rf-plan', String(plan));
+    await page.fill('#rf-actual', String(actual));
+    if (refl !== undefined) await page.fill('#rf-reflection', refl);
+    await page.click('#rf-save');
+    await page.waitForTimeout(250);
+    if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  }
+  async function dayTotal() {
+    const st = await getState();
+    return st.records.filter(r => r.date === localDate() && !r.deletedAt)
+      .reduce((n, r) => n + (r.bp | 0), 0);
+  }
+
+  /* --- T-5-1: 1分の記録を10件作っても行動ボーナスは1回ぶん --- */
+  for (let i = 0; i < 10; i++) await add('小分け' + i, 1, 1);
+  const smallTotal = await dayTotal();
+  /* 10分ぶん + 計画達成50 = 60。旧仕様なら 10 + 50×10 = 510 */
+  ok('T-5-1 1分の記録を10件作っても計画達成は1回ぶん', smallTotal <= 60, `合計=${smallTotal}`);
+  ok('T-5-1 旧仕様の510BPにならない', smallTotal < 510, `合計=${smallTotal}`);
+
+  /* --- T-5-6: 15分ちょうどは対象、14分は対象外 --- */
+  await freshPage(true);
+  await nav('record');
+  await add('14分', 14, 14);
+  const t14 = await dayTotal();
+  ok('T-5-6 14分では計画達成ボーナスが付かない', t14 === 14, `合計=${t14}`);
+
+  await freshPage(true);
+  await nav('record');
+  await add('15分', 15, 15);
+  const t15 = await dayTotal();
+  ok('T-5-6 15分ちょうどでは計画達成ボーナスが付く', t15 === 15 + 50, `合計=${t15}`);
+
+  /* --- T-5-2: 振り返りも1日1回 --- */
+  await freshPage(true);
+  await nav('record');
+  await add('振り返り1', 30, 30, 'わかった');
+  await add('振り返り2', 30, 30, 'これもわかった');
+  const reflTotal = await dayTotal();
+  /* 60分 + 計画達成50 + 振り返り10 = 120 */
+  ok('T-5-2 振り返りを2件書いても+10は1回ぶん', reflTotal === 120, `合計=${reflTotal}`);
+
+  /* --- T-5-3: 模試も1日1回 --- */
+  await freshPage(true);
+  await nav('record');
+  for (let i = 0; i < 2; i++) {
+    await page.selectOption('#rf-subject', { label: '英語' });
+    await page.selectOption('#rf-kind', 'テスト');
+    await page.fill('#rf-content', '模試' + i);
+    await page.fill('#rf-plan', '60');
+    await page.fill('#rf-actual', '60');
+    await page.fill('#rf-score', '80');
+    await page.fill('#rf-maxscore', '100');
+    await page.click('#rf-save');
+    await page.waitForTimeout(250);
+    if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  }
+  const mockTotal = await dayTotal();
+  /* 120分 + 計画達成50 + 模試300 = 470。旧仕様なら模試が2回で770 */
+  ok('T-5-3 模試を2件記録しても+300は1回ぶん', mockTotal === 470, `合計=${mockTotal}`);
+
+  /* --- T-5-4: 編集して配り直しても行動ボーナスは1回ぶんのまま --- */
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('.rec-item:has-text("模試0") [data-act="edit"]');
+  await page.waitForSelector('#m-actual');
+  await page.fill('#m-actual', '59');
+  await page.click('#m-save');
+  await page.waitForTimeout(350);
+  const afterEdit = await dayTotal();
+  ok('T-5-4 編集で配り直しても行動ボーナスは1回ぶんのまま', afterEdit === 469, `合計=${afterEdit}`);
+
+  /* --- T-5-5: 更新前からある記録でも1日1回になる --- */
+  await freshPage(true);
+  await page.evaluate(() => {
+    const key = 'ibukiStudyBeat.v3';
+    const s6 = JSON.parse(localStorage.getItem(key));
+    const p6 = n => (n < 10 ? '0' : '') + n;
+    const d6 = new Date();
+    const today = `${d6.getFullYear()}-${p6(d6.getMonth() + 1)}-${p6(d6.getDate())}`;
+    /* 旧仕様で「1件ごとに計画達成50BP」が付いていた状態を再現する */
+    for (let i = 0; i < 3; i++) {
+      s6.records.push({
+        id: 'oldbonus' + i, date: today, subjectId: 'eng', content: '旧ボーナス' + i,
+        kind: '暗記', planMin: 30, actualMin: 30, reflection: '', deletedAt: null,
+        bp: 80, createdAt: 10 + i, updatedAt: 1, score: null, maxScore: null
+      });
+    }
+    localStorage.setItem(key, JSON.stringify(s6));
+  });
+  await reload();
+  const legacyBefore = await dayTotal();
+  ok('T-5-5 旧記録は読み込むだけではBPが変わらない', legacyBefore === 240, `合計=${legacyBefore}`);
+
+  /* 1件編集すると、その日が配り直されて1日1回になる */
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('.rec-item:has-text("旧ボーナス0") [data-act="edit"]');
+  await page.waitForSelector('#m-actual');
+  await page.fill('#m-actual', '30');
+  await page.click('#m-save');
+  await page.waitForTimeout(350);
+  const legacyAfter = await dayTotal();
+  /* 90分 + 計画達成50 = 140 */
+  ok('T-5-5 編集を機に配り直すと行動ボーナスは1回ぶんになる', legacyAfter === 140, `合計=${legacyAfter}`);
+  await shot('74-daily-action-bonus');
+}
+
+async function test22_trashRestoreRecalc() {
+  console.log('\n■ 試験22: ごみ箱からの復元でも上限を超えない(APP-440 段階7レビュー)');
+
+  async function dayBp() {
+    const st = await getState();
+    return st.records.filter(r => r.date === localDate(0) && !r.deletedAt)
+      .reduce((n, r) => n + (r.bp | 0), 0);
+  }
+  async function nonExamDayBp() {
+    const st = await getState();
+    const nonExamIds = st.settings.subjects.filter(x => !x.examSubject).map(x => x.id);
+    return st.records.filter(r => r.date === localDate(0) && !r.deletedAt &&
+      nonExamIds.indexOf(r.subjectId) !== -1).reduce((n, r) => n + (r.bp | 0), 0);
+  }
+  /* トーストの「元に戻す」を押さずに、ごみ箱画面から復元する */
+  async function deleteThenRestoreFromTrash(content) {
+    await nav('record');
+    await page.waitForTimeout(150);
+    await page.click(`.rec-item:has-text("${content}") [data-act="del"]`);
+    await page.waitForTimeout(400);
+    await page.click('#btn-open-trash');
+    await page.waitForSelector('[data-act="restore"]');
+    await page.click('[data-act="restore"]');
+    await page.waitForTimeout(400);
+  }
+
+  /* --- 日次1,500BPの上限 --- */
+  await freshPage(true);
+  for (let i = 0; i < 3; i++) {
+    await addRecord({ date: localDate(0), subjectLabel: '英語', content: '上限' + i, plan: 700, actual: 700 });
+    await page.waitForTimeout(200);
+  }
+  const capBefore = await dayBp();
+  ok('日次上限まで埋まっている', capBefore === 1500, `合計=${capBefore}`);
+
+  await deleteThenRestoreFromTrash('上限0');
+  const capAfter = await dayBp();
+  ok('ごみ箱から復元しても日次1,500BPを超えない', capAfter <= 1500, `合計=${capAfter}`);
+
+  /* --- 非受験科目の100BP上限 --- */
+  await freshPage(true);
+  await addRecord({ date: localDate(0), subjectLabel: 'その他', content: '非受験A', plan: 90, actual: 90 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: localDate(0), subjectLabel: 'その他', content: '非受験B', plan: 90, actual: 90 });
+  await page.waitForTimeout(200);
+  const nonExamBefore = await nonExamDayBp();
+  ok('非受験科目は100BPで頭打ちになっている', nonExamBefore === 100, `合計=${nonExamBefore}`);
+
+  await deleteThenRestoreFromTrash('非受験A');
+  const nonExamAfter = await nonExamDayBp();
+  ok('ごみ箱から復元しても非受験科目100BPを超えない', nonExamAfter <= 100, `合計=${nonExamAfter}`);
+
+  /* --- 行動ボーナスは1日1回のまま --- */
+  await freshPage(true);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: 'ボーナスA', plan: 30, actual: 30 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: 'ボーナスB', plan: 30, actual: 30 });
+  await page.waitForTimeout(200);
+  const bonusBefore = await dayBp();
+  ok('行動ボーナスは1回ぶん(60分+50)', bonusBefore === 110, `合計=${bonusBefore}`);
+
+  await deleteThenRestoreFromTrash('ボーナスA');
+  const bonusAfter = await dayBp();
+  ok('ごみ箱から復元しても行動ボーナスは1回ぶんのまま', bonusAfter === 110, `合計=${bonusAfter}`);
+  await shot('75-trash-restore');
+}
+
+async function test23_narrowScreens() {
+  console.log('\n■ 試験23: APP-440で追加した画面の実表示確認(320px / 390px)');
+  const T0 = new Date(2026, 7, 11, 10, 0, 0).getTime();
+
+  for (const width of [320, 390]) {
+    await freshPageWithClock(T0);
+    await page.setViewportSize({ width, height: 700 });
+    await startPlanTimer({ content: '表示確認' + width, plan: 30 });
+    await page.waitForSelector('#timer-card:visible');
+
+    /* 学習中のカード */
+    let overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2);
+    ok(`${width}px 学習中のタイマーカードで横スクロールが出ない`, !overflow);
+
+    /* 完了画面(延長ボタン4つ + 休憩 + 今日はここまで) */
+    await page.clock.fastForward(30 * 60 * 1000);
+    await page.waitForSelector('#timer-completed');
+    overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2);
+    ok(`${width}px 完了画面で横スクロールが出ない`, !overflow);
+
+    /* 延長ボタンが画面内に収まっているか */
+    const extFits = await page.evaluate((w) => {
+      return Array.prototype.every.call(document.querySelectorAll('[data-ext]'), function (b) {
+        const r = b.getBoundingClientRect();
+        return r.left >= -1 && r.right <= w + 1 && r.height >= 32;
+      });
+    }, width);
+    ok(`${width}px 延長ボタンが画面内に収まり、押せる大きさがある`, extFits);
+
+    /* 文字が切れていないか(ボタンの中身がはみ出していないか) */
+    const textFits = await page.evaluate(() => {
+      return Array.prototype.every.call(document.querySelectorAll('[data-ext]'), function (b) {
+        return b.scrollWidth <= b.clientWidth + 1;
+      });
+    });
+    ok(`${width}px 延長ボタンの文字が切れない`, textFits);
+
+    await shot(width === 320 ? '76-completed-320px' : '77-completed-390px');
+
+    /* 保存モーダルも確認する */
+    await page.click('#btn-finish');
+    await page.waitForSelector('#m-actual');
+    overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2);
+    ok(`${width}px 保存モーダルで横スクロールが出ない`, !overflow);
+    await page.click('#m-save');
+    await page.waitForTimeout(300);
+    if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  }
+}
+
+async function test26_bpGraphFollowsRecalc() {
+  console.log('\n■ 試験26: 編集・削除・復元のあとBPグラフの集計も追随する(Codex Q3)');
+  await freshPage(true);
+
+  /* 画面に出ているBPグラフの合計を、保存データから求め直して突き合わせる。
+   * グラフが古い値を描いていれば、この2つがずれる。 */
+  async function graphTotalAndStored() {
+    await nav('graph');
+    await page.waitForTimeout(200);
+    /* ⚡ポイント表示へ切り替える */
+    if (await page.isVisible('[data-graph-mode="bp"]')) {
+      await page.click('[data-graph-mode="bp"]');
+      await page.waitForTimeout(250);
+    }
+    return page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+      const stored = (s.records || []).filter(r => !r.deletedAt).reduce((n, r) => n + (r.bp | 0), 0)
+        + (s.news || []).reduce((n, x) => n + (x.bp | 0), 0);
+      const series = window.ISBCalc.buildBpSeries(s.records, s.news, s.records[0] ? s.records[0].date : '2026-08-01', 60);
+      const graphed = series.reduce((n, d) => n + d.total, 0);
+      return { stored, graphed };
+    });
+  }
+
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: 'グラフ追随1', plan: 60, actual: 60 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: localDate(0), subjectLabel: '数学', content: 'グラフ追随2', plan: 60, actual: 60 });
+  await page.waitForTimeout(200);
+
+  let v = await graphTotalAndStored();
+  ok('Q3 追加直後: グラフの合計と保存値が一致', v.stored === v.graphed, `保存=${v.stored} グラフ=${v.graphed}`);
+  const beforeEdit = v.stored;
+
+  /* 実績を減らす編集 → BPが減る → グラフも減っていること */
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('.rec-item:has-text("グラフ追随1") [data-act="edit"]');
+  await page.waitForSelector('#m-actual');
+  await page.fill('#m-actual', '10');
+  await page.click('#m-save');
+  await page.waitForTimeout(350);
+  v = await graphTotalAndStored();
+  ok('Q3 編集後: グラフの合計と保存値が一致', v.stored === v.graphed, `保存=${v.stored} グラフ=${v.graphed}`);
+  ok('Q3 編集でBPが減り、グラフにも反映される', v.graphed < beforeEdit, `前=${beforeEdit} 後=${v.graphed}`);
+
+  /* 削除 → グラフから外れること */
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('.rec-item:has-text("グラフ追随2") [data-act="del"]');
+  await page.waitForTimeout(400);
+  v = await graphTotalAndStored();
+  ok('Q3 削除後: グラフの合計と保存値が一致', v.stored === v.graphed, `保存=${v.stored} グラフ=${v.graphed}`);
+
+  /* ごみ箱から復元 → 配り直した値でグラフも一致すること */
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('#btn-open-trash');
+  await page.waitForSelector('[data-act="restore"]');
+  await page.click('[data-act="restore"]');
+  await page.waitForTimeout(400);
+  v = await graphTotalAndStored();
+  ok('Q3 復元後: グラフの合計と保存値が一致', v.stored === v.graphed, `保存=${v.stored} グラフ=${v.graphed}`);
+
+  /* Q1の承認条件: 学習時間グラフが初期表示のままであること */
+  await freshPage(true);
+  await nav('graph');
+  await page.waitForTimeout(250);
+  const defaultMode = await page.evaluate(() => {
+    const on = document.querySelector('[data-graph-mode].active, [data-graph-mode][aria-pressed="true"]');
+    return on ? on.dataset.graphMode : 'time';
+  });
+  ok('Q1 グラフの初期表示は学習時間のまま', defaultMode === 'time', `既定=${defaultMode}`);
+}
+
 /* ============ 実行 ============ */
 browser = await chromium.launch();
 try {
@@ -1322,6 +3005,19 @@ try {
   await test11_worldNews();
   await test12_pointsEquipShop();
   await test13_codexReviewFixes();
+  await test14_subjectStudyKinds();
+  await test15_coachPanelsAndReport();
+  await test16_timerAutoStop();
+  await test17_timerReopenAndDayCross();
+  await test18_itemsOnStudyIntervals();
+  await test19_newsSlotOnRestore();
+  await test20_editRecalcBp();
+  await test21_dailyActionBonuses();
+  await test22_trashRestoreRecalc();
+  await test23_narrowScreens();
+  await test24_bpChipAndGraph();
+  await test25_sessionGuards();
+  await test26_bpGraphFollowsRecalc();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

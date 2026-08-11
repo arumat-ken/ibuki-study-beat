@@ -24,7 +24,66 @@
     { id: 'other', name: 'その他', color: '#9AA0A6', visible: true, examSubject: false }
   ];
 
+  /* 学習種別。科目ごとに、その科目で実際にやる勉強の言い方を出す。
+   * 全科目で同じ7つを出していたため、社会に「読解」、数学に「暗記」といった
+   * 噛み合わない語が並び、始める前に気持ちが削がれていた(APP-460)。
+   *
+   * STUDY_KINDS は「その他」と自作科目の既定であり、旧データの値でもある。
+   * 過去の記録を無効にしないため、検証は全リストの和集合で行う。 */
   var STUDY_KINDS = ['暗記', '演習', '読解', '講義', '復習', 'テスト', 'その他'];
+
+  var SUBJECT_STUDY_KINDS = {
+    eng:  ['単語・熟語', '文法', '長文読解', 'リスニング', '英作文', '音読', '復習・解き直し', 'テスト'],
+    math: ['公式・定理の確認', '例題で解法を確認', '問題演習', '解き直し', '計算練習', 'テスト'],
+    jpn:  ['漢字・語彙', '現代文読解', '古文', '漢文', '記述練習', '復習・解き直し', 'テスト'],
+    sci:  ['用語・原理の暗記', '計算問題', '実験・図表の読み取り', '問題演習', '解き直し', 'テスト'],
+    soc:  ['用語の暗記', '流れ・つながりの整理', '資料・地図・グラフ', '一問一答', '論述練習', '解き直し', 'テスト']
+  };
+
+  /* 科目を選んだときの初期値。いちばんよくやる勉強を置く。 */
+  var DEFAULT_STUDY_KINDS = {
+    eng:  '単語・熟語',
+    math: '問題演習',
+    jpn:  '現代文読解',
+    sci:  '問題演習',
+    soc:  '用語の暗記'
+  };
+
+  /* 点数入力欄の出し分けに使うため、どの科目にも必ず含める。 */
+  var TEST_KIND = 'テスト';
+
+  /* 科目idは利用者が作った科目や、読み込んだバックアップ由来の任意の文字列でありうる。
+   * 'toString' や 'constructor' のようなキーで Object.prototype の中身を掴まないよう、
+   * 自分自身が持つキーかどうかを必ず確かめる。 */
+  function ownList(map, key) {
+    return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null;
+  }
+
+  function studyKindsFor(subjectId) {
+    var list = ownList(SUBJECT_STUDY_KINDS, subjectId);
+    return (Array.isArray(list) ? list : STUDY_KINDS).slice();
+  }
+
+  function defaultStudyKindFor(subjectId) {
+    var d = ownList(DEFAULT_STUDY_KINDS, subjectId);
+    if (typeof d === 'string' && d) return d;
+    return studyKindsFor(subjectId)[0];
+  }
+
+  /* 検証用の和集合。旧データの値も、科目を変えた記録も無効にしない。 */
+  var ALL_STUDY_KINDS = (function () {
+    var seen = {}, out = [];
+    function add(k) { if (!seen[k]) { seen[k] = true; out.push(k); } }
+    STUDY_KINDS.forEach(add);
+    Object.keys(SUBJECT_STUDY_KINDS).forEach(function (id) {
+      SUBJECT_STUDY_KINDS[id].forEach(add);
+    });
+    return out;
+  })();
+
+  function isValidStudyKind(kind) {
+    return ALL_STUDY_KINDS.indexOf(kind) !== -1;
+  }
 
   /* ---------- 日付ユーティリティ ---------- */
 
@@ -73,6 +132,97 @@
    * 記録1件を検証する。
    * @returns {ok:boolean, errors:string[]}
    */
+  /* ---------- APP-440 §8: 旧データの読み込みに使う小道具 ---------- */
+
+  /* 記録IDは 'r' + Date.now().toString(36) + 連番 で作られる(js/app.js の nextId)。
+   * createdAt を持たない旧データは、ここから作成日時を復元する。
+   * 復元できなければ 0(その日の最古)として扱う。既に上限内で確定済みのため、
+   * 順序が変わっても総額は動かない。 */
+  var ID_TS_MIN = 1577836800000;   // 2020-01-01。これより古い値は復元失敗とみなす
+  var ID_TS_MAX = 4102444800000;   // 2100-01-01
+
+  function createdAtFromId(id) {
+    if (typeof id !== 'string') return 0;
+    var m = /^[a-z]([0-9a-z]{8})/.exec(id);
+    if (!m) return 0;
+    var ts = parseInt(m[1], 36);
+    if (!isFinite(ts) || ts < ID_TS_MIN || ts > ID_TS_MAX) return 0;
+    return ts;
+  }
+
+  /* 保存済みの学習区間を検証する。推測して補わず、壊れた区間は捨てる。
+   * normalizeSegments と違い「いま」を持ち込まないので、to: null は null のまま残す。 */
+  function sanitizeSegments(segments) {
+    if (!Array.isArray(segments)) return [];
+    var out = [];
+    segments.forEach(function (s) {
+      if (!s || typeof s !== 'object') return;
+      if (typeof s.from !== 'number' || !isFinite(s.from)) return;
+      if (s.to === null) { out.push({ from: s.from, to: null }); return; }
+      if (typeof s.to !== 'number' || !isFinite(s.to)) return;
+      if (s.to <= s.from) return;
+      out.push({ from: s.from, to: s.to });
+    });
+    return out;
+  }
+
+  /* APP-440 §3: 記録に残したアイテム消費の内訳。
+   *
+   * 倍率そのものは保存しない。**アイテムIDだけを保存し、倍率は定義から引く。**
+   * 倍率を保存すると、端末内のデータが壊れた(あるいは書き換えられた)ときに
+   * 任意の倍率をBPへ持ち込めてしまう。IDにしておけば、仕様に無い倍率は原理的に作れない。
+   *
+   * 形式: { timed: [{ itemId, minutes }], dayItemIds: [itemId] }
+   *   timed  … 'timed'(エナジードリンク)と 'fever'(フィーバータイム)の消費分
+   *   dayItemIds … その日いっぱい効くアイテム(スポットライト)
+   */
+  function sanitizeBpBoost(v) {
+    if (!v || typeof v !== 'object') return null;
+    var timed = [];
+    if (Array.isArray(v.timed)) {
+      v.timed.slice(0, 50).forEach(function (t) {
+        if (!t || typeof t !== 'object') return;
+        var item = consumableById(t.itemId);
+        /* 仕様に無いアイテム、時間で効かないアイテムは捨てる。 */
+        if (!item || (item.kind !== 'timed' && item.kind !== 'fever')) return;
+        if (typeof t.minutes !== 'number' || !isFinite(t.minutes)) return;
+        var min = Math.floor(t.minutes);
+        /* 1回の消費が持ち時間を超えることはない。 */
+        if (min <= 0 || min > item.durationMin) return;
+        timed.push({ itemId: item.id, minutes: min });
+      });
+    }
+    var dayItemIds = [];
+    if (Array.isArray(v.dayItemIds)) {
+      /* 1消費1要素。スポットライトを2個使えば +0.5 が2つで +1.0 になる。
+       * ここで重複を潰すと、正当に使った2個目ぶんの倍率が消える。 */
+      v.dayItemIds.slice(0, 20).forEach(function (id) {
+        var item = consumableById(id);
+        if (!item || item.kind !== 'day') return;
+        dayItemIds.push(item.id);
+      });
+    }
+    return { timed: timed, dayItemIds: dayItemIds };
+  }
+
+  /* 保存された内訳から、その日いっぱい効くアイテムの倍率加算を求める。 */
+  function dayBonusFromBoost(boost) {
+    if (!boost || !Array.isArray(boost.dayItemIds)) return 0;
+    var sum = 0;
+    boost.dayItemIds.forEach(function (id) {
+      var item = consumableById(id);
+      if (item && item.kind === 'day' && typeof item.bonus === 'number') sum += item.bonus;
+    });
+    return sum;
+  }
+
+  /* 消費アイテムの持ち時間(ミリ秒)。時間で効かないアイテムは0。 */
+  function consumableDurationMs(itemId) {
+    var item = consumableById(itemId);
+    if (!item || typeof item.durationMin !== 'number') return 0;
+    return item.durationMin * 60000;
+  }
+
   function validateRecord(rec, subjects) {
     var errors = [];
     if (!rec || typeof rec !== 'object') return { ok: false, errors: ['記録データが不正です'] };
@@ -86,7 +236,7 @@
     if (isIntInRange(plan, 0, MAX_MIN_PER_RECORD) && isIntInRange(actual, 0, MAX_MIN_PER_RECORD) && plan === 0 && actual === 0) {
       errors.push('計画時間か実績時間のどちらかを入力してください');
     }
-    if (rec.kind !== undefined && rec.kind !== '' && STUDY_KINDS.indexOf(rec.kind) === -1) errors.push('学習種別が不正です');
+    if (rec.kind !== undefined && rec.kind !== '' && !isValidStudyKind(rec.kind)) errors.push('学習種別が不正です');
     if (rec.kind === 'テスト' && (rec.score !== null && rec.score !== undefined && rec.score !== '')) {
       var score = rec.score, max = rec.maxScore;
       if (!isIntInRange(max, 1, 10000)) errors.push('満点は1以上で入力してください');
@@ -132,6 +282,65 @@
    * 各バケット: {date, plan:{subjectId:分}, actual:{}, planTotal, actualTotal, cumPlan, cumActual}
    * 累積は表示範囲内での積み上げ。
    */
+  /* ポイントの日別集計(APP-470)。
+   * 学習記録のBPとニュースのBPを日ごとに足し、累積も返す。
+   * 学習時間のグラフ(buildSeries)には手を触れず、別系統として用意する。 */
+  /* 学習セッションの時刻として妥当か。
+   * NaN・無限大・未来の時刻・古すぎる値(30日より前)は受け付けない。
+   * 30日は、宣言時間の上限(計画+延長)を大きく超える長さとして選んだ。 */
+  var MAX_SESSION_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+  function isSaneTimestamp(ts, nowMs) {
+    if (typeof ts !== 'number' || !isFinite(ts)) return false;
+    var now = typeof nowMs === 'number' && isFinite(nowMs) ? nowMs : Date.now();
+    if (ts > now + 60 * 1000) return false;              // 未来(1分の時計ずれは許す)
+    if (ts < now - MAX_SESSION_AGE_MS) return false;     // 古すぎる
+    return true;
+  }
+
+  function buildBpSeries(records, news, startDate, days) {
+    var byDate = {};
+    function add(date, kind, amount) {
+      if (!isDateStr(date) || !(amount > 0)) return;
+      var b = byDate[date] || (byDate[date] = { study: 0, news: 0 });
+      b[kind] += amount;
+    }
+    activeRecords(records).forEach(function (r) { add(r.date, 'study', r.bp | 0); });
+    (news || []).forEach(function (n) { add(n.date, 'news', n.bp | 0); });
+
+    var series = [];
+    var cum = 0;
+    for (var i = 0; i < days; i++) {
+      var date = addDays(startDate, i);
+      var b = byDate[date] || { study: 0, news: 0 };
+      var total = b.study + b.news;
+      cum += total;
+      series.push({ date: date, study: b.study, news: b.news, total: total, cum: cum });
+    }
+    return series;
+  }
+
+  function summarizeBp(series) {
+    var studyTotal = 0, newsTotal = 0, best = 0, bestDate = null, activeDays = 0;
+    series.forEach(function (d) {
+      studyTotal += d.study;
+      newsTotal += d.news;
+      if (d.total > best) { best = d.total; bestDate = d.date; }
+      if (d.total > 0) activeDays += 1;
+    });
+    var total = studyTotal + newsTotal;
+    return {
+      studyTotal: studyTotal,
+      newsTotal: newsTotal,
+      total: total,
+      best: best,
+      bestDate: bestDate,
+      activeDays: activeDays,
+      average: activeDays > 0 ? Math.round(total / activeDays) : 0,
+      cum: series.length ? series[series.length - 1].cum : 0
+    };
+  }
+
   function buildSeries(records, startDate, days) {
     var recs = activeRecords(records);
     var byDate = {};
@@ -373,21 +582,48 @@
           isIntInRange(r.planMin | 0, 0, MAX_MIN_PER_RECORD) &&
           isIntInRange(r.actualMin | 0, 0, MAX_MIN_PER_RECORD);
       }).map(function (r) {
+        /* APP-440 §5: BP対象時間 D。旧データは actualMin と同じにして、
+         * これまでに獲得したBPをそのまま維持する。 */
+        var bpMinValue = isIntInRange(r.bpMin, 0, MAX_MIN_PER_RECORD) ? r.bpMin : (r.actualMin | 0);
+        /* 初回BP上限。持っていない既存記録には、すでに確定している bpMin を入れる。
+         * ここを null のままにすると、旧記録を編集したときに上限が無くなり、
+         * 実績を600分へ書き換えるだけでBPを取れてしまう。
+         * 読み込み時に入れるだけなので、未編集の残高は変わらない。 */
+        var bpMinInitialValue = isIntInRange(r.bpMinInitial, 0, MAX_MIN_PER_RECORD)
+          ? r.bpMinInitial : bpMinValue;
         return {
           id: typeof r.id === 'string' ? r.id : 'r' + Math.random().toString(36).slice(2, 10),
           date: r.date,
           subjectId: r.subjectId,
           content: r.content.slice(0, 100),
-          kind: STUDY_KINDS.indexOf(r.kind) !== -1 ? r.kind : 'その他',
+          kind: isValidStudyKind(r.kind) ? r.kind : 'その他',
           planMin: r.planMin | 0,
           actualMin: r.actualMin | 0,
           score: isIntInRange(r.score, 0, 10000) ? r.score : null,
           maxScore: isIntInRange(r.maxScore, 1, 10000) ? r.maxScore : null,
           reflection: typeof r.reflection === 'string' ? r.reflection.slice(0, 300) : '',
-          createdAt: typeof r.createdAt === 'number' ? r.createdAt : 0,
+          createdAt: typeof r.createdAt === 'number' ? r.createdAt : createdAtFromId(r.id),
           updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : 0,
           deletedAt: typeof r.deletedAt === 'number' ? r.deletedAt : null,
-          bp: isIntInRange(r.bp, 0, DAILY_BP_CAP) ? r.bp : 0
+          bp: isIntInRange(r.bp, 0, DAILY_BP_CAP) ? r.bp : 0,
+          /* APP-440 §8: 旧データの既定値。
+           * bpMin は actualMin と同じにして、これまでに獲得したBPをそのまま維持する。
+           * 新しい上限は今後の記録にだけ効く。 */
+          extendedMin: isIntInRange(r.extendedMin, 0, MAX_MIN_PER_RECORD) ? r.extendedMin : 0,
+          bpMin: bpMinValue,
+          bpMultiplier: (typeof r.bpMultiplier === 'number' && isFinite(r.bpMultiplier) && r.bpMultiplier >= 0)
+            ? r.bpMultiplier : 1,
+          bpBoost: sanitizeBpBoost(r.bpBoost),
+          /* APP-440 §5: 編集でBPを増やせないようにするための上限。
+           * タイマー記録は宣言済み時間(計画+延長)が上限になるので持たない。
+           * 手入力は宣言済み時間が無いため、作成時の実績を上限として覚えておく。 */
+          bpMinInitial: bpMinInitialValue,
+          timerUsed: r.timerUsed === true,
+          bpActions: Array.isArray(r.bpActions)
+            ? r.bpActions.filter(function (k) {
+              return typeof k === 'string' && Object.prototype.hasOwnProperty.call(ACTION_BONUS_BP, k);
+            })
+            : []
         };
       });
     }
@@ -429,15 +665,43 @@
         return { id: typeof m.id === 'string' ? m.id : 'm' + Math.random().toString(36).slice(2, 10), role: m.role, text: m.text.slice(0, 500), ts: typeof m.ts === 'number' ? m.ts : 0 };
       }).slice(-200);
     }
+    /* 学習中セッションの復元。開始時刻が壊れていると、経過時間が
+     * 途方もない値になったり NaN になったりする。読み込みの時点で弾く
+     * (Codexレビュー Q5)。 */
     if (parsed.activeSession && typeof parsed.activeSession === 'object' &&
       typeof parsed.activeSession.recordId === 'string' &&
-      typeof parsed.activeSession.startTs === 'number') {
+      isSaneTimestamp(parsed.activeSession.startTs)) {
+      var pa = parsed.activeSession.pausedAccum;
+      var pt = parsed.activeSession.pausedAt;
       out.activeSession = {
         recordId: parsed.activeSession.recordId,
         startTs: parsed.activeSession.startTs,
-        pausedAccum: typeof parsed.activeSession.pausedAccum === 'number' ? parsed.activeSession.pausedAccum : 0,
-        pausedAt: typeof parsed.activeSession.pausedAt === 'number' ? parsed.activeSession.pausedAt : null
+        /* APP-471(Codex Q5): 壊れた値で経過時間が途方もない値やNaNにならないよう、
+         * 読み込みの時点で弾く。 */
+        pausedAccum: (typeof pa === 'number' && isFinite(pa) && pa >= 0) ? pa : 0,
+        pausedAt: isSaneTimestamp(pt) ? pt : null,
+        /* APP-440 §2: 開始時に宣言した時間と、開始時点の実績。
+         * 旧セッションは持たないので0。呼び出し側で記録の計画時間から補う。 */
+        declaredMin: isIntInRange(parsed.activeSession.declaredMin, 0, MAX_MIN_PER_RECORD)
+          ? parsed.activeSession.declaredMin : 0,
+        baseActualMin: isIntInRange(parsed.activeSession.baseActualMin, 0, MAX_MIN_PER_RECORD)
+          ? parsed.activeSession.baseActualMin : 0,
+        /* 自動停止のときに確定した分数。再描画・再起動で二重に付けないための目印。
+         * -1 は「まだ一度も確定していない」。 */
+        confirmedMin: isIntInRange(parsed.activeSession.confirmedMin, 0, MAX_MIN_PER_RECORD)
+          ? parsed.activeSession.confirmedMin : -1
       };
+      /* APP-440 §3・§8: segments は既定値を持たないフィールドとして扱う。
+       *
+       * ここで `segments: []` を書くと、判別式 Array.isArray(segments) が
+       * 新形式と見なし、区間の合計0分が確認済み実績Cになる。
+       * 旧セッションを読み込むだけで、それまでの学習時間が消える。
+       *
+       * 妥当な区間が1つ以上あるときだけフィールドを生やす。
+       * 空配列・壊れた配列は「無かったこと」にして従来式(startTs - pausedAccum)へ倒す。
+       * 区間が無い状態は時間制アイテムの重なりも0なので、BPが増える方向には働かない。 */
+      var keptSegments = sanitizeSegments(parsed.activeSession.segments);
+      if (keptSegments.length) out.activeSession.segments = keptSegments;
     }
     if (Array.isArray(parsed.poseUnlocks)) {
       out.poseUnlocks = parsed.poseUnlocks.filter(function (p) { return typeof p === 'string'; });
@@ -481,7 +745,26 @@
         return b && typeof b === 'object' && typeof b.itemId === 'string' && consumableById(b.itemId) &&
           typeof b.expiresAt === 'number';
       }).map(function (b) {
-        return { id: typeof b.id === 'string' ? b.id : 'ab' + Math.random().toString(36).slice(2, 10), itemId: b.itemId, kind: typeof b.kind === 'string' ? b.kind : '', expiresAt: b.expiresAt };
+        var out2 = {
+          id: typeof b.id === 'string' ? b.id : 'ab' + Math.random().toString(36).slice(2, 10),
+          itemId: b.itemId,
+          kind: typeof b.kind === 'string' ? b.kind : '',
+          expiresAt: b.expiresAt
+        };
+        /* APP-440 §8: 発動中アイテムの移行。
+         * 消費量は仮定せず(consumedMs = 0)、有効区間だけを expiresAt から逆算する。
+         * 得にはならない。使えるのは「移行後に作られた segments と有効区間の重なり」
+         * だけで、有効区間は expiresAt で終わるため。 */
+        var durationMs = consumableDurationMs(b.itemId);
+        if (durationMs > 0) {
+          out2.durationMs = (typeof b.durationMs === 'number' && isFinite(b.durationMs) && b.durationMs >= 0)
+            ? b.durationMs : durationMs;
+          out2.startedAt = (typeof b.startedAt === 'number' && isFinite(b.startedAt))
+            ? b.startedAt : (b.expiresAt - out2.durationMs);
+          out2.consumedMs = (typeof b.consumedMs === 'number' && isFinite(b.consumedMs) && b.consumedMs >= 0)
+            ? b.consumedMs : 0;
+        }
+        return out2;
       });
     }
     if (isDateStr(sh.feverLastUsedDate)) out.shop.feverLastUsedDate = sh.feverLastUsedDate;
@@ -617,9 +900,13 @@
   }
 
   /** 達成率(%)が計画達成の範囲に入っているか */
-  function isPlanAchieved(planMin, actualMin) {
-    if (!planMin || planMin <= 0) return false;
-    var rate = actualMin / planMin * 100;
+  function isPlanAchieved(planMin, actualMin, extendedMin) {
+    /* APP-440 §2: 明示的に延長した分は「決めた時間」に含める。
+     * 含めないと、本人が意思をもって延長して勉強したのに達成率が120%を超えて
+     * 計画達成ボーナスを失う。長く勉強したことで損をさせない。 */
+    var declared = declaredMinutes(planMin, extendedMin);
+    if (!declared || declared <= 0) return false;
+    var rate = actualMin / declared * 100;
     return rate >= PLAN_ACHIEVED_MIN_RATE && rate <= PLAN_ACHIEVED_MAX_RATE;
   }
 
@@ -695,6 +982,349 @@
     };
   }
 
+  /* ==================================================================
+   * APP-440: 時間の分離とBPの決定的な再計算
+   *
+   * 設計書 docs/design/APP-440_DESIGN.md の §1・§3・§5・§6 に対応する。
+   * ここに置くのは純粋関数だけで、state も DOM も時計も触らない。
+   * 「いま」が必要な計算は必ず引数で受け取る。
+   * ================================================================== */
+
+  var MS_PER_MINUTE = 60000;
+
+  /* §6: 計画達成ボーナスの最低実績。「15分以上」で15分ちょうどを含む(親の確定)。
+   * 単語10個・漢字20個・ミニテストのような、短時間で完結する勉強を弾かないため。 */
+  var PLAN_ACHIEVED_MIN_ACTUAL_MIN = 15;
+
+  /* §6: 1日1回だけ付く行動ボーナス。小分け記録で水増しできないようにする。 */
+  var DAILY_ONCE_ACTIONS = ['planAchieved', 'reflection', 'mockExamTaken', 'allExamSubjects',
+    'streak3', 'streak7', 'streak30'];
+
+  /**
+   * §5: BP再計算の並べ替え。
+   * 上限は「先に来た記録から順に配る」ため、順序が変わると同じデータでもBPが変わる。
+   * 配列順・updatedAt・画面の表示順に依存させてはならない。
+   */
+  function bpOrder(a, b) {
+    var ac = (a && typeof a.createdAt === 'number') ? a.createdAt : 0;
+    var bc = (b && typeof b.createdAt === 'number') ? b.createdAt : 0;
+    if (ac !== bc) return ac < bc ? -1 : 1;
+    var ai = (a && typeof a.id === 'string') ? a.id : '';
+    var bi = (b && typeof b.id === 'string') ? b.id : '';
+    return ai < bi ? -1 : (ai > bi ? 1 : 0);
+  }
+
+  /**
+   * §3: 学習区間を [from, to] の組に正規化する。
+   * to が null の区間は「いま進行中」を表すので nowTs で閉じる。
+   * 壊れた区間(数値でない・逆転している)は捨てる。推測して補わない。
+   */
+  function normalizeSegments(segments, nowTs) {
+    if (!Array.isArray(segments)) return [];
+    var now = (typeof nowTs === 'number' && isFinite(nowTs)) ? nowTs : 0;
+    var out = [];
+    segments.forEach(function (s) {
+      if (!s || typeof s !== 'object') return;
+      if (typeof s.from !== 'number' || !isFinite(s.from)) return;
+      var to;
+      if (s.to === null) {
+        /* null だけが「いま進行中」を表す。書き込み側は必ず to: null を明示する。 */
+        to = now;
+      } else if (typeof s.to === 'number' && isFinite(s.to)) {
+        to = s.to;
+      } else {
+        /* 壊れた終了時刻('x' / {} / Infinity / 欠落)は捨てる。
+         * now で閉じると、壊れた区間を「いままで学習していた」ことにしてしまい、
+         * 時間制アイテムの倍率対象を水増しできる。推測して補わない。 */
+        return;
+      }
+      if (to <= s.from) return;
+      out.push({ from: s.from, to: to });
+    });
+    return out;
+  }
+
+  /**
+   * §3: 学習区間とアイテムの有効区間が実際に重なったミリ秒。
+   * 区間が重複していても二重に数えないよう、先に和集合をとる。
+   */
+  function segmentsOverlapMs(segments, fromTs, toTs, nowTs) {
+    if (typeof fromTs !== 'number' || typeof toTs !== 'number') return 0;
+    if (toTs <= fromTs) return 0;
+    var clipped = [];
+    normalizeSegments(segments, nowTs).forEach(function (s) {
+      var a = Math.max(s.from, fromTs);
+      var b = Math.min(s.to, toTs);
+      if (b > a) clipped.push({ from: a, to: b });
+    });
+    clipped.sort(function (x, y) { return x.from - y.from; });
+    var total = 0;
+    var curFrom = null;
+    var curTo = null;
+    clipped.forEach(function (s) {
+      if (curTo === null) { curFrom = s.from; curTo = s.to; return; }
+      if (s.from <= curTo) { if (s.to > curTo) curTo = s.to; return; }
+      total += curTo - curFrom;
+      curFrom = s.from;
+      curTo = s.to;
+    });
+    if (curTo !== null) total += curTo - curFrom;
+    return total;
+  }
+
+  /**
+   * §3: 時間制アイテムの倍率が乗る分数を決める。
+   *
+   *   availableMs = max(0, min(持ち時間の残り, まだ使っていない実学習の重なり))
+   *   appliedMs   = availableMs から分未満を切り捨てた値
+   *   consumedMs += appliedMs        ← availableMs ではない
+   *
+   * consumedMs に足すのを appliedMs にするのが要点。
+   * availableMs を足すと59秒を消費して端数を失い、
+   * 何も足さないと次回に同じ59秒を重ねて使えてしまう。
+   *
+   * 壁時計の経過ではなく実学習区間を基準にするため、
+   * 一時停止して放置してもアイテムは減らない。
+   */
+  function applyTimedBoost(opts) {
+    var o = opts || {};
+    var durationMs = (typeof o.durationMs === 'number' && isFinite(o.durationMs)) ? o.durationMs : 0;
+    var consumedMs = (typeof o.consumedMs === 'number' && isFinite(o.consumedMs)) ? o.consumedMs : 0;
+    assertNotNegative(durationMs, 'アイテムの持ち時間');
+    assertNotNegative(consumedMs, 'アイテムの消費済み時間');
+    var startedAt = (typeof o.startedAt === 'number' && isFinite(o.startedAt)) ? o.startedAt : null;
+    if (startedAt === null) {
+      return { overlapMs: 0, availableMs: 0, appliedMs: 0, boostMinutes: 0, nextConsumedMs: consumedMs };
+    }
+    var overlapMs = segmentsOverlapMs(o.segments, startedAt, startedAt + durationMs, o.now);
+    var availableMs = Math.max(0, Math.min(durationMs - consumedMs, overlapMs - consumedMs));
+    var appliedMs = availableMs - (availableMs % MS_PER_MINUTE);
+    return {
+      overlapMs: overlapMs,
+      availableMs: availableMs,
+      appliedMs: appliedMs,
+      boostMinutes: appliedMs / MS_PER_MINUTE,
+      nextConsumedMs: consumedMs + appliedMs
+    };
+  }
+
+  /* §2: 延長は5分刻み、1回あたり最長60分(親の確定 2026-08-10)。 */
+  var EXTENSION_STEP_MIN = 5;
+  var EXTENSION_MAX_MIN = 60;
+
+  /** §2: 宣言済み時間(計画A + 延長E)。本人が先に「勉強する」と意思表示した時間。 */
+  function declaredMinutes(planMin, extendedMin) {
+    var p = (typeof planMin === 'number' && isFinite(planMin) && planMin > 0) ? planMin : 0;
+    var e = (typeof extendedMin === 'number' && isFinite(extendedMin) && extendedMin > 0) ? extendedMin : 0;
+    return Math.floor(p) + Math.floor(e);
+  }
+
+  /** §2 T-1-7・T-1-8: 延長の入力を5分刻みに丸め、1回60分までに収める。 */
+  function roundExtensionMin(value) {
+    if (typeof value !== 'number' || !isFinite(value) || value <= 0) return 0;
+    var stepped = Math.floor(value / EXTENSION_STEP_MIN) * EXTENSION_STEP_MIN;
+    if (stepped > EXTENSION_MAX_MIN) return EXTENSION_MAX_MIN;
+    return stepped;
+  }
+
+  /** §2: テスト・模試は延長できない。試験時間は決まっており超過はありえない。 */
+  function canExtendKind(kind) {
+    return kind !== TEST_KIND;
+  }
+
+  /**
+   * §2: タイマーの進み具合と、自動停止したかどうかを求める。
+   *
+   * 停止はイベントではなく計算で決める。通知や setTimeout に依存しない。
+   * iPhoneは画面を消すとタイマーが動かず、アプリが終了させられることもあるため、
+   * 「次に開いたときに計算し直す」以外の方法では宣言済み時間を守れない。
+   *
+   * 数えるのは実際に勉強した時間(一時停止を除く)である。
+   * 壁時計で数えると、休憩を挟んだだけで宣言済み時間に達してしまう。
+   */
+  function sessionProgress(session, declaredMin, nowMs) {
+    var s = session || {};
+    var now = (typeof nowMs === 'number' && isFinite(nowMs)) ? nowMs : 0;
+    var startTs = (typeof s.startTs === 'number' && isFinite(s.startTs)) ? s.startTs : 0;
+    var pausedAccum = (typeof s.pausedAccum === 'number' && isFinite(s.pausedAccum) && s.pausedAccum > 0)
+      ? s.pausedAccum : 0;
+    var pausedAt = (typeof s.pausedAt === 'number' && isFinite(s.pausedAt)) ? s.pausedAt : null;
+
+    /* 一時停止中は「止めた時刻」で数え止める。放置しても進まない。 */
+    var until = pausedAt !== null ? pausedAt : now;
+    var elapsedMs = Math.max(0, until - startTs - pausedAccum);
+
+    var dm = (typeof declaredMin === 'number' && isFinite(declaredMin) && declaredMin > 0)
+      ? Math.floor(declaredMin) : 0;
+    var declaredMs = dm * MS_PER_MINUTE;
+
+    /* 宣言済み時間が無い場合は自動停止できない。呼び出し側で開始を止める。 */
+    var completed = declaredMs > 0 && elapsedMs >= declaredMs;
+    var cappedMs = declaredMs > 0 ? Math.min(elapsedMs, declaredMs) : elapsedMs;
+
+    return {
+      elapsedMs: elapsedMs,
+      declaredMs: declaredMs,
+      cappedMs: cappedMs,
+      /* 宣言済み時間を超えた分は捨てる。C にも D にも入れない。 */
+      discardedMs: Math.max(0, elapsedMs - cappedMs),
+      completed: completed,
+      /* 完了した瞬間の実時刻。「◯時◯分に完了していました」に使う。
+       * 完了後は一時停止できないので、pausedAccum は完了時点の値のまま。 */
+      completedAt: completed ? startTs + pausedAccum + declaredMs : null,
+      paused: pausedAt !== null,
+      minutes: Math.floor(cappedMs / MS_PER_MINUTE)
+    };
+  }
+
+  /**
+   * §1: BP対象時間 D を決める。
+   *
+   *   C ≤ A + E   宣言していない時間は実績にも入らない
+   *   D ≤ C       BP対象は確認済み実績を超えない
+   *   D ≤ 初回保存時の D   編集でBPが増えることはない(§5)
+   *
+   * 「宣言済み時間」は計画A＋延長Eで、本人が先に意思表示した時間である。
+   */
+  function resolveBpMinutes(opts) {
+    var o = opts || {};
+    var actualMin = (typeof o.actualMin === 'number' && isFinite(o.actualMin)) ? o.actualMin : 0;
+    assertNotNegative(actualMin, '実績時間');
+    var planMin = (typeof o.planMin === 'number' && isFinite(o.planMin)) ? o.planMin : 0;
+    var extendedMin = (typeof o.extendedMin === 'number' && isFinite(o.extendedMin)) ? o.extendedMin : 0;
+    assertNotNegative(planMin, '計画時間');
+    assertNotNegative(extendedMin, '延長時間');
+
+    var declaredMin = planMin + extendedMin;
+    /* 手入力の記録は宣言済み時間を持たない。本人の明示的な意思表示なので実績をそのまま使う。 */
+    var byDeclared = o.manualEntry ? actualMin : Math.min(actualMin, declaredMin);
+    var cappedByDeclared = byDeclared < actualMin;
+
+    var bpMin = byDeclared;
+    var cappedByPrevious = false;
+    if (typeof o.previousBpMin === 'number' && isFinite(o.previousBpMin) && o.previousBpMin >= 0) {
+      if (bpMin > o.previousBpMin) {
+        bpMin = o.previousBpMin;
+        cappedByPrevious = true;
+      }
+    }
+    return {
+      bpMin: bpMin,
+      actualMin: actualMin,
+      declaredMin: declaredMin,
+      manualEntry: !!o.manualEntry,
+      cappedByDeclared: cappedByDeclared,
+      cappedByPrevious: cappedByPrevious
+    };
+  }
+
+  /**
+   * §6: その日の行動ボーナスを1日1回だけに束ねる。
+   *
+   * 1分の記録を10件作って +600BP という水増しを塞ぐ。
+   * どの記録に付けるかは bpOrder で決まる最初の対象記録に固定し、
+   * 何度計算しても同じ結果になるようにする。
+   */
+  function resolveDailyActionBonuses(records, opts) {
+    var o = opts || {};
+    var list = (Array.isArray(records) ? records : []).filter(function (r) {
+      return r && !r.deletedAt;
+    }).slice().sort(bpOrder);
+
+    var assigned = {};   // recordId -> [actionKey]
+    var owners = {};     // actionKey -> recordId
+    function assign(key, rec) {
+      if (!rec || owners[key]) return;
+      owners[key] = rec.id;
+      if (!assigned[rec.id]) assigned[rec.id] = [];
+      assigned[rec.id].push(key);
+    }
+
+    list.forEach(function (rec) {
+      var actualMin = (typeof rec.actualMin === 'number') ? rec.actualMin : 0;
+      /* 計画達成: 1日1回。かつ実績15分以上(15分ちょうどを含む)。 */
+      if (actualMin >= PLAN_ACHIEVED_MIN_ACTUAL_MIN && isPlanAchieved(rec.planMin, actualMin, rec.extendedMin)) {
+        assign('planAchieved', rec);
+      }
+      /* 振り返り: 1日1回。その日いずれかの記録に書かれていればよい。 */
+      if (typeof rec.reflection === 'string' && rec.reflection.trim() !== '') {
+        assign('reflection', rec);
+      }
+      /* 模試・テスト: 1日1回。得点と満点が両方入っている記録が対象。 */
+      if (typeof rec.score === 'number' && typeof rec.maxScore === 'number' && rec.maxScore > 0) {
+        assign('mockExamTaken', rec);
+      }
+    });
+
+    /* 日単位で決まるボーナス(全受験科目・連続日数)は、その日の最初の記録に寄せる。 */
+    var dayLevel = Array.isArray(o.dayLevelActions) ? o.dayLevelActions : [];
+    if (dayLevel.length && list.length) {
+      dayLevel.forEach(function (key) {
+        if (!Object.prototype.hasOwnProperty.call(ACTION_BONUS_BP, key)) {
+          throw new RangeError('未知の行動ボーナスです: ' + key);
+        }
+        assign(key, list[0]);
+      });
+    }
+
+    return { byRecordId: assigned, owners: owners };
+  }
+
+  /**
+   * §5: その日のBPを決定的に再計算する。
+   *
+   * 同じ記録集合からは、何度計算しても同じBPが出ることを不変条件とする。
+   * 編集で日付・科目・実績が変わったら、移動前と移動後の両方の日でこれを呼ぶ。
+   */
+  function recalcDayBP(records, opts) {
+    var o = opts || {};
+    var multiplierFor = typeof o.multiplierFor === 'function' ? o.multiplierFor : function () { return 1; };
+    var isExamSubjectFor = typeof o.isExamSubjectFor === 'function' ? o.isExamSubjectFor : function () { return true; };
+
+    var list = (Array.isArray(records) ? records : []).filter(function (r) {
+      return r && !r.deletedAt;
+    }).slice().sort(bpOrder);
+
+    var bonuses = resolveDailyActionBonuses(list, { dayLevelActions: o.dayLevelActions });
+
+    var todayTotalBP = 0;
+    var todayNonExamBP = 0;
+    var results = [];
+    list.forEach(function (rec) {
+      var resolved = resolveBpMinutes({
+        actualMin: rec.actualMin,
+        planMin: rec.planMin,
+        extendedMin: rec.extendedMin,
+        manualEntry: rec.manualEntry,
+        previousBpMin: rec.bpMin
+      });
+      var actions = bonuses.byRecordId[rec.id] || [];
+      var calc = calcStudyBP({
+        minutes: resolved.bpMin,
+        multiplier: multiplierFor(rec),
+        actions: actions,
+        isExamSubject: isExamSubjectFor(rec),
+        todayTotalBP: todayTotalBP,
+        todayNonExamBP: todayNonExamBP
+      });
+      todayTotalBP = calc.todayTotalAfter;
+      todayNonExamBP = calc.todayNonExamAfter;
+      results.push({
+        id: rec.id,
+        bpMin: resolved.bpMin,
+        bp: calc.grantedBP,
+        actions: actions,
+        multiplier: calc.multiplierApplied,
+        cappedByDeclared: resolved.cappedByDeclared,
+        cappedByPrevious: resolved.cappedByPrevious,
+        nonExamCapped: calc.nonExamCapped,
+        dailyCapped: calc.dailyCapped
+      });
+    });
+
+    return { records: results, totalBP: todayTotalBP, nonExamBP: todayNonExamBP };
+  }
+
   /* ---------- 時事ニュース (C章) ---------- */
 
   /* faculty: 'economics'|'law'|'international' に一致すると×1.5。
@@ -751,6 +1381,33 @@
   }
 
   /** 今日その日に全ジャンルを記録したか(+200BP) */
+  /**
+   * APP-440 §4: その日の「BPが付いているニュース」の本数。
+   *
+   * 上限は総本数ではなくBP付きの本数で数える。総本数で数えると、
+   * ポイントの付かない4本目以降が枠を埋めてしまう。
+   */
+  function bpNewsCountForDate(news, dateStr) {
+    var list = Array.isArray(news) ? news : [];
+    var n = 0;
+    list.forEach(function (x) {
+      if (!x || x.date !== dateStr) return;
+      if ((x.bp | 0) > 0) n++;
+    });
+    return n;
+  }
+
+  /**
+   * APP-440 §4: いまBPを付けてよいか。
+   *
+   * 追加のときも「元に戻す」のときも、必ずこの判定を通す。
+   * 復元だけ判定を通さないと、削除 → 別のニュースを追加 → 元に戻す で
+   * BP付きが4本になる。不変条件は「どの時点でも同じ日のBP付きは最大3本」。
+   */
+  function canGrantNewsBp(news, dateStr) {
+    return bpNewsCountForDate(news, dateStr) < NEWS_DAILY_LIMIT;
+  }
+
   function calcAllGenresBonus(recordedGenreIds) {
     var ids = Array.isArray(recordedGenreIds) ? recordedGenreIds : [];
     var seen = {};
@@ -1362,6 +2019,12 @@
     MAX_MIN_PER_RECORD: MAX_MIN_PER_RECORD,
     DEFAULT_SUBJECTS: DEFAULT_SUBJECTS,
     STUDY_KINDS: STUDY_KINDS,
+    SUBJECT_STUDY_KINDS: SUBJECT_STUDY_KINDS,
+    ALL_STUDY_KINDS: ALL_STUDY_KINDS,
+    TEST_KIND: TEST_KIND,
+    studyKindsFor: studyKindsFor,
+    defaultStudyKindFor: defaultStudyKindFor,
+    isValidStudyKind: isValidStudyKind,
     AI_APPS: AI_APPS,
     aiAppById: aiAppById,
     pad2: pad2,
@@ -1378,6 +2041,9 @@
     FACULTY_IDS: FACULTY_IDS,
     activeRecords: activeRecords,
     buildSeries: buildSeries,
+    isSaneTimestamp: isSaneTimestamp,
+    buildBpSeries: buildBpSeries,
+    summarizeBp: summarizeBp,
     summarize: summarize,
     streakDays: streakDays,
     niceMax: niceMax,
@@ -1400,12 +2066,36 @@
     isPlanAchieved: isPlanAchieved,
     calcActionBonusBP: calcActionBonusBP,
     calcStudyBP: calcStudyBP,
+    /* --- APP-440: 時間の分離とBPの決定的な再計算 --- */
+    MS_PER_MINUTE: MS_PER_MINUTE,
+    PLAN_ACHIEVED_MIN_ACTUAL_MIN: PLAN_ACHIEVED_MIN_ACTUAL_MIN,
+    DAILY_ONCE_ACTIONS: DAILY_ONCE_ACTIONS,
+    EXTENSION_STEP_MIN: EXTENSION_STEP_MIN,
+    EXTENSION_MAX_MIN: EXTENSION_MAX_MIN,
+    declaredMinutes: declaredMinutes,
+    roundExtensionMin: roundExtensionMin,
+    canExtendKind: canExtendKind,
+    sessionProgress: sessionProgress,
+    bpOrder: bpOrder,
+    createdAtFromId: createdAtFromId,
+    sanitizeSegments: sanitizeSegments,
+    sanitizeBpBoost: sanitizeBpBoost,
+    dayBonusFromBoost: dayBonusFromBoost,
+    consumableDurationMs: consumableDurationMs,
+    normalizeSegments: normalizeSegments,
+    segmentsOverlapMs: segmentsOverlapMs,
+    applyTimedBoost: applyTimedBoost,
+    resolveBpMinutes: resolveBpMinutes,
+    resolveDailyActionBonuses: resolveDailyActionBonuses,
+    recalcDayBP: recalcDayBP,
     /* --- 時事ニュース (ver.4) --- */
     NEWS_GENRES: NEWS_GENRES,
     NEWS_DAILY_LIMIT: NEWS_DAILY_LIMIT,
     NEWS_ALL_GENRES_BONUS_BP: NEWS_ALL_GENRES_BONUS_BP,
     newsGenreById: newsGenreById,
     calcNewsBP: calcNewsBP,
+    bpNewsCountForDate: bpNewsCountForDate,
+    canGrantNewsBp: canGrantNewsBp,
     calcAllGenresBonus: calcAllGenresBonus,
     /* --- GT / PayPay (ver.4) --- */
     GT_BASE_YEN: GT_BASE_YEN,

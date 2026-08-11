@@ -5,11 +5,11 @@
 
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
-  var APP_VERSION = '4.1.0';
+  var APP_VERSION = '4.3.0';
   /* リリース表示用(画面右上)。更新のたびに日付を上げる。
    * モデル名は「未記録」固定とする(実行時のモデル識別子を断定してリポジトリの
    * 成果物に書き出さない方針のため。推測での記載はしない)。 */
-  var BUILD_DATE = '2026-08-09';
+  var BUILD_DATE = '2026-08-12';
   var BUILD_UPDATER = 'Claude Code';
   var BUILD_MODEL = '未記録';
 
@@ -74,6 +74,8 @@
     } catch (e) {
       toast('保存に失敗しました。空き容量を確認してください。', true);
     }
+    // ポイントが変わる操作はすべて save を通るため、ここで常時表示を更新する
+    try { renderBpBalance(); } catch (e2) { /* 起動途中は要素が無い */ }
   }
 
   function nextId(prefix) { state.seq = (state.seq || 1) + 1; return prefix + Date.now().toString(36) + state.seq; }
@@ -256,7 +258,12 @@
     var total = 0;
     todayRecords().forEach(function (r) { total += r.actualMin; });
     var name = state.settings.userName || '伊吹';
-    if (state.activeSession) return '集中してるね！このビート、最高だよ！';
+    if (state.activeSession) {
+      /* APP-440: 自動停止した後は「集中してるね」ではなく、やり切ったことを言う。 */
+      var prog = sessionProgress();
+      if (prog && prog.completed) return '決めた時間、やり切ったね。かっこいいよ！';
+      return '集中してるね！このビート、最高だよ！';
+    }
     if (total >= state.settings.dailyGoalMin) return '今日の目標クリア！' + name + '、君がチャンピオンだ！';
     if (total > 0) return 'いい積み上げだね！この調子で刻んでいこう！';
     if (h < 5) return '夜更かしは体に毒だよ。無理せずいこう。';
@@ -267,6 +274,7 @@
 
   var sloganIndex = 0;
   function renderToday() {
+    renderBpBalance();
     $('today-char-name').textContent = state.settings.characterName;
     $('today-greeting').textContent = greeting();
     $('today-beat').innerHTML = charImg(state.activeSession ? 'pose_billie_jean.png' : 'coach_stage.png');
@@ -329,6 +337,20 @@
       banner.innerHTML = '';
     }
   }
+
+  /* 獲得ポイントの常時表示(APP-470)。
+   * どの画面にいても「いま何ポイント持っているか」が上部で見えるようにする。
+   * タップすると今日のブースト内訳(倍率とBP残高)が開く。 */
+  function renderBpBalance() {
+    var text = C.calcBpBalance(state).toLocaleString('ja-JP');
+    var els = document.querySelectorAll('.bp-balance-val');
+    for (var i = 0; i < els.length; i++) els[i].textContent = text;
+  }
+
+  document.addEventListener('click', function (e) {
+    var chip = e.target && e.target.closest ? e.target.closest('.bp-balance') : null;
+    if (chip) openBoostModal();
+  });
 
   /** 今日のブーストカード(GUI_SPEC_v4.md 2.1)。開始ボタンより下、BP残高より倍率を先に見せる。 */
   function renderBoostCard() {
@@ -399,25 +421,65 @@
       return '<option value="' + esc(s.id) + '"' + (s.id === selectedId ? ' selected' : '') + '>' + esc(s.name) + '</option>';
     }).join('');
   }
-  function kindOptions(selected) {
-    return C.STUDY_KINDS.map(function (k) {
-      return '<option value="' + k + '"' + (k === selected ? ' selected' : '') + '>' + k + '</option>';
+  /* 学習種別は科目ごとに変える(APP-460)。
+   * 選択中の値がその科目の一覧に無い場合(科目を変えた・旧データを編集した)は、
+   * 一覧の末尾にそのまま残して選択状態にする。過去の記録の値を勝手に書き換えない。 */
+  function firstSubjectId() {
+    var visible = state.settings.subjects.filter(function (s) { return s.visible; });
+    return visible.length ? visible[0].id : '';
+  }
+
+  function kindOptions(selected, subjectId) {
+    var kinds = C.studyKindsFor(subjectId);
+    if (selected && kinds.indexOf(selected) === -1) kinds = kinds.concat([selected]);
+    return kinds.map(function (k) {
+      return '<option value="' + esc(k) + '"' + (k === selected ? ' selected' : '') + '>' + esc(k) + '</option>';
     }).join('');
+  }
+
+  /* 科目を変えたら、その科目の学習種別に入れ替える。
+   * 入れ替え後の値で点数欄の出し分けも更新する。 */
+  /* 記録画面の学習種別が、どの科目のものとして作られているか。
+   * 設定で科目を消した・並べ替えたときに一覧を作り直す判定に使う。 */
+  var rfKindSubjectId = null;
+
+  /* 科目を変えたときの学習種別の入れ替え。
+   * いま選んでいる種別が新しい科目にもあるなら、それを保つ。
+   * 「テスト」はどの科目にもあるため、科目を変えても得点欄が閉じず、
+   * 入力済みの得点が保存時に消えることがない。 */
+  function refreshKindForSubject(kindEl, subjectId, scoreRowEl, openStyle) {
+    var keep = kindEl.value;
+    var next = C.studyKindsFor(subjectId).indexOf(keep) !== -1
+      ? keep
+      : C.defaultStudyKindFor(subjectId);
+    kindEl.innerHTML = kindOptions(next, subjectId);
+    if (scoreRowEl) {
+      scoreRowEl.style.display = kindEl.value === C.TEST_KIND ? (openStyle || '') : 'none';
+    }
+  }
+
+  function bindKindToSubject(subjectSelId, kindSelId, scoreRowId) {
+    var subjEl = $(subjectSelId), kindEl = $(kindSelId);
+    if (!subjEl || !kindEl) return;
+    subjEl.addEventListener('change', function () {
+      refreshKindForSubject(kindEl, subjEl.value, scoreRowId ? $(scoreRowId) : null, '');
+      if (subjectSelId === 'rf-subject') rfKindSubjectId = subjEl.value;
+    });
   }
 
   $('btn-add-plan').addEventListener('click', function () { openPlanModal(null); });
   function openPlanModal(thenStart) {
     openModal(
       '<h3>今日の予定を追加<button class="icon-btn" id="m-close">✕</button></h3>' +
-      '<div class="field-row">' +
       '<div class="field"><label>科目</label><select id="m-subject">' + subjectOptions() + '</select></div>' +
-      '<div class="field"><label>学習種別</label><select id="m-kind">' + kindOptions('暗記') + '</select></div>' +
-      '</div>' +
+      '<div class="field"><label>学習種別</label><select id="m-kind">' +
+        kindOptions(C.defaultStudyKindFor(firstSubjectId()), firstSubjectId()) + '</select></div>' +
       '<div class="field"><label>内容</label><input type="text" id="m-content" placeholder="例: 英単語 20語" maxlength="100"></div>' +
       '<div class="field"><label>計画時間(分)</label><input type="number" id="m-plan" min="1" max="720" inputmode="numeric" value="30"></div>' +
       '<button class="btn primary block big" id="m-save">' + (thenStart ? 'この内容で開始する ▶' : '予定に追加する') + '</button>'
     );
     $('m-close').onclick = closeModal;
+    bindKindToSubject('m-subject', 'm-kind', null);
     $('m-save').onclick = function () {
       var rec = {
         id: nextId('r'),
@@ -474,42 +536,101 @@
   });
 
   function startSessionForRecord(recordId) {
-    var rec = state.records.find(function (r) { return r.id === recordId; });
-    if (!rec) return;
-    state.activeSession = { recordId: recordId, startTs: Date.now(), pausedAccum: 0, pausedAt: null };
+    // 削除済みの予定では学習を始めない(Codexレビュー Q4-1)
+    var rec = state.records.find(function (r) { return r.id === recordId && !r.deletedAt; });
+    if (!rec) { toast('その予定は見つからないよ', true); return; }
+    /* APP-440 §2: 宣言済み時間が無いと、いつ止めるかを決められない。
+     * 「勉強する意思もないのにタイマーだけカウントする」ことをさせないため、
+     * 計画時間を決めてからでないと始められないようにする。 */
+    var declared = C.declaredMinutes(rec.planMin, 0);
+    if (declared <= 0) {
+      toast('先に計画時間を決めよう。何分やるか決めるところからだよ', true);
+      return;
+    }
+    state.activeSession = {
+      recordId: recordId, startTs: Date.now(), pausedAccum: 0, pausedAt: null,
+      declaredMin: declared,
+      baseActualMin: rec.actualMin || 0,
+      confirmedMin: -1
+    };
+    segmentStart(state.activeSession);
     save();
     renderToday();
-    toast('スタート！いいビートを刻もう！');
+    toast('スタート！' + C.fmtDuration(declared) + 'で完了だよ');
+  }
+
+  /* APP-440 §2: 進み具合はすべてこの関数から取る。
+   * 「いま」を渡して計算するので、通知やsetTimeoutに頼らない。
+   * アプリを閉じていても、次に開いたときに正しく完了を検出できる。 */
+  function sessionProgress() {
+    var s = state.activeSession;
+    if (!s) return null;
+    var rec = state.records.find(function (r) { return r.id === s.recordId; });
+    /* 旧セッションは declaredMin を持たないので、記録の計画時間から補う。 */
+    var declared = s.declaredMin > 0
+      ? s.declaredMin
+      : (rec ? C.declaredMinutes(rec.planMin, rec.extendedMin) : 0);
+    return C.sessionProgress(s, declared, Date.now());
   }
 
   function sessionElapsedMs() {
-    var s = state.activeSession;
-    if (!s) return 0;
-    var end = s.pausedAt || Date.now();
-    return Math.max(0, end - s.startTs - s.pausedAccum);
+    var p = sessionProgress();
+    return p ? p.cappedMs : 0;
   }
 
   function renderTimerCard() {
     var card = $('timer-card');
     clearInterval(timerInterval);
     if (!state.activeSession) { card.style.display = 'none'; return; }
-    var rec = state.records.find(function (r) { return r.id === state.activeSession.recordId; });
-    if (!rec) { state.activeSession = null; save(); card.style.display = 'none'; return; }
+    // 削除された予定は「無い」ものとして扱う(APP-471)。
+    // deletedAt を見ないと、ごみ箱に入れた予定のままタイマーが動き続け、
+    // 終了しても記録が削除済みのまま保存されて画面に出てこない。
+    var rec = state.records.find(function (r) {
+      return r.id === state.activeSession.recordId && !r.deletedAt;
+    });
+    if (!rec) {
+      // 学習中の予定が記録画面から削除された場合。黙って消さず、理由を伝える(APP-471)。
+      state.activeSession = null;
+      save();
+      card.style.display = 'none';
+      toast('学習中だった予定が削除されたので、タイマーを止めたよ', true);
+      return;
+    }
     var sub = subjectById(rec.subjectId);
     var paused = !!state.activeSession.pausedAt;
+    var prog = sessionProgress();
+
+    /* APP-440 §2: 宣言済み時間に達していたら自動停止して完了画面を出す。
+     * アプリを閉じていた場合もここで検出する。停止はイベントではなく計算で決める。 */
+    if (prog && prog.completed) {
+      confirmCompletedSession(rec, prog);
+      card.style.display = '';
+      renderCompletedCard(card, rec, prog);
+      /* 完了したのにコーチが「集中してるね」のままだと、画面と実態が食い違う。
+       * カードだけ描き直す経路(タイマーの自動停止)でも、あいさつを更新する。 */
+      if ($('today-greeting')) $('today-greeting').textContent = greeting();
+      renderBpBalanceIfAny();
+      return;
+    }
+
+    var declaredMin = prog ? Math.floor(prog.declaredMs / 60000) : 0;
     card.style.display = '';
     card.innerHTML =
       '<h2>学習中</h2>' +
       '<div class="timer-big" id="timer-elapsed">0:00</div>' +
       '<div class="timer-sub">' + esc(sub.name) + '・' + esc(rec.content) +
-      (rec.planMin > 0 ? '(計画 ' + C.fmtDuration(rec.planMin) + ')' : '') + '</div>' +
+      (declaredMin > 0 ? '(' + C.fmtDuration(declaredMin) + 'で完了)' : '') + '</div>' +
       '<div class="btn-row">' +
       '<button class="btn" id="btn-pause">' + (paused ? '▶ 再開' : '⏸ 一時停止') + '</button>' +
       '<button class="btn primary" id="btn-finish">終了する ✓</button>' +
       '</div>' +
       '<button class="btn ghost small" id="btn-discard" style="margin-top:8px;color:var(--dim)">記録せずにやめる</button>';
     function tick() {
-      var ms = sessionElapsedMs();
+      var p = sessionProgress();
+      if (!p) return;
+      /* 宣言済み時間に達した瞬間に自動停止する。画面を開いたままでも進み続けない。 */
+      if (p.completed) { clearInterval(timerInterval); renderTimerCard(); return; }
+      var ms = p.cappedMs;
       var m = Math.floor(ms / 60000), s = Math.floor(ms / 1000) % 60;
       $('timer-elapsed').textContent = m + ':' + (s < 10 ? '0' : '') + s;
     }
@@ -520,36 +641,253 @@
       if (ses.pausedAt) {
         ses.pausedAccum += Date.now() - ses.pausedAt;
         ses.pausedAt = null;
+        segmentResume(ses);
         toast('再開！ここからまた刻もう！');
       } else {
         ses.pausedAt = Date.now();
+        segmentClose(ses, ses.pausedAt);
       }
       save(); renderTimerCard();
     };
     $('btn-finish').onclick = function () { openFinishModal(rec); };
     $('btn-discard').onclick = function () {
+      // 何分ぶんが消えるのかを具体的に見せる(APP-471)。
+      // 「保存されません」だけでは、失う量が本人に分からない。
+      var lostMin = Math.floor(sessionElapsedMs() / 60000);
+      var lostText = lostMin >= 1
+        ? '<b style="color:var(--gold-bright)">' + C.fmtDuration(lostMin) + '</b>ぶんの記録が消えます。'
+        : 'まだ1分たっていないので、消えるのは0分です。';
       openModal(
         '<h3>記録せずにやめる<button class="icon-btn" id="m-close">✕</button></h3>' +
-        '<p class="small" style="margin-bottom:12px">今回の学習時間は保存されません。よろしいですか？</p>' +
+        '<p class="small" style="margin-bottom:6px">' + lostText + '</p>' +
+        '<p class="small muted" style="margin-bottom:12px">' +
+        'ここでやめても、あとで「元に戻す」で戻せるよ。' +
+        '勉強した時間を残したいなら「戻る」→「終了する ✓」を押してね。</p>' +
         '<div class="btn-row"><button class="btn" id="m-cancel">戻る</button>' +
         '<button class="btn danger" id="m-ok">記録せずにやめる</button></div>'
       );
       $('m-close').onclick = $('m-cancel').onclick = closeModal;
       $('m-ok').onclick = function () {
+        // 取り消せるように、やめた内容と「やめた時刻」を控えておく(APP-471)
+        var discarded = state.activeSession;
+        var discardedAt = Date.now();
+        /* APP-440: 自動停止で確定済みなら、開始時点の実績まで戻してBPも計算し直す。
+         * 「記録せずにやめる」と言った以上、確定した分も残さない。 */
+        if (discarded && typeof discarded.confirmedMin === 'number' && discarded.confirmedMin >= 0) {
+          rec.actualMin = discarded.baseActualMin || 0;
+          rec.updatedAt = Date.now();
+          grantStudyBP(rec);
+        }
         state.activeSession = null;
         save(); closeModal(); renderToday();
+        toast(lostMin >= 1 ? C.fmtDuration(lostMin) + 'を記録せずにやめたよ' : '記録せずにやめたよ',
+          false, '元に戻す', function () {
+            // すでに別の学習が始まっていたら、それを壊さない(Codexレビュー Q6-2)
+            if (state.activeSession) {
+              toast('別の学習が始まっているので戻せなかったよ', true);
+              return;
+            }
+            // 元の記録がまだあるときだけ戻す
+            var still = state.records.find(function (r) {
+              return r.id === discarded.recordId && !r.deletedAt;
+            });
+            if (!still) { toast('元の予定が見つからないので戻せなかったよ', true); return; }
+            /* やめてから戻すまでの時間は勉強していないので経過に含めない。
+             * ただし一時停止中にやめた場合は、pausedAt によって
+             * その時間が最初から除外されている。ここで足すと二重に引かれ、
+             * 戻した瞬間に学習時間が減ってしまう(Codexレビュー Q6-1 再指摘)。 */
+            var wasPaused = !!discarded.pausedAt;
+            var waitedMs = wasPaused ? 0 : Math.max(0, Date.now() - discardedAt);
+            /* APP-440との統合: 宣言済み時間・開始時実績・確定済み分数・学習区間を
+             * 落とさずに戻す。列挙し直すと新しい項目を書き忘れるので、
+             * 元の内容をそのまま複製して、待ち時間ぶんだけ差し替える。 */
+            var restored = Object.assign({}, discarded);
+            restored.pausedAccum = (discarded.pausedAccum || 0) + waitedMs;
+            /* やめている間は勉強していないので、開いていた学習区間も閉じる。
+             * 閉じずに戻すと、待ち時間が実学習区間に入りアイテムを消費する。 */
+            if (Array.isArray(discarded.segments)) {
+              restored.segments = discarded.segments.map(function (g) {
+                return { from: g.from, to: (g.to === null ? discardedAt : g.to) };
+              });
+              if (!wasPaused) restored.segments.push({ from: Date.now(), to: null });
+            }
+            state.activeSession = restored;
+            save(); renderToday();
+            toast('学習を再開したよ！');
+          });
       };
     };
   }
 
-  function openFinishModal(rec) {
-    var elapsedMin = Math.max(1, Math.round(sessionElapsedMs() / 60000));
-    var suggested = Math.min(C.MAX_MIN_PER_RECORD, rec.actualMin + elapsedMin);
+  /* APP-440 §2: 宣言済み時間に達した時点で、記録とBPをその場で確定する。
+   *
+   * 「完了したのに、あとでボタンを押すまで保存されない」状態を作らない。
+   * 完了直後にアプリを閉じても、実績とBPが残る。
+   *
+   * 二重付与は起こらない。grantStudyBP は rec.bp を再計算して置き換える方式で、
+   * 残高も rec.bp の合計から求めるため、何度呼んでも同じ結果になる。
+   * confirmedMin は「同じ分数で確定済みなら書き込まない」ための目印。 */
+  function confirmCompletedSession(rec, prog) {
+    var ses = state.activeSession;
+    if (!ses || !prog || !prog.completed) return false;
+    var target = prog.minutes;
+    var already = (typeof ses.confirmedMin === 'number') ? ses.confirmedMin : -1;
+    if (target === already) return false;
+    rec.actualMin = Math.min(C.MAX_MIN_PER_RECORD, (ses.baseActualMin || 0) + target);
+    rec.updatedAt = Date.now();
+    ses.confirmedMin = target;
+    rec.timerUsed = true;
+    /* 完了した時刻で区間を閉じる。宣言済み時間を超えた分は区間にも入れない。 */
+    if (prog.completedAt) segmentClose(ses, prog.completedAt);
+    applyBoostsOnce(rec, ses);
+    grantStudyBP(rec);
+    /* 宣言して勉強した分までを、以後の編集の上限として確定する。 */
+    rec.bpMinInitial = rec.bpMin;
+    save();
+    return true;
+  }
+
+  /* APP-440 §3: アイテムの消費は記録ごとに一度だけ。
+   * 結果を rec.bpBoost に残し、以後の再計算では消費し直さない。
+   * これがないと、同じアイテムの時間を複数の記録で使い回せる。 */
+  function applyBoostsOnce(rec, ses) {
+    if (!ses) return;
+    var segments = Array.isArray(ses.segments) ? ses.segments : null;
+    /* 区間が無い記録(手入力・移行中の旧セッション)には時間制アイテムを適用しない。 */
+    if (!segments || !segments.length) {
+      if (!rec.bpBoost) rec.bpBoost = { timed: [], dayItemIds: [] };
+      return;
+    }
+    /* 何度呼んでも増えない。二重消費を防いでいるのは rec.bpBoost の有無ではなく
+     * アイテム側の consumedMs で、既に使った重なりは二度と返ってこない。
+     * 延長したときは新しい区間が増えているので、その分だけが追加で消費される。 */
+    rec.bpBoost = mergeBoost(rec.bpBoost, consumeTimedBoosts(segments));
+  }
+
+  /* 既に消費した分を上書きせず、追加分を足し込む。
+   * 倍率は保存しない。アイテムIDだけを持ち、倍率は定義から引く。 */
+  function mergeBoost(prev, add) {
+    var out = { timed: [], dayItemIds: [] };
+    if (prev) {
+      (prev.timed || []).forEach(function (t) { out.timed.push({ itemId: t.itemId, minutes: t.minutes }); });
+      (prev.dayItemIds || []).forEach(function (id) { out.dayItemIds.push(id); });
+    }
+    (add.timed || []).forEach(function (t) { out.timed.push({ itemId: t.itemId, minutes: t.minutes }); });
+    /* その日いっぱいのアイテムは「使った分だけ消える」ものではないので、
+     * 延長のたびに足すと個数が増えてしまう。IDごとに多い方の個数を採る。
+     * 足せば延長で水増しでき、置き換えれば期限切れで正当な分を失う。 */
+    var counts = {};
+    out.dayItemIds.forEach(function (id) { counts[id] = (counts[id] || 0) + 1; });
+    var addCounts = {};
+    (add.dayItemIds || []).forEach(function (id) { addCounts[id] = (addCounts[id] || 0) + 1; });
+    Object.keys(addCounts).forEach(function (id) {
+      var need = addCounts[id] - (counts[id] || 0);
+      for (var i = 0; i < need; i++) out.dayItemIds.push(id);
+    });
+    return out;
+  }
+
+  /* APP-440 §2: 完了画面。
+   *
+   * BPは完了の時点で確定済み。ここのボタンは「今の記録が有効か」を問うものではなく、
+   * 「この先どうするか」を選ぶもの。放置しても損はせず、得もしない。 */
+  /* 完了時に残高表示があれば更新する。無い版でも落ちないようにする。 */
+  function renderBpBalanceIfAny() {
+    if (typeof renderBpBalance === 'function') renderBpBalance();
+  }
+
+  function renderCompletedCard(card, rec, prog) {
+    var sub = subjectById(rec.subjectId);
+    var min = prog.minutes;
+    var canExtend = C.canExtendKind(rec.kind);
+    var lateNotice = '';
+    /* アプリを閉じている間に完了していた場合は、見逃さないように時刻を伝える。 */
+    if (prog.discardedMs >= 60000 && prog.completedAt) {
+      var d = new Date(prog.completedAt);
+      lateNotice = '<p class="small muted" style="margin:0 0 10px">' +
+        d.getHours() + ':' + (d.getMinutes() < 10 ? '0' : '') + d.getMinutes() +
+        ' に完了していました。ここまでの時間は記録に入っているよ</p>';
+    }
+    var extendBtns = '';
+    if (canExtend) {
+      extendBtns =
+        '<div class="finish-extend">' +
+        '<div class="small muted" style="margin-bottom:6px">もう少し続ける？(5分刻み・最長' +
+        C.EXTENSION_MAX_MIN + '分)</div>' +
+        '<div class="btn-row">' +
+        [5, 10, 15, 30].map(function (n) {
+          return '<button class="btn small" data-ext="' + n + '">+' + n + '分</button>';
+        }).join('') +
+        '</div></div>';
+    }
+    card.innerHTML =
+      '<h2 id="timer-completed">完了！ ' + C.fmtDuration(min) + '</h2>' +
+      lateNotice +
+      '<div class="timer-sub">' + esc(sub.name) + '・' + esc(rec.content) + '</div>' +
+      '<p class="small" style="margin:10px 0">' + C.fmtDuration(min) +
+      'ぶんのビートを記録したよ。<b>このままアプリを閉じても残る</b>から安心して</p>' +
+      extendBtns +
+      '<div class="btn-row" style="margin-top:10px">' +
+      '<button class="btn" id="btn-break">休憩する</button>' +
+      '<button class="btn primary" id="btn-finish">今日はここまで</button>' +
+      '</div>';
+
+    if (canExtend) {
+      Array.prototype.forEach.call(card.querySelectorAll('[data-ext]'), function (b) {
+        b.onclick = function () { extendSession(parseIntSafe(b.dataset.ext)); };
+      });
+    }
+    /* 休憩も「今日はここまで」も、確定した時間を記録する点は同じ。
+     * 違いは再開の導線を残すかどうかだけ(設計 §2)。 */
+    $('btn-break').onclick = function () { openFinishModal(rec, { resumeHint: true }); };
+    $('btn-finish').onclick = function () { openFinishModal(rec); };
+  }
+
+  /* APP-440 §2: 延長は毎回が明示的な意思表示。記録にも残す。 */
+  function extendSession(rawMin) {
+    var ses = state.activeSession;
+    if (!ses) return;
+    var rec = state.records.find(function (r) { return r.id === ses.recordId; });
+    if (!rec) return;
+    if (!C.canExtendKind(rec.kind)) { toast('テストは延長できないよ', true); return; }
+    var add = C.roundExtensionMin(rawMin);
+    if (add <= 0) { toast('延長は' + C.EXTENSION_STEP_MIN + '分から選んでね', true); return; }
+    ses.declaredMin = (ses.declaredMin || 0) + add;
+    /* 延長は明示的な意思表示。ここで新しい学習区間が始まる。 */
+    segmentResume(ses);
+    /* 実績へ黙って溶かし込まず、「予定どおりに終わらなかった」事実として別に残す。 */
+    rec.extendedMin = (rec.extendedMin || 0) + add;
+    rec.updatedAt = Date.now();
+    save();
+    renderTimerCard();
+    toast(C.fmtDuration(add) + '延長したよ。いこう！');
+  }
+
+  function openFinishModal(rec, opts) {
+    var o = opts || {};
+    var prog = sessionProgress();
+    var ses = state.activeSession;
+    var sessionMin = prog ? prog.minutes : 0;
+    var base = (ses && typeof ses.baseActualMin === 'number') ? ses.baseActualMin : rec.actualMin;
+    /* APP-440 §1: C ≤ A+E。宣言していない時間は実績にも入らない。
+     * 上限は「開始時点の実績 + このセッションで宣言した時間」まで。 */
+    var declaredMin = prog ? Math.floor(prog.declaredMs / 60000) : 0;
+    var maxActual = Math.min(C.MAX_MIN_PER_RECORD, base + (declaredMin > 0 ? declaredMin : sessionMin));
+    var elapsedMin = sessionMin;
+    var suggested = Math.min(maxActual, base + elapsedMin);
     openModal(
-      '<h3>おつかれさま！記録しよう<button class="icon-btn" id="m-close">✕</button></h3>' +
+      '<h3>' + ((ses && ses.confirmedMin >= 0) ? 'おつかれさま！記録を確かめよう' : 'おつかれさま！記録しよう') +
+      '<button class="icon-btn" id="m-close">✕</button></h3>' +
+      ((ses && ses.confirmedMin >= 0)
+        ? '<p class="small" style="margin-bottom:10px">この時間はもう記録済みだよ。減らしたいときだけ直してね</p>'
+        : '') +
       '<p class="small muted" style="margin-bottom:10px">' + esc(rec.content) + '(計測 ' + C.fmtDuration(elapsedMin) + ')</p>' +
-      '<div class="field"><label for="m-actual">実績時間(分) — 修正できます</label>' +
-      '<input type="number" id="m-actual" min="1" max="720" inputmode="numeric" value="' + suggested + '"></div>' +
+      (rec.extendedMin > 0
+        ? '<p class="small" style="margin-bottom:10px">計画 ' + C.fmtDuration(rec.planMin) +
+          ' ＋ 延長 ' + C.fmtDuration(rec.extendedMin) + '</p>'
+        : '') +
+      '<div class="field"><label for="m-actual">実績時間(分) — 減らす方向に修正できます</label>' +
+      '<input type="number" id="m-actual" min="0" max="' + maxActual + '" inputmode="numeric" value="' + suggested + '"></div>' +
       '<div class="field"><label for="m-refl">振り返り(ひとことでOK)</label>' +
       '<textarea id="m-refl" maxlength="300" placeholder="覚えた！例文とセットで覚えるといい。">' + esc(rec.reflection) + '</textarea></div>' +
       '<button class="btn primary block big" id="m-save">記録を保存する ✓</button>'
@@ -557,17 +895,28 @@
     $('m-close').onclick = closeModal;
     $('m-save').onclick = function () {
       var actual = parseIntSafe($('m-actual').value);
+      /* 宣言済み時間を超える値は受け付けない。増やす方向の修正でBPを稼げないようにする。 */
+      if (actual > maxActual) {
+        toast('宣言した時間(' + C.fmtDuration(maxActual) + ')までだよ', true);
+        $('m-actual').value = maxActual;
+        return;
+      }
       var candidate = Object.assign({}, rec, { actualMin: actual, reflection: $('m-refl').value.trim() });
       var v = C.validateRecord(candidate, state.settings.subjects);
       if (!v.ok) { toast(v.errors[0], true); return; }
       rec.actualMin = actual;
       rec.reflection = candidate.reflection;
       rec.updatedAt = Date.now();
+      if (ses) { segmentClose(ses); applyBoostsOnce(rec, ses); rec.timerUsed = true; }
       state.activeSession = null;
       var grant = grantStudyBP(rec);
+      rec.bpMinInitial = rec.bpMin;
+      var gmap = recalcBpForDate(rec.date);
+      if (gmap[rec.id]) grant = gmap[rec.id];
       save(); closeModal();
       celebrateAfterSave(rec, grant);
       renderToday();
+      if (o.resumeHint) toast('ゆっくり休もう。続けたくなったら、また始められるよ');
     };
   }
 
@@ -681,51 +1030,55 @@
     return studyMultiplierForRecord({ id: '__preview__', date: todayStr(), subjectId: null, actualMin: 0 });
   }
 
-  /* 連続日数・全受験科目ボーナスは「その日1回だけ」の仕様。同じ日に複数回保存しても
-   * 再付与されないよう、付与済みかをstate.dailyBonusesで記録する(Codexレビュー指摘)。 */
-  function dailyBonusGranted(date, key) {
-    return !!(state.dailyBonuses[date] && state.dailyBonuses[date][key]);
-  }
-  function markDailyBonusGranted(date, key) {
-    if (!state.dailyBonuses[date]) state.dailyBonuses[date] = {};
-    state.dailyBonuses[date][key] = true;
-  }
+  /* APP-440 §6: 行動ボーナスの付与は state.dailyBonuses のフラグではなく、
+   * その日の記録から毎回導く(buildActionsForRecord)。
+   * フラグは §5 の再計算で「付与済み」のまま残り、配り直したときに
+   * 連続日数ボーナスが消えていた。既存データとの互換のため
+   * state.dailyBonuses の読み書き自体は残すが、判定には使わない。 */
 
+  /**
+   * APP-440 §6: 行動ボーナスを1日1回に束ねる。
+   *
+   * 「その日に付与済みか」をフラグで覚える方式をやめ、**その日の記録から毎回導く**。
+   * フラグ方式には2つの問題があった。
+   *
+   * 1. 小分け記録の水増しを防げていなかった。計画達成+50・振り返り+10・
+   *    模試+300 は記録1件ごとに付いていた。1分の記録を10件作れば+600BP。
+   * 2. §5の再計算と噛み合わない。いったんBPを0にして配り直すとき、
+   *    フラグは立ったままなので連続日数ボーナスが消えた。
+   *    (実測: 編集しただけで 110BP → 79BP に減っていた)
+   *
+   * 導出方式なら、同じ記録集合からは何度計算しても同じ結果になる。
+   * どの記録に付けるかは C.bpOrder で決まる最初の対象記録に固定する。
+   */
   function buildActionsForRecord(rec) {
-    var actions = [];
-    if (C.isPlanAchieved(rec.planMin, rec.actualMin)) actions.push('planAchieved');
-    if (rec.reflection && rec.reflection.trim()) actions.push('reflection');
+    var dayRecords = C.activeRecords(state.records).filter(function (r) {
+      return r.date === rec.date;
+    });
+    /* 記録がまだ state.records に入っていない場合に備えて自分自身を足す。 */
+    if (!dayRecords.some(function (r) { return r.id === rec.id; })) dayRecords = dayRecords.concat([rec]);
 
+    /* 日単位で決まるボーナス(連続日数・全受験科目)は、その日の最初の記録へ寄せる。 */
+    var dayLevel = [];
     var streak = C.streakDays(state.records, rec.date, state.shop.streakGuardDates);
     var streakKey = streak === 3 ? 'streak3' : streak === 7 ? 'streak7' : streak === 30 ? 'streak30' : null;
-    var streakNewlyGranted = streakKey && !dailyBonusGranted(rec.date, streakKey);
-    if (streakNewlyGranted) actions.push(streakKey);
+    if (streakKey) dayLevel.push(streakKey);
 
     var examIds = subjectExamIds();
-    var allExamNewlyGranted = false;
-    if (examIds.length > 0 && !dailyBonusGranted(rec.date, 'allExamSubjects')) {
+    if (examIds.length > 0) {
       var covered = {};
-      C.activeRecords(state.records).forEach(function (r) {
-        if (r.date === rec.date && r.actualMin > 0) covered[r.subjectId] = true;
-      });
-      if (examIds.every(function (id) { return covered[id]; })) {
-        actions.push('allExamSubjects');
-        allExamNewlyGranted = true;
-      }
+      dayRecords.forEach(function (r) { if (r.actualMin > 0) covered[r.subjectId] = true; });
+      if (examIds.every(function (id) { return covered[id]; })) dayLevel.push('allExamSubjects');
     }
 
-    if (rec.kind === 'テスト' && typeof rec.score === 'number' && typeof rec.maxScore === 'number') {
-      actions.push('mockExamTaken');
-    }
+    var assigned = C.resolveDailyActionBonuses(dayRecords, { dayLevelActions: dayLevel });
+    var actions = (assigned.byRecordId[rec.id] || []).slice();
 
-    /* リズムキープ: 連続日数ボーナスBPを2倍に。その日初めて付与される時だけ倍にする
-     * (2回目以降の記録では既にdailyBonusGrantedがtrueになりactionsに入らない)。 */
-    if (streakNewlyGranted && state.shop.equipped.skill === 'rhythm_keep') {
+    /* リズムキープ: 連続日数ボーナスBPを2倍にする。
+     * その日の担当記録に付いているときだけ重ねるので、他の記録では増えない。 */
+    if (streakKey && actions.indexOf(streakKey) !== -1 && state.shop.equipped.skill === 'rhythm_keep') {
       actions.push(streakKey);
     }
-
-    if (streakNewlyGranted) markDailyBonusGranted(rec.date, streakKey);
-    if (allExamNewlyGranted) markDailyBonusGranted(rec.date, 'allExamSubjects');
     return actions;
   }
 
@@ -735,7 +1088,69 @@
    * 「発動している時間帯だけ」に効くべきなので、ここで実績時間を分割する(Codexレビュー指摘)。
    * 過去日の記録・実績0分には消費アイテムを適用しない(既存仕様どおり)。
    */
-  function buildStudyBPSegments(rec) {
+  /* APP-440 §3: 時間制アイテムは「有効区間」と「実際に使った分」で持つ。
+   * 壁時計の残り時間ではなく、実学習区間との重なりだけを消費する。 */
+  function newTimedBoost(itemId, kind, durationMin) {
+    var now = Date.now();
+    var durationMs = durationMin * 60000;
+    return {
+      id: nextId('ab'), itemId: itemId, kind: kind,
+      expiresAt: now + durationMs,
+      startedAt: now, durationMs: durationMs, consumedMs: 0
+    };
+  }
+
+  /* APP-440 §3: 学習区間の記録。区間が増える入口は
+   * 「開始」と「本人が再開を押したとき」の二つだけにする。 */
+  function segmentStart(ses) { ses.segments = [{ from: Date.now(), to: null }]; }
+
+  function segmentClose(ses, atMs) {
+    if (!ses || !Array.isArray(ses.segments) || !ses.segments.length) return;
+    var last = ses.segments[ses.segments.length - 1];
+    if (last && last.to === null) last.to = (typeof atMs === 'number') ? atMs : Date.now();
+  }
+
+  function segmentResume(ses) {
+    if (!ses) return;
+    if (!Array.isArray(ses.segments)) return;   // 移行中の旧セッションには区間を作らない
+    ses.segments.push({ from: Date.now(), to: null });
+  }
+
+  /* APP-440 §3: 実学習区間とアイテムの有効区間が重なった分だけ消費する。
+   * 記録ごとに一度だけ呼び、結果を rec.bpBoost に残す。
+   * 再計算では消費し直さないので、同じアイテム時間を複数の記録へ再利用できない。 */
+  function consumeTimedBoosts(segments, nowMs) {
+    var out = { timed: [], dayItemIds: [] };
+    if (focusModeActive()) return out;
+    var now = (typeof nowMs === 'number') ? nowMs : Date.now();
+    /* ここで pruneActiveBoosts を先に呼んではいけない。
+     * 保存する時点では期限を過ぎていても、有効だった区間に勉強していれば
+     * その分は倍率の対象である。期限切れの掃除は消費を数え終わってから行う。 */
+    state.shop.activeBoosts.forEach(function (b) {
+      var item = C.consumableById(b.itemId);
+      if (!item) return;
+      /* その日いっぱいのアイテムは、保存時点で有効なものだけ数える。 */
+      if (b.kind === 'day') {
+        /* 1消費1要素。同じスポットライトを2個使っていれば2要素になる。 */
+        if (b.expiresAt > now) out.dayItemIds.push(item.id);
+        return;
+      }
+      if (b.kind !== 'timed' && b.kind !== 'fever') return;
+      if (typeof b.startedAt !== 'number' || typeof b.durationMs !== 'number') return;
+      var r = C.applyTimedBoost({
+        segments: segments, startedAt: b.startedAt, durationMs: b.durationMs,
+        consumedMs: b.consumedMs || 0, now: now
+      });
+      if (r.boostMinutes <= 0) return;
+      b.consumedMs = r.nextConsumedMs;   /* 消費は取り消せない(§3) */
+      out.timed.push({ itemId: item.id, minutes: r.boostMinutes });
+    });
+    pruneActiveBoosts();
+    return out;
+  }
+
+  function buildStudyBPSegments(rec, minutesOverride) {
+    var actualMin = (typeof minutesOverride === 'number') ? minutesOverride : rec.actualMin;
     var prevDay = C.addDays(rec.date, -1);
     var conditionBonus = C.conditionBonusFromHabits(C.calcHabitBP(state.habits[prevDay]));
 
@@ -744,7 +1159,7 @@
      * コンディション(生活習慣, A章)はショップ機能ではないためそのまま適用する。 */
     if (focusModeActive()) {
       var focusMult = C.composeMultiplier({ conditionBonus: conditionBonus }).multiplier;
-      return [{ minutes: rec.actualMin, multiplier: focusMult }];
+      return [{ minutes: actualMin, multiplier: focusMult }];
     }
 
     var shop = state.shop;
@@ -772,60 +1187,52 @@
     var costumeBonus = costumeItem ? costumeItem.bonus : 0;
     var stageBonus = stageItem ? stageItem.bonus : 0;
 
-    if (!isToday || rec.actualMin <= 0) {
+    if (!isToday || actualMin <= 0) {
       var plainMult = C.composeMultiplier({ costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus, conditionBonus: conditionBonus }).multiplier;
-      return [{ minutes: rec.actualMin, multiplier: plainMult }];
+      return [{ minutes: actualMin, multiplier: plainMult }];
     }
 
-    pruneActiveBoosts();
-    var now = Date.now();
-    var actualMin = rec.actualMin;
-    /* 実績時間を「今から経過した分」の並びとみなし、各アイテムの残り有効時間(今からの
-     * 分数)を境界として区切る。フィーバーが効いている区間は他の倍率を無視して10倍(H-4)。
-     * それ以外の区間は、まだ有効なエナジードリンクの倍率を(複数使用時は合算して)適用する。
-     * 「残り時間で平均配分」ではなく実際の区間ごとに計算することで、フィーバーとエナジーが
-     * 重なる場合や複数のエナジードリンクを使った場合でも正しい時間だけに効かせる。 */
-    var feverRemains = [], timedBoosts = [], dayBonus = 0;
-    state.shop.activeBoosts.forEach(function (b) {
-      var item = C.consumableById(b.itemId);
-      if (!item) return;
-      var remain = Math.max(0, (b.expiresAt - now) / 60000);
-      if (remain <= 0) return;
-      if (b.kind === 'fever') feverRemains.push(remain);
-      else if (b.kind === 'day') dayBonus += item.bonus;
-      else if (b.kind === 'timed') timedBoosts.push({ remain: remain, bonus: item.bonus });
-    });
-
-    var boundaries = [0, actualMin];
-    feverRemains.forEach(function (r) { if (r > 0 && r < actualMin) boundaries.push(r); });
-    timedBoosts.forEach(function (t) { if (t.remain > 0 && t.remain < actualMin) boundaries.push(t.remain); });
-    boundaries.sort(function (a, b) { return a - b; });
-    boundaries = boundaries.filter(function (v, i) { return i === 0 || v !== boundaries[i - 1]; });
+    /* APP-440 §3: 時間制アイテムは「実際に勉強した区間との重なり」だけに効く。
+     * 壁時計の残り時間で配るのをやめたので、一時停止して放置しても消費されない。
+     * 消費量は確定時に rec.bpBoost へ記録済み。ここでは読むだけで、再計算しても増減しない。 */
+    var boost = C.sanitizeBpBoost(rec.bpBoost) || { timed: [], dayItemIds: [] };
+    /* 倍率は保存された数値ではなくアイテムの定義から引く。壊れたデータで倍率を作れない。 */
+    var dayBonus = C.dayBonusFromBoost(boost);
+    var baseMult = C.composeMultiplier({
+      costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus,
+      conditionBonus: conditionBonus, consumableBonus: dayBonus
+    }).multiplier;
 
     var segments = [];
-    for (var i = 0; i < boundaries.length - 1; i++) {
-      var segStart = boundaries[i], segEnd = boundaries[i + 1];
-      var segMinutes = segEnd - segStart;
-      if (segMinutes <= 0) continue;
-      var feverHere = feverRemains.some(function (r) { return r > segStart; });
-      var mult;
-      if (feverHere) {
-        mult = C.FEVER_MULTIPLIER;
-      } else {
-        var timedBonusHere = 0;
-        timedBoosts.forEach(function (t) { if (t.remain > segStart) timedBonusHere += t.bonus; });
-        mult = C.composeMultiplier({
-          costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus, conditionBonus: conditionBonus,
-          consumableBonus: dayBonus + timedBonusHere
-        }).multiplier;
-      }
-      segments.push({ minutes: segMinutes, multiplier: mult });
-    }
-    /* boundariesは常に[0, actualMin]を含み(isToday && actualMin>0はここまでに保証済み)、
-     * ループは必ず1つ以上のセグメントを生成するため空になることはない。 */
-    /* 端数丸めで合計が実績時間とズレないよう、最後のセグメントで吸収する。 */
-    var sumMin = segments.reduce(function (s, seg) { return s + seg.minutes; }, 0);
-    segments[segments.length - 1].minutes += (actualMin - sumMin);
+    var remain = actualMin;
+
+    /* フィーバー中は他の倍率をすべて無効化して10倍に置き換える(H-4)。 */
+    boost.timed.forEach(function (t) {
+      var item = C.consumableById(t.itemId);
+      if (!item || item.kind !== 'fever') return;
+      var m = Math.min(remain, t.minutes);
+      if (m <= 0) return;
+      segments.push({ minutes: m, multiplier: C.FEVER_MULTIPLIER });
+      remain -= m;
+    });
+
+    /* エナジードリンクなどの加算は、重なった分数にだけ乗せる。 */
+    boost.timed.forEach(function (t) {
+      var item = C.consumableById(t.itemId);
+      if (!item || item.kind !== 'timed') return;
+      var m = Math.min(remain, t.minutes);
+      if (m <= 0) return;
+      segments.push({
+        minutes: m,
+        multiplier: C.composeMultiplier({
+          costumeBonus: costumeBonus, skillBonus: skillBonus, stageBonus: stageBonus,
+          conditionBonus: conditionBonus, consumableBonus: dayBonus + (item.bonus || 0)
+        }).multiplier
+      });
+      remain -= m;
+    });
+
+    if (remain > 0 || !segments.length) segments.push({ minutes: remain, multiplier: baseMult });
     return segments;
   }
 
@@ -836,7 +1243,20 @@
    * 正しく累積させる(1セグメント目のtodayTotalAfterを2セグメント目の入力にする)。
    */
   function grantStudyBP(rec) {
-    var segments = buildStudyBPSegments(rec);
+    /* APP-440 §1・§5: BPの対象は実績Cではなく D。
+     * D ≤ C ≤ A+E、かつ編集で増えない。 */
+    /* 学習中の記録は、宣言済み時間(計画+延長)が上限として効いている。
+     * ここに初回BP上限まで重ねると、明示的に延長した分が入らなくなる。 */
+    var inProgress = !!(state.activeSession && state.activeSession.recordId === rec.id);
+    var resolved = C.resolveBpMinutes({
+      actualMin: rec.actualMin,
+      planMin: rec.planMin,
+      extendedMin: rec.extendedMin,
+      manualEntry: !rec.timerUsed,
+      previousBpMin: (!inProgress && typeof rec.bpMinInitial === 'number') ? rec.bpMinInitial : null
+    });
+    rec.bpMin = resolved.bpMin;
+    var segments = buildStudyBPSegments(rec, resolved.bpMin);
     var subj = subjectById(rec.subjectId);
     var isExamSubject = subj ? subj.examSubject : true;
     var actions = buildActionsForRecord(rec);
@@ -866,6 +1286,8 @@
       todayNonExamBP = segResult.todayNonExamAfter;
     });
     rec.bp = granted;
+    rec.bpMultiplier = segments.length === 1 ? segments[0].multiplier : 0;
+    rec.bpActions = actions.slice();
     return {
       result: {
         baseBP: baseBP, multipliedBP: multipliedBP, bonusBP: bonusBP, grantedBP: granted,
@@ -873,6 +1295,27 @@
       },
       segments: segments
     };
+  }
+
+  /**
+   * APP-440 §5: その日のBPを決定的に再計算する。
+   *
+   * 上限は「先に来た記録から順に配る」ため、順序が変わると同じデータでも
+   * BPが変わる。配列順・updatedAt・画面の表示順には依存させず、
+   * createdAt昇順 → id昇順(C.bpOrder)で固定する。
+   *
+   * いったん0にしてから配り直すのは、途中の値が次の記録の上限判定に
+   * 混ざらないようにするため。何度呼んでも同じ結果になる。
+   */
+  function recalcBpForDate(dateStr) {
+    var grants = {};
+    if (!dateStr) return grants;
+    var list = C.activeRecords(state.records).filter(function (r) {
+      return r.date === dateStr;
+    }).slice().sort(C.bpOrder);
+    list.forEach(function (r) { r.bp = 0; });
+    list.forEach(function (r) { grants[r.id] = grantStudyBP(r); });
+    return grants;
   }
 
   function showBpResult(grant) {
@@ -899,15 +1342,21 @@
     var subjSel = $('rf-subject');
     var cur = subjSel.value;
     subjSel.innerHTML = subjectOptions(cur);
-    if ($('rf-kind').options.length === 0) $('rf-kind').innerHTML = kindOptions('暗記');
+    // 設定で科目を消した・並べ替えたときは選択が別の科目へ移る。
+    // その場合は学習種別の一覧も作り直す(古い科目の一覧が残らないように)。
+    if ($('rf-kind').options.length === 0 || rfKindSubjectId !== subjSel.value) {
+      $('rf-kind').innerHTML = kindOptions(C.defaultStudyKindFor(subjSel.value), subjSel.value);
+      rfKindSubjectId = subjSel.value;
+    }
     if (!$('rf-date').value) $('rf-date').value = todayStr();
-    $('rf-score-row').style.display = $('rf-kind').value === 'テスト' ? '' : 'none';
+    $('rf-score-row').style.display = $('rf-kind').value === C.TEST_KIND ? '' : 'none';
     renderRecordList();
   }
 
   $('rf-kind').addEventListener('change', function () {
-    $('rf-score-row').style.display = this.value === 'テスト' ? '' : 'none';
+    $('rf-score-row').style.display = this.value === C.TEST_KIND ? '' : 'none';
   });
+  bindKindToSubject('rf-subject', 'rf-kind', 'rf-score-row');
 
   $('record-form').addEventListener('submit', function (e) {
     e.preventDefault();
@@ -924,12 +1373,23 @@
       score: (kind === 'テスト' && scoreV !== '') ? parseIntSafe(scoreV) : null,
       maxScore: (kind === 'テスト' && maxV !== '') ? parseIntSafe(maxV) : null,
       reflection: $('rf-reflection').value.trim(),
-      createdAt: Date.now(), updatedAt: Date.now(), deletedAt: null
+      createdAt: Date.now(), updatedAt: Date.now(), deletedAt: null,
+      /* APP-440 §5: 手入力には宣言済み時間が無いので、作成時の実績を
+       * BPの上限として覚えておく。あとから増やしてもBPは増えない。 */
+      bpMinInitial: parseIntSafe($('rf-actual').value),
+      timerUsed: false
     };
     var v = C.validateRecord(rec, state.settings.subjects);
     if (!v.ok) { toast(v.errors[0], true); return; }
     state.records.push(rec);
-    var grant = rec.actualMin > 0 ? grantStudyBP(rec) : null;
+    /* APP-440 §6: 日単位のボーナス(全受験科目・連続日数)は、最後の1件を
+     * 保存した時点で初めて成立することがある。その日を配り直さないと、
+     * 担当の記録(bpOrderの先頭)に反映されない。 */
+    var grant = null;
+    if (rec.actualMin > 0) {
+      var grants = recalcBpForDate(rec.date);
+      grant = grants[rec.id] || null;
+    }
     save();
     $('rf-content').value = ''; $('rf-plan').value = ''; $('rf-actual').value = '';
     $('rf-score').value = ''; $('rf-maxscore').value = ''; $('rf-reflection').value = '';
@@ -988,8 +1448,8 @@
       '<div class="field"><label>科目</label><select id="m-subject">' + subjectOptions(rec.subjectId) + '</select></div>' +
       '</div>' +
       '<div class="field"><label>内容</label><input type="text" id="m-content" maxlength="100" value="' + esc(rec.content) + '"></div>' +
+      '<div class="field"><label>学習種別</label><select id="m-kind">' + kindOptions(rec.kind, rec.subjectId) + '</select></div>' +
       '<div class="field-row">' +
-      '<div class="field"><label>学習種別</label><select id="m-kind">' + kindOptions(rec.kind) + '</select></div>' +
       '<div class="field"><label>計画(分)</label><input type="number" id="m-plan" min="0" max="720" inputmode="numeric" value="' + rec.planMin + '"></div>' +
       '<div class="field"><label>実績(分)</label><input type="number" id="m-actual" min="0" max="720" inputmode="numeric" value="' + rec.actualMin + '"></div>' +
       '</div>' +
@@ -1002,7 +1462,10 @@
     );
     $('m-close').onclick = closeModal;
     $('m-kind').onchange = function () {
-      $('m-score-row').style.display = this.value === 'テスト' ? 'flex' : 'none';
+      $('m-score-row').style.display = this.value === C.TEST_KIND ? 'flex' : 'none';
+    };
+    $('m-subject').onchange = function () {
+      refreshKindForSubject($('m-kind'), this.value, $('m-score-row'), 'flex');
     };
     $('m-save').onclick = function () {
       var kind = $('m-kind').value;
@@ -1020,19 +1483,65 @@
       });
       var v = C.validateRecord(cand, state.settings.subjects);
       if (!v.ok) { toast(v.errors[0], true); return; }
+      var prevDate = rec.date;
+      var prevBp = rec.bp | 0;
       Object.assign(rec, cand, { updatedAt: Date.now() });
+      /* APP-440 §5: 日付・科目・実績が変わったらBPを再評価する。
+       * 移動前の日も配り直さないと、空いた枠がそのまま残る。 */
+      recalcBpForDate(prevDate);
+      if (rec.date !== prevDate) recalcBpForDate(rec.date);
       save(); closeModal(); renderRecordList(); renderToday();
-      toast('更新したよ！');
+      var diff = (rec.bp | 0) - prevBp;
+      if (diff < 0) toast('更新したよ！(上限の関係でポイントは' + (-diff) + '減ったよ)');
+      else toast('更新したよ！');
     };
   }
 
   function deleteRecord(id) {
     var rec = state.records.find(function (r) { return r.id === id; });
     if (!rec) return;
+
+    /* 学習中の予定は、そのまま消すと未保存の経過時間ごと失われる。
+     * 「タイマーが動き続ける」不具合を「勉強した時間が消える」不具合に
+     * すり替えないよう、削除の入口で止めて先に終わらせてもらう
+     * (Codexレビュー Q4-2)。 */
+    if (state.activeSession && state.activeSession.recordId === id) {
+      var runningMin = Math.floor(sessionElapsedMs() / 60000);
+      openModal(
+        '<h3>いま学習中の予定だよ<button class="icon-btn" id="m-close">✕</button></h3>' +
+        '<p class="small" style="margin-bottom:6px">' +
+        'この予定はいまタイマーが動いていて、' +
+        (runningMin >= 1
+          ? '<b style="color:var(--gold-bright)">' + C.fmtDuration(runningMin) + '</b>ぶんがまだ保存されていないよ。'
+          : 'まだ保存されていない時間があるよ。') +
+        '</p>' +
+        '<p class="small muted" style="margin-bottom:12px">先に終わらせてから消してね。</p>' +
+        '<button class="btn primary block" id="dl-finish">終了して記録する ✓</button>' +
+        '<button class="btn block" id="dl-discard" style="margin-top:8px">記録せずに終了して削除する</button>' +
+        '<button class="btn block" id="dl-cancel" style="margin-top:8px">やめる</button>'
+      );
+      $('m-close').onclick = $('dl-cancel').onclick = closeModal;
+      $('dl-finish').onclick = function () {
+        closeModal();
+        openFinishModal(rec);   // 保存が終われば、あらためて削除できる
+      };
+      $('dl-discard').onclick = function () {
+        state.activeSession = null;
+        save(); closeModal();
+        deleteRecord(id);       // タイマーを止めたので、通常の削除へ進む
+      };
+      return;
+    }
+
     rec.deletedAt = Date.now();
+    /* 削除するとその日の枠が空くので、同じ日の他の記録を配り直す。 */
+    recalcBpForDate(rec.date);
     save(); renderRecordList(); renderToday();
     toast('削除しました(ごみ箱へ移動)', false, '元に戻す', function () {
       rec.deletedAt = null;
+      /* 戻すときも配り直す。空いた枠が既に使われていれば、
+       * 戻ってくるポイントはその分だけ減る。合計は上限を超えない。 */
+      recalcBpForDate(rec.date);
       save(); renderRecordList(); renderToday();
       toast('元に戻したよ！');
     });
@@ -1066,6 +1575,11 @@
         if (!rec) return;
         if (btn.dataset.act === 'restore') {
           rec.deletedAt = null;
+          /* APP-440 §5: ごみ箱からの復元も、トーストの「元に戻す」と同じく
+           * その日を配り直す。削除したときに他の記録へBPを配り直しているので、
+           * ここで配り直さないと、復元記録の古いBPと配り直し済みのBPが共存し、
+           * 日次1,500BP・非受験科目100BP・行動ボーナス1日1回を超える。 */
+          recalcBpForDate(rec.date);
           save(); closeModal(); renderRecordList(); renderToday();
           toast('復元したよ！');
         } else {
@@ -1120,7 +1634,22 @@
     t.addEventListener('click', function () { setRangeMode(t.dataset.range); });
   });
 
+  /* グラフの種類。'time' = 学習時間(従来どおり) / 'bp' = ポイント(APP-470)。
+   * 学習時間のグラフには手を触れず、ポイントは別の描画関数で描く。 */
+  var graphMode = 'time';
+
+  Array.prototype.forEach.call(document.querySelectorAll('#graph-mode-tabs .range-tab'), function (btn) {
+    btn.addEventListener('click', function () {
+      graphMode = btn.getAttribute('data-mode');
+      Array.prototype.forEach.call(document.querySelectorAll('#graph-mode-tabs .range-tab'), function (b) {
+        b.classList.toggle('active', b === btn);
+      });
+      renderGraphScreen();
+    });
+  });
+
   function renderGraphScreen() {
+    if (graphMode === 'bp') return renderBpGraphScreen();
     var days = graph.visibleDays;
     var start = C.addDays(graph.endDate, -(days - 1));
     var series = C.buildSeries(state.records, start, days);
@@ -1162,6 +1691,130 @@
     graph.endDate = todayStr();
     renderGraphScreen();
   });
+
+  /* ポイントのグラフ(APP-470)。
+   * 棒 = その日に獲得したポイント(学習ぶんとニュースぶんの積み上げ)、
+   * 線 = 期間内の累積。日付の範囲・スワイプ操作は学習時間と同じものを使う。 */
+  function renderBpGraphScreen() {
+    var days = graph.visibleDays;
+    var start = C.addDays(graph.endDate, -(days - 1));
+    var series = C.buildBpSeries(state.records, state.news, start, days);
+    var sum = C.summarizeBp(series);
+    var n = function (v) { return (v | 0).toLocaleString('ja-JP'); };
+
+    $('graph-stats').innerHTML =
+      '<div class="stat-chip c-act">獲得合計<b>' + n(sum.total) + '</b></div>' +
+      '<div class="stat-chip c-plan">学習から<b>' + n(sum.studyTotal) + '</b></div>' +
+      '<div class="stat-chip c-rate">ニュースから<b>' + n(sum.newsTotal) + '</b></div>' +
+      '<div class="stat-chip c-cact">最高の1日<b>' + n(sum.best) + '</b></div>' +
+      '<div class="stat-chip c-cplan">記録した日の平均<b>' + n(sum.average) + '</b></div>';
+
+    $('chart-legend').innerHTML =
+      '<span class="lg"><span class="sw" style="background:#d9b24a"></span>学習でもらったBP</span>' +
+      '<span class="lg"><span class="sw" style="background:#4A90D9"></span>ニュースでもらったBP</span>' +
+      '<span class="lg"><span class="ln" style="background:#3b82f6"></span>この期間の累積</span>' +
+      '<span class="lg">いまの残高は上の ⚡ をタップ</span>';
+
+    drawBpChart(series, start, days);
+
+    var todayIn = start <= todayStr() && todayStr() <= graph.endDate;
+    $('btn-goto-today').style.display = todayIn ? 'none' : '';
+    $('day-detail').style.display = 'none';
+    renderEventList();
+  }
+
+  function drawBpChart(series, start, days) {
+    var wrap = $('chart-svg-wrap');
+    var W = Math.max(280, wrap.clientWidth || 340);
+    var isLandscape = window.matchMedia('(orientation: landscape)').matches && window.innerHeight < 500;
+    var H = isLandscape ? Math.max(220, window.innerHeight - 150) : 320;
+    var padL = 44, padR = 44, padT = 14, padB = 34;
+    var plotW = Math.max(10, W - padL - padR);
+    var plotH = Math.max(10, H - padT - padB);
+
+    var maxBar = 0, maxCum = 0;
+    series.forEach(function (d) {
+      if (d.total > maxBar) maxBar = d.total;
+      if (d.cum > maxCum) maxCum = d.cum;
+    });
+    maxBar = niceCeil(maxBar || 100);
+    maxCum = niceCeil(maxCum || 100);
+
+    var slot = plotW / Math.max(1, series.length);
+    var barW = Math.max(3, Math.min(26, slot * 0.6));
+    var svg = '';
+
+    // 目盛り(左=1日の獲得、右=累積)
+    for (var g = 0; g <= 4; g++) {
+      var y = padT + plotH - (plotH * g / 4);
+      svg += '<line x1="' + padL + '" y1="' + y + '" x2="' + (padL + plotW) + '" y2="' + y +
+        '" stroke="#2a2a36" stroke-width="1"/>';
+      svg += '<text x="' + (padL - 6) + '" y="' + (y + 4) + '" text-anchor="end" font-size="10" fill="#9a978f">' +
+        shortNum(maxBar * g / 4) + '</text>';
+      svg += '<text x="' + (padL + plotW + 6) + '" y="' + (y + 4) + '" font-size="10" fill="#3b82f6">' +
+        shortNum(maxCum * g / 4) + '</text>';
+    }
+
+    // 棒(学習ぶんの上にニュースぶんを積む)
+    series.forEach(function (d, i) {
+      var cx = padL + slot * i + slot / 2;
+      var x = cx - barW / 2;
+      var yBase = padT + plotH;
+      var hStudy = maxBar ? (d.study / maxBar) * plotH : 0;
+      var hNews = maxBar ? (d.news / maxBar) * plotH : 0;
+      if (hStudy > 0) {
+        svg += '<rect x="' + x + '" y="' + (yBase - hStudy) + '" width="' + barW + '" height="' + hStudy +
+          '" rx="2" fill="#d9b24a"/>';
+      }
+      if (hNews > 0) {
+        svg += '<rect x="' + x + '" y="' + (yBase - hStudy - hNews) + '" width="' + barW + '" height="' + hNews +
+          '" rx="2" fill="#4A90D9"/>';
+      }
+    });
+
+    // 累積の線
+    var pts = series.map(function (d, i) {
+      var cx = padL + slot * i + slot / 2;
+      var y = padT + plotH - (maxCum ? (d.cum / maxCum) * plotH : 0);
+      return cx.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    svg += '<polyline points="' + pts + '" fill="none" stroke="#3b82f6" stroke-width="2" ' +
+      'stroke-linejoin="round" stroke-linecap="round"/>';
+
+    // 「今日」の目印(学習時間のグラフと揃える)
+    var todayIdx = -1;
+    series.forEach(function (d, i) { if (d.date === todayStr()) todayIdx = i; });
+    if (todayIdx >= 0) {
+      var tx = padL + slot * todayIdx + slot / 2;
+      svg += '<line x1="' + tx + '" y1="' + padT + '" x2="' + tx + '" y2="' + (padT + plotH) +
+        '" stroke="#333" stroke-width="1" stroke-dasharray="4 3"/>';
+      svg += '<rect x="' + (tx - 18) + '" y="' + (padT - 2) + '" width="36" height="15" rx="3" fill="#1b1b25"/>';
+      svg += '<text x="' + tx + '" y="' + (padT + 9) + '" text-anchor="middle" font-size="9" fill="#f0c75e">今日</text>';
+    }
+
+    // 日付ラベル(間引く)
+    var step = Math.max(1, Math.ceil(series.length / 7));
+    series.forEach(function (d, i) {
+      if (i % step !== 0 && i !== series.length - 1) return;
+      var cx = padL + slot * i + slot / 2;
+      svg += '<text x="' + cx + '" y="' + (padT + plotH + 16) + '" text-anchor="middle" font-size="9" fill="#9a978f">' +
+        d.date.slice(5).replace('-', '/') + '</text>';
+    });
+
+    wrap.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H +
+      '" role="img" aria-label="ポイントの推移">' + svg + '</svg>';
+  }
+
+  function niceCeil(v) {
+    if (v <= 0) return 1;
+    var mag = Math.pow(10, Math.floor(Math.log(v) / Math.LN10));
+    return Math.ceil(v / mag) * mag;
+  }
+
+  function shortNum(v) {
+    v = Math.round(v);
+    return v >= 10000 ? (Math.round(v / 100) / 10) + '万' : v.toLocaleString('ja-JP');
+  }
 
   function drawChart(series, start, days) {
     var ax = state.settings.axis;
@@ -1672,8 +2325,18 @@
     state.news.splice(idx, 1);
     save(); renderWorldScreen();
     toast('削除しました', false, '元に戻す', function () {
-      state.news.splice(idx, 0, removed);
+      /* APP-440 §4: 復元も追加と同じ判定を通す。
+       * ここを素通しにすると、削除 → 別のニュースを追加 → 元に戻す で
+       * BP付きが4本になり、1日3本の上限を回り込める。 */
+      var restored = Object.assign({}, removed);
+      var hadBp = (removed.bp | 0) > 0;
+      var slotFree = C.canGrantNewsBp(state.news, restored.date);
+      if (hadBp && !slotFree) restored.bp = 0;
+      state.news.splice(idx, 0, restored);
       save(); renderWorldScreen();
+      if (hadBp && !slotFree) {
+        toast('戻したよ。ただし今日は' + C.NEWS_DAILY_LIMIT + '本ぶんのポイントが埋まっているので、ポイントは戻りません');
+      }
     });
   }
 
@@ -1681,7 +2344,7 @@
 
   function openNewsFormModal() {
     var today = todayNews();
-    var remaining = Math.max(0, C.NEWS_DAILY_LIMIT - today.length);
+    var remaining = Math.max(0, C.NEWS_DAILY_LIMIT - C.bpNewsCountForDate(state.news, todayStr()));
     openModal(
       '<h3>今日のニュースを記録<button class="icon-btn" id="m-close">✕</button></h3>' +
       (remaining > 0
@@ -1707,10 +2370,13 @@
       };
       var v = C.validateNewsEntry(entry);
       if (!v.ok) { toast(v.errors[0], true); return; }
+      /* APP-440 §4: 上限は総本数ではなく「BPが付いている本数」で数える。
+       * 総本数で数えると、ポイントの付かない4本目以降が枠を埋めてしまい、
+       * 1本消しても枠が戻らない。 */
       var result = C.calcNewsBP({
         genreId: entry.genreId,
         faculties: selectedFacultyIds(),
-        todayCount: today.length
+        todayCount: C.bpNewsCountForDate(state.news, entry.date)
       });
       entry.bp = result.bp;
       state.news.push(entry);
@@ -1985,9 +2651,9 @@
         toast('フィーバータイムは週1回までだよ', true); return;
       }
       state.shop.feverLastUsedDate = todayStr();
-      state.shop.activeBoosts.push({ id: nextId('ab'), itemId: itemId, kind: 'fever', expiresAt: Date.now() + item.durationMin * 60000 });
+      state.shop.activeBoosts.push(newTimedBoost(itemId, 'fever', item.durationMin));
     } else if (item.kind === 'timed') {
-      state.shop.activeBoosts.push({ id: nextId('ab'), itemId: itemId, kind: 'timed', expiresAt: Date.now() + item.durationMin * 60000 });
+      state.shop.activeBoosts.push(newTimedBoost(itemId, 'timed', item.durationMin));
     } else if (item.kind === 'day') {
       var endOfDay = new Date();
       endOfDay.setHours(23, 59, 59, 999);
@@ -2006,15 +2672,31 @@
     renderBoostCard();
   }
 
+  /* 開いたパネルを画面内に送る(APP-461)。
+   * パネルはボタンより下、装備・ショップカードのさらに後ろに置かれているため、
+   * 画面の外で開いていた。ボタンを押しても何も変わらないように見え、
+   * 「ボタンが反応しない」「メッセージが入力できない」という不具合になっていた。 */
+  function revealPanel(el) {
+    if (!el || el.style.display === 'none') return;
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    try {
+      el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    } catch (e) {
+      el.scrollIntoView(true);   // 古いブラウザ向け
+    }
+  }
+
   $('btn-pose').addEventListener('click', function () {
     var p = $('pose-panel');
     p.style.display = p.style.display === 'none' ? '' : 'none';
     $('chat-panel').style.display = 'none';
+    revealPanel(p);
   });
   $('btn-chat').addEventListener('click', function () {
     var p = $('chat-panel');
     p.style.display = p.style.display === 'none' ? '' : 'none';
     $('pose-panel').style.display = 'none';
+    revealPanel(p);
     if (p.style.display !== 'none') {
       renderChatLog();
       renderQuickAsks();
@@ -2272,6 +2954,7 @@
     if (panel === 'ai') return openAIPanel();
     if (panel === 'axis') return openAxisModal();
     if (panel === 'data') return openDataPanel();
+    if (panel === 'report') return openReportPanel();
     if (panel === 'about') return openAboutPanel();
   }
 
@@ -2606,9 +3289,140 @@
     };
   }
 
+  /* ================= 不具合の報告(APP-461) =================
+   * 外部通信ゼロのため、アプリから送信はしない。
+   * 状況が分かる定型文を組み立ててコピーし、親がLINEやGitHubへ貼れるようにする。 */
+
+  function buildReportText(userText) {
+    var lines = [];
+    lines.push('【IBUKI STUDY BEAT 不具合レポート】');
+    lines.push('');
+    lines.push('■ 何が起きたか');
+    lines.push(userText && userText.trim() ? userText.trim() : '(未記入)');
+    lines.push('');
+    lines.push('■ 環境(自動で入ります)');
+    lines.push('アプリ版: ver.' + APP_VERSION + ' (' + BUILD_DATE + ')');
+    lines.push('発生日時: ' + new Date().toLocaleString('ja-JP'));
+    lines.push('画面幅: ' + window.innerWidth + ' x ' + window.innerHeight);
+    lines.push('ホーム画面から起動: ' +
+      (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches ? 'はい' : 'いいえ'));
+    lines.push('端末: ' + (navigator.userAgent || '不明').slice(0, 160));
+    lines.push('オフライン対応: ' + ('serviceWorker' in navigator ? '有効' : '無効'));
+    lines.push('');
+    lines.push('■ データの規模(中身は含みません)');
+    try {
+      lines.push('学習記録: ' + (state.records || []).filter(function (r) { return !r.deletedAt; }).length + '件');
+      lines.push('ニュース: ' + (state.news || []).length + '件');
+      lines.push('受験イベント: ' + (state.events || []).length + '件');
+      lines.push('科目: ' + (state.settings.subjects || []).length + '件');
+      lines.push('保存容量: 約' + Math.round((localStorage.getItem(KEY) || '').length / 1024) + ' KB');
+    } catch (e) {
+      lines.push('(データの読み取りに失敗しました)');
+    }
+    lines.push('');
+    lines.push('※ 学習内容・振り返りの本文は含めていません。');
+    return lines.join('\n');
+  }
+
+  function openReportPanel() {
+    openModal(
+      '<h3>不具合を報告する<button class="icon-btn" id="m-close">✕</button></h3>' +
+      '<div class="small" style="line-height:1.8;margin-bottom:10px">' +
+      'うまく動かないところを書いて「コピーする」を押すと、報告用の文章ができます。' +
+      'LINEやメールに貼って送ってね。<br>' +
+      '<b>学習の内容や振り返りの中身は入りません。</b>' +
+      '</div>' +
+      '<div class="field"><label>どこで、何が起きた?</label>' +
+      '<textarea id="rp-text" maxlength="500" rows="4" ' +
+      'placeholder="例: コーチのメッセージボタンを押しても何も出てこない"></textarea></div>' +
+      '<div class="field"><label>送られる内容(自動)</label>' +
+      '<pre id="rp-preview" class="report-preview"></pre></div>' +
+      '<button class="btn primary block" id="rp-send">📤 LINEなどで送る</button>' +
+      '<button class="btn block" id="rp-copy" style="margin-top:8px">📋 コピーする</button>' +
+      '<div class="small" style="margin-top:10px;line-height:1.8">' +
+      '「送る」を押すと共有画面が出るので、LINEを選んでね。' +
+      '出てこないときは「コピーする」で写して、LINEに貼り付けてね。' +
+      '</div>'
+    );
+    $('m-close').onclick = closeModal;
+    function refresh() { $('rp-preview').textContent = buildReportText($('rp-text').value); }
+    $('rp-text').addEventListener('input', refresh);
+    refresh();
+    $('rp-copy').onclick = function () {
+      copyToClipboard(buildReportText($('rp-text').value)).then(function (okCopy) {
+        toast(okCopy ? 'コピーしたよ！LINEなどに貼り付けてね' : 'コピーできなかった。長押しで選んでコピーしてね', !okCopy);
+      });
+    };
+    $('rp-send').onclick = function () { shareReport(buildReportText($('rp-text').value)); };
+  }
+
+  /* 報告文を端末の共有画面へ渡す(APP-470)。
+   * アプリ自身は通信しない。文章をiOSの共有シートへ渡すだけで、
+   * どこへ送るかは本人がその場で選ぶ(LINE・メールなど)。
+   * 共有が使えない環境ではコピーに落とす。 */
+  function shareReport(text) {
+    if (navigator.share) {
+      navigator.share({ title: 'IBUKI STUDY BEAT 不具合レポート', text: text })
+        .catch(function (e) {
+          // 本人が共有画面を閉じただけのときは何も言わない
+          if (e && e.name === 'AbortError') return;
+          fallbackShare(text);
+        });
+      return;
+    }
+    fallbackShare(text);
+  }
+
+  function fallbackShare(text) {
+    copyToClipboard(text).then(function (okCopy) {
+      toast(okCopy
+        ? 'この端末では共有画面が使えないよ。コピーしたからLINEに貼り付けてね'
+        : 'コピーできなかった。長押しで選んでコピーしてね', !okCopy);
+    });
+  }
+
+  /* ================= アップデートのお知らせ(APP-461) =================
+   * 新しい版が届いたら、設定タブに赤い点を出す。
+   * ホーム画面のアイコン自体へのバッジは、iOSでは通知の許可が要るため
+   * 使える場合だけ静かに付ける(許可は求めない)。 */
+
+  var updateWaiting = false;
+  var pendingUpdateWorker = null;
+
+  function setUpdateBadge(on) {
+    updateWaiting = !!on;
+    var btn = document.querySelector('.nav-btn[data-screen="settings"]');
+    if (btn) btn.classList.toggle('has-update', updateWaiting);
+    var item = document.querySelector('.settings-item[data-panel="about"] .dot');
+    if (item) item.remove();
+    if (updateWaiting) {
+      var about = document.querySelector('.settings-item[data-panel="about"]');
+      if (about) {
+        var d = document.createElement('span');
+        d.className = 'dot';
+        about.insertBefore(d, about.querySelector('.chev'));
+      }
+    }
+    /* setAppBadge は Promise を返す。許可の無い環境では拒否されるため、
+     * 同期の try だけでは拾えない。両方で握りつぶす。 */
+    try {
+      var op = updateWaiting
+        ? (navigator.setAppBadge && navigator.setAppBadge(1))
+        : (navigator.clearAppBadge && navigator.clearAppBadge());
+      if (op && typeof op.catch === 'function') op.catch(function () { /* 許可なし */ });
+    } catch (e) { /* 使えない環境では何もしない */ }
+  }
+
   function openAboutPanel() {
+    var updateBlock = updateWaiting
+      ? '<div class="field" style="margin-bottom:12px">' +
+        '<button class="btn primary block" id="ab-update">🔄 いますぐ更新する</button>' +
+        '<div class="small" style="margin-top:6px">新しいバージョンが届いています。学習の記録は消えません。</div>' +
+        '</div>'
+      : '';
     openModal(
       '<h3>サポート・ヘルプ<button class="icon-btn" id="m-close">✕</button></h3>' +
+      updateBlock +
       '<div class="small" style="line-height:1.9">' +
       '<b>IBUKI STUDY BEAT</b> ver. ' + APP_VERSION + '<br>' +
       '一歩一歩が、未来のステージをつくる。<br><br>' +
@@ -2621,10 +3435,28 @@
       '</div>'
     );
     $('m-close').onclick = closeModal;
+    if (updateWaiting && $('ab-update')) {
+      $('ab-update').onclick = function () {
+        if (!pendingUpdateWorker) { toast('更新の準備ができていないよ。少し待ってね', true); return; }
+        // 待機していた版が失効していることがある。その場合は赤い点を残し、
+        // 画面を閉じずに次の手順を伝える(更新できないまま行き止まりにしない)。
+        try {
+          pendingUpdateWorker.postMessage({ type: 'SKIP_WAITING' });
+        } catch (e) {
+          pendingUpdateWorker = null;
+          toast('更新できなかったよ。アプリを閉じてもう一度開いてね', true);
+          return;
+        }
+        toast('更新中…少し待ってね');
+        setUpdateBadge(false);
+        closeModal();
+      };
+    }
   }
 
   /* ================= 起動 ================= */
   function renderAll() {
+    renderBpBalance();
     renderToday();
     renderRecordScreen();
     if (currentScreen === 'graph') renderGraphScreen();
@@ -2678,6 +3510,11 @@
   }
 
   /* --- アップデート検知(Service Worker) --- */
+
+  /* 受け入れ試験から更新バッジの表示を確認するための入口。
+   * Service Workerの更新は試験環境で再現しづらいため、ここだけ公開する。 */
+  window.__isbSetUpdateBadge = setUpdateBadge;
+
   function setupServiceWorker() {
     if (!('serviceWorker' in navigator) || location.protocol !== 'https:') return;
 
@@ -2692,6 +3529,8 @@
     navigator.serviceWorker.register('sw.js').then(function (reg) {
       function offerUpdate(worker) {
         if (!worker) return;
+        setUpdateBadge(true);
+        pendingUpdateWorker = worker;
         showCenterMessage({
           img: 'cele_streak7.png',
           title: '新しいバージョンがあるよ！',
@@ -2700,6 +3539,7 @@
           buttonLabel: '🔄 いますぐ更新する',
           onConfirm: function () {
             toast('更新中…少し待ってね');
+            setUpdateBadge(false);
             worker.postMessage({ type: 'SKIP_WAITING' });
           }
         });
@@ -2730,8 +3570,13 @@
     $('app-version').textContent = 'ver. ' + APP_VERSION;
     $('app-build').textContent = '更新日 ' + BUILD_DATE + ' ・ 更新 ' + BUILD_UPDATER + ' ・ モデル ' + BUILD_MODEL;
     $('rf-date').value = todayStr();
-    $('rf-kind').innerHTML = kindOptions('暗記');
     $('rf-subject').innerHTML = subjectOptions();
+    $('rf-kind').innerHTML = kindOptions(
+      C.defaultStudyKindFor($('rf-subject').value), $('rf-subject').value);
+    rfKindSubjectId = $('rf-subject').value;
+    /* 前回の更新通知が残っていることがあるため、起動時にいったん消す。
+     * 本当に待機中の版があれば、この直後の setupServiceWorker が付け直す。 */
+    setUpdateBadge(false);
     renderToday();
     showWelcomeMessage();
     if (storageWarning) toast(storageWarning, true);
