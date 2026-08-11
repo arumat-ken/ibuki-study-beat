@@ -550,8 +550,20 @@
     var card = $('timer-card');
     clearInterval(timerInterval);
     if (!state.activeSession) { card.style.display = 'none'; return; }
-    var rec = state.records.find(function (r) { return r.id === state.activeSession.recordId; });
-    if (!rec) { state.activeSession = null; save(); card.style.display = 'none'; return; }
+    // 削除された予定は「無い」ものとして扱う(APP-471)。
+    // deletedAt を見ないと、ごみ箱に入れた予定のままタイマーが動き続け、
+    // 終了しても記録が削除済みのまま保存されて画面に出てこない。
+    var rec = state.records.find(function (r) {
+      return r.id === state.activeSession.recordId && !r.deletedAt;
+    });
+    if (!rec) {
+      // 学習中の予定が記録画面から削除された場合。黙って消さず、理由を伝える(APP-471)。
+      state.activeSession = null;
+      save();
+      card.style.display = 'none';
+      toast('学習中だった予定が削除されたので、タイマーを止めたよ', true);
+      return;
+    }
     var sub = subjectById(rec.subjectId);
     var paused = !!state.activeSession.pausedAt;
     card.style.display = '';
@@ -585,16 +597,38 @@
     };
     $('btn-finish').onclick = function () { openFinishModal(rec); };
     $('btn-discard').onclick = function () {
+      // 何分ぶんが消えるのかを具体的に見せる(APP-471)。
+      // 「保存されません」だけでは、失う量が本人に分からない。
+      var lostMin = Math.floor(sessionElapsedMs() / 60000);
+      var lostText = lostMin >= 1
+        ? '<b style="color:var(--gold-bright)">' + C.fmtDuration(lostMin) + '</b>ぶんの記録が消えます。'
+        : 'まだ1分たっていないので、消えるのは0分です。';
       openModal(
         '<h3>記録せずにやめる<button class="icon-btn" id="m-close">✕</button></h3>' +
-        '<p class="small" style="margin-bottom:12px">今回の学習時間は保存されません。よろしいですか？</p>' +
+        '<p class="small" style="margin-bottom:6px">' + lostText + '</p>' +
+        '<p class="small muted" style="margin-bottom:12px">' +
+        'ここでやめても、あとで「元に戻す」で戻せるよ。' +
+        '勉強した時間を残したいなら「戻る」→「終了する ✓」を押してね。</p>' +
         '<div class="btn-row"><button class="btn" id="m-cancel">戻る</button>' +
         '<button class="btn danger" id="m-ok">記録せずにやめる</button></div>'
       );
       $('m-close').onclick = $('m-cancel').onclick = closeModal;
       $('m-ok').onclick = function () {
+        // 取り消せるように、やめた内容を控えておく(APP-471)
+        var discarded = state.activeSession;
         state.activeSession = null;
         save(); closeModal(); renderToday();
+        toast(lostMin >= 1 ? C.fmtDuration(lostMin) + 'を記録せずにやめたよ' : '記録せずにやめたよ',
+          false, '元に戻す', function () {
+            // 元の記録がまだあるときだけ戻す
+            var still = state.records.find(function (r) {
+              return r.id === discarded.recordId && !r.deletedAt;
+            });
+            if (!still) { toast('元の予定が見つからないので戻せなかったよ', true); return; }
+            state.activeSession = discarded;
+            save(); renderToday();
+            toast('学習を再開したよ！');
+          });
       };
     };
   }

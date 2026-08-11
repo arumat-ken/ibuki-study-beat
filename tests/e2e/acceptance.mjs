@@ -1620,6 +1620,95 @@ async function test16_bpChipAndGraph() {
   await page.click('#m-close');
 }
 
+async function test17_sessionGuards() {
+  console.log('\n■ 試験17: 学習セッションを不用意に失わないためのガード(APP-471)');
+  await freshPage(true);
+
+  async function startAndAge(name, minutes) {
+    await nav('today');
+    await page.click('#btn-start-study');
+    await page.waitForSelector('#modal-back.open');
+    await page.selectOption('#m-subject', { label: '英語' });
+    await page.fill('#m-content', name);
+    await page.fill('#m-plan', '60');
+    await page.click('#m-save');
+    await page.waitForSelector('#timer-card:visible');
+    await page.evaluate((m) => {
+      const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+      st.activeSession.startTs -= m * 60 * 1000;
+      localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+    }, minutes);
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector('#timer-card:visible');
+  }
+
+  /* --- 画面を移動しても、アプリを閉じても続く --- */
+  await startAndAge('継続の検証', 45);
+  for (const sc of ['record', 'graph', 'world', 'coach', 'settings', 'today']) {
+    await nav(sc);
+    await page.waitForTimeout(80);
+  }
+  ok('17-1 アプリ内で画面を移動してもタイマーが続く', await page.isVisible('#timer-card'));
+
+  await page.goto(BASE + '/glossary/', { waitUntil: 'domcontentloaded' }).catch(() => {});
+  await page.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+  ok('17-2 別のページへ行って戻ってもタイマーが続く', await page.isVisible('#timer-card'));
+
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+  const elapsed = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return st.activeSession ? Math.floor((Date.now() - st.activeSession.startTs) / 60000) : null;
+  });
+  ok('17-3 開き直しても経過時間が保たれる(裏で進む)', elapsed === 45, String(elapsed));
+
+  /* --- やめるときに何分消えるか見せる --- */
+  await page.click('#btn-discard');
+  await page.waitForSelector('#m-ok');
+  const dlg = (await page.textContent('#modal-back')).replace(/\s+/g, '');
+  ok('17-4 失う時間を具体的に示す(45分)', dlg.includes('45分'), dlg.slice(0, 50));
+  ok('17-5 取り消せることを案内する', dlg.includes('元に戻す'));
+
+  /* --- やめても取り消せる --- */
+  await page.click('#m-ok');
+  await page.waitForTimeout(400);
+  ok('17-6 やめるとタイマーが消える', !(await page.isVisible('#timer-card')));
+  ok('17-7 取り消しボタン付きの知らせが出る',
+    (await page.textContent('#toast')).includes('元に戻す'));
+  await page.click('#toast-action');
+  await page.waitForTimeout(500);
+  ok('17-8 取り消すとタイマーが戻る', await page.isVisible('#timer-card'));
+  const back = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return st.activeSession ? Math.floor((Date.now() - st.activeSession.startTs) / 60000) : null;
+  });
+  ok('17-9 取り消すと経過時間もそのまま戻る', back === 45, String(back));
+
+  /* --- 学習中の予定を消したら、黙って止めずに理由を伝える --- */
+  await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const r = st.records.find((x) => x.id === st.activeSession.recordId);
+    r.deletedAt = Date.now();
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(700);
+  ok('17-10 削除済みの予定でタイマーが動き続けない', !(await page.isVisible('#timer-card')));
+  ok('17-11 止めた理由を知らせる',
+    (await page.textContent('#toast')).includes('削除された'),
+    (await page.textContent('#toast')).replace(/\s+/g, ' ').slice(0, 40));
+  const cleared = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession);
+  ok('17-12 セッションが残らない', cleared === null, JSON.stringify(cleared));
+
+  /* 「取り消しを押したときに元の予定が消えていた場合」の分岐は、
+   * 知らせが出ている数秒のあいだに予定を削除する必要があり、画面操作では再現できない。
+   * 防御用のコードとして残すが、自動試験の対象からは外す。 */
+
+  await shot('68-session-guard');
+}
+
 async function extra_screens() {
   console.log('\n■ 追加: 全画面スクリーンショットとコーチ・320px幅・横向き');
   await freshPage(true);
@@ -1708,6 +1797,7 @@ try {
   await test14_subjectStudyKinds();
   await test15_coachPanelsAndReport();
   await test16_bpChipAndGraph();
+  await test17_sessionGuards();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);
