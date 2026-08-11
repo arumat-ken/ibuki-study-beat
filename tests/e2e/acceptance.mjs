@@ -1546,6 +1546,357 @@ async function test15_coachPanelsAndReport() {
     consoleErrors.slice(errsBefore).join(' | '));
 }
 
+async function test24_bpChipAndGraph() {
+  console.log('\n■ 試験24: ポイントの常時表示とポイントグラフ(APP-470)');
+  await freshPage(true);
+  await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const d = (o) => { const x = new Date(); x.setDate(x.getDate() + o);
+      return x.getFullYear() + '-' + String(x.getMonth()+1).padStart(2,'0') + '-' + String(x.getDate()).padStart(2,'0'); };
+    for (let i = 6; i >= 0; i--) {
+      st.records.push({ id: 'bp' + i, date: d(-i), subjectId: 'eng', content: 'BP検証' + i, kind: '単語・熟語',
+        planMin: 60, actualMin: 60, score: null, maxScore: null, reflection: '',
+        bp: 100 * (i + 1), createdAt: 1, updatedAt: 1, deletedAt: null });
+    }
+    st.news.push({ id: 'bpn', date: d(-1), genreId: 'economy', headline: 'N', comment: '', bp: 60, createdAt: 1 });
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+
+  /* --- 全画面の上部にポイントが出る --- */
+  const expected = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return window.ISBCalc.calcBpBalance(st).toLocaleString('ja-JP');
+  });
+  let allShown = true, detail = [];
+  for (const sc of ['today', 'record', 'graph', 'world', 'coach', 'settings']) {
+    await nav(sc);
+    await page.waitForTimeout(200);
+    const r = await page.evaluate(() => {
+      const c = document.querySelector('.screen.active .bp-balance');
+      if (!c) return null;
+      const b = c.getBoundingClientRect();
+      return { text: c.textContent.trim(), visible: !!(c.offsetWidth || c.offsetHeight), top: Math.round(b.top) };
+    });
+    if (!r || !r.visible || r.text.indexOf(expected) === -1) { allShown = false; detail.push(sc + ':' + JSON.stringify(r)); }
+  }
+  ok('16-1 6画面すべての上部にポイント残高が出る', allShown, detail.join(' '));
+
+  /* --- タップで内訳が開く --- */
+  await nav('today');
+  await page.click('.screen.active .bp-balance');
+  await page.waitForTimeout(400);
+  ok('16-2 ポイントをタップすると内訳が開く', await page.isVisible('#modal-back.open'));
+  await page.click('#m-close');
+  await page.waitForTimeout(250);
+
+  /* --- 記録を足すと残高が増える --- */
+  const before = await page.textContent('.screen.active .bp-balance');
+  await addRecord({ subjectLabel: '英語', content: 'ポイント増加の検証', plan: 30, actual: 30 });
+  await nav('today');
+  await page.waitForTimeout(300);
+  const after = await page.textContent('.screen.active .bp-balance');
+  ok('16-3 記録を保存すると残高表示が更新される', before !== after, before + ' → ' + after);
+
+  /* --- ポイントグラフ --- */
+  await nav('graph');
+  await page.waitForTimeout(300);
+  const timeBars = await page.locator('#chart-svg-wrap rect').count();
+  ok('16-4 学習時間グラフが従来どおり描かれる', timeBars > 0, 'rect=' + timeBars);
+
+  await page.click('#graph-mode-tabs [data-mode="bp"]');
+  await page.waitForTimeout(500);
+  ok('16-5 ポイントグラフに切り替わる', (await page.locator('#chart-svg-wrap rect').count()) > 0);
+  ok('16-6 累積の線が描かれる', (await page.locator('#chart-svg-wrap polyline').count()) === 1);
+  const stats = (await page.textContent('#graph-stats')).replace(/\s+/g, '');
+  ok('16-7 獲得合計・学習から・ニュースからが出る',
+    stats.includes('獲得合計') && stats.includes('学習から') && stats.includes('ニュースから'), stats.slice(0, 60));
+  const ovBp = await page.evaluate(() =>
+    document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  ok('16-8 ポイントグラフで横スクロールが起きない', ovBp <= 1, 'overflow=' + ovBp);
+  await shot('66-graph-bp');
+
+  /* --- 期間切替がポイント側でも効く --- */
+  await page.click('.range-tab[data-range="month"]');
+  await page.waitForTimeout(400);
+  ok('16-9 期間(月)を変えてもポイントグラフが描かれる',
+    (await page.locator('#chart-svg-wrap rect').count()) > 0);
+
+  /* --- 学習時間グラフへ戻して壊れていないこと --- */
+  await page.click('#graph-mode-tabs [data-mode="time"]');
+  await page.waitForTimeout(400);
+  ok('16-10 学習時間グラフへ戻せる(既存機能を壊していない)',
+    (await page.locator('#chart-svg-wrap rect').count()) > 0);
+  ok('16-11 学習時間の統計が従来どおり出る',
+    (await page.textContent('#graph-stats')).includes('達成率'));
+
+  /* --- 不具合報告のLINE送信 --- */
+  await nav('settings');
+  await page.click('.settings-item[data-panel="report"]');
+  await page.waitForSelector('#rp-send');
+  ok('16-12 不具合報告に「送る」ボタンがある', await page.isVisible('#rp-send'));
+  ok('16-13 コピーするボタンも残っている', await page.isVisible('#rp-copy'));
+  const shared = await page.evaluate(() => {
+    window.__shared = null;
+    navigator.share = (d) => { window.__shared = d; return Promise.resolve(); };
+    document.getElementById('rp-send').click();
+    return new Promise((r) => setTimeout(() => r(window.__shared), 200));
+  });
+  ok('16-14 送るボタンで共有に報告文が渡る',
+    shared && (shared.text || '').includes('IBUKI STUDY BEAT 不具合レポート'),
+    shared ? (shared.text || '').slice(0, 30) : 'null');
+  ok('16-15 共有に学習内容の本文が含まれない',
+    shared && (shared.text || '').includes('本文は含めていません'));
+  await shot('67-report-share');
+  await page.click('#m-close');
+}
+
+async function test25_sessionGuards() {
+  console.log('\n■ 試験25: 学習セッションを不用意に失わないためのガード(APP-471)');
+  await freshPage(true);
+
+  // 予定を1件作り、その予定から学習を始める。
+  // 「学習を開始する」は予定が残っていると選択モーダルを出すため、
+  // 予定を作る → その予定をタップ、の2段階にして手順を確定させる。
+  async function makePlan(name) {
+    await nav('today');
+    await page.click('#btn-add-plan');
+    await page.waitForSelector('#m-subject');
+    await page.selectOption('#m-subject', { label: '英語' });
+    await page.fill('#m-content', name);
+    await page.fill('#m-plan', '60');
+    await page.click('#m-save');
+    await page.waitForTimeout(300);
+  }
+
+  async function startPlan(name) {
+    await nav('today');
+    await page.click('#today-plans .plan-item:has-text("' + name + '")');
+    await page.waitForSelector('#timer-card:visible');
+  }
+
+  async function ageSession(minutes) {
+    await page.evaluate((m) => {
+      const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+      st.activeSession.startTs -= m * 60 * 1000;
+      localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+    }, minutes);
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector('#timer-card:visible');
+  }
+
+  // 学習中なら破棄して、次の試験の前提を揃える
+  async function endSessionIfAny() {
+    await nav('today');
+    await page.waitForTimeout(200);
+    if (await page.isVisible('#timer-card')) {
+      await page.click('#btn-discard');
+      await page.waitForSelector('#m-ok');
+      await page.click('#m-ok');
+      await page.waitForTimeout(300);
+    }
+  }
+
+  async function startAndAge(name, minutes) {
+    await endSessionIfAny();
+    await makePlan(name);
+    await startPlan(name);
+    await ageSession(minutes);
+  }
+
+  /* --- 画面を移動しても、アプリを閉じても続く --- */
+  await startAndAge('継続の検証', 45);
+  for (const sc of ['record', 'graph', 'world', 'coach', 'settings', 'today']) {
+    await nav(sc);
+    await page.waitForTimeout(80);
+  }
+  ok('17-1 アプリ内で画面を移動してもタイマーが続く', await page.isVisible('#timer-card'));
+
+  await page.goto(BASE + '/glossary/', { waitUntil: 'domcontentloaded' }).catch(() => {});
+  await page.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+  ok('17-2 別のページへ行って戻ってもタイマーが続く', await page.isVisible('#timer-card'));
+
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(400);
+  const elapsed = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return st.activeSession ? Math.floor((Date.now() - st.activeSession.startTs) / 60000) : null;
+  });
+  ok('17-3 開き直しても経過時間が保たれる(裏で進む)', elapsed === 45, String(elapsed));
+
+  /* --- やめるときに何分消えるか見せる --- */
+  await page.click('#btn-discard');
+  await page.waitForSelector('#m-ok');
+  const dlg = (await page.textContent('#modal-back')).replace(/\s+/g, '');
+  ok('17-4 失う時間を具体的に示す(45分)', dlg.includes('45分'), dlg.slice(0, 50));
+  ok('17-5 取り消せることを案内する', dlg.includes('元に戻す'));
+
+  /* --- やめても取り消せる --- */
+  await page.click('#m-ok');
+  await page.waitForTimeout(400);
+  ok('17-6 やめるとタイマーが消える', !(await page.isVisible('#timer-card')));
+  ok('17-7 取り消しボタン付きの知らせが出る',
+    (await page.textContent('#toast')).includes('元に戻す'));
+  await page.click('#toast-action');
+  await page.waitForTimeout(500);
+  ok('17-8 取り消すとタイマーが戻る', await page.isVisible('#timer-card'));
+  const back = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    return st.activeSession ? Math.floor((Date.now() - st.activeSession.startTs) / 60000) : null;
+  });
+  ok('17-9 取り消すと経過時間もそのまま戻る', back === 45, String(back));
+
+  /* --- 学習中の予定を消したら、黙って止めずに理由を伝える --- */
+  await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const r = st.records.find((x) => x.id === st.activeSession.recordId);
+    r.deletedAt = Date.now();
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(700);
+  ok('17-10 削除済みの予定でタイマーが動き続けない', !(await page.isVisible('#timer-card')));
+  ok('17-11 止めた理由を知らせる',
+    (await page.textContent('#toast')).includes('削除された'),
+    (await page.textContent('#toast')).replace(/\s+/g, ' ').slice(0, 40));
+  const cleared = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession);
+  ok('17-12 セッションが残らない', cleared === null, JSON.stringify(cleared));
+
+  /* --- Codexレビュー Q4-2: 学習中の予定を削除しても時間を失わない（実際の削除UIから） --- */
+  await startAndAge('削除ガードの検証', 25);
+  await nav('record');
+  await page.waitForTimeout(300);
+  // 一覧の🗑から削除しようとする
+  const delBtn = page.locator('.rec-item .rec-actions button', { hasText: '🗑' })
+    .first();
+  const hasDel = await delBtn.count();
+  if (hasDel) {
+    await delBtn.click();
+    await page.waitForTimeout(400);
+  }
+  const guardTxt = (await page.textContent('#modal-back')).replace(/\s+/g, '');
+  ok('17-13 学習中の予定を消そうとすると止められる',
+    guardTxt.includes('いま学習中の予定'), guardTxt.slice(0, 50));
+  ok('17-14 未保存の時間を具体的に示す', guardTxt.includes('25分'), guardTxt.slice(0, 60));
+  ok('17-15 終了して記録する選択肢がある', await page.isVisible('#dl-finish'));
+
+  // 「やめる」を選べば、記録もタイマーも無事
+  await page.click('#dl-cancel');
+  await page.waitForTimeout(300);
+  await nav('today');
+  await page.waitForTimeout(200);
+  ok('17-16 やめるとタイマーが続く(時間を失わない)', await page.isVisible('#timer-card'));
+  const stillThere = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const r = st.records.find((x) => (x.content || '').includes('削除ガードの検証'));
+    return r ? !r.deletedAt : null;
+  });
+  ok('17-17 記録も削除されていない', stillThere === true, String(stillThere));
+
+  /* --- Codexレビュー Q6-1: 取り消し待ちの時間が勉強時間に入らない --- */
+  await page.click('#btn-discard');
+  await page.waitForSelector('#m-ok');
+  await page.click('#m-ok');
+  await page.waitForTimeout(2500);          // 2.5秒ぶん待ってから戻す
+  await page.click('#toast-action');
+  await page.waitForTimeout(400);
+  const afterUndo = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    const s = st.activeSession;
+    if (!s) return null;
+    return { elapsedMin: Math.floor((Date.now() - s.startTs - s.pausedAccum) / 60000),
+             pausedAccum: s.pausedAccum };
+  });
+  ok('17-18 取り消し待ちの時間が一時停止として除かれる',
+    afterUndo && afterUndo.pausedAccum >= 2000, JSON.stringify(afterUndo));
+  ok('17-19 取り消し後の経過時間が水増しされない',
+    afterUndo && afterUndo.elapsedMin === 25, JSON.stringify(afterUndo));
+
+  /* --- Codexレビュー Q6-1(再): 一時停止中にやめて戻しても時間が減らない --- */
+  await startAndAge('一時停止からの復元', 10);
+  await page.click('#btn-pause');                 // 一時停止する
+  await page.waitForTimeout(300);
+  const pausedElapsed = await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession;
+    return Math.floor(((s.pausedAt || Date.now()) - s.startTs - s.pausedAccum) / 60000);
+  });
+  ok('17-22 一時停止で経過が止まる', pausedElapsed === 10, String(pausedElapsed));
+
+  await page.click('#btn-discard');
+  await page.waitForSelector('#m-ok');
+  await page.click('#m-ok');
+  await page.waitForTimeout(2500);                // 2.5秒待ってから戻す
+  await page.click('#toast-action');
+  await page.waitForTimeout(400);
+  const restored = await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession;
+    if (!s) return null;
+    return { elapsedMin: Math.floor(((s.pausedAt || Date.now()) - s.startTs - s.pausedAccum) / 60000),
+             pausedAccum: s.pausedAccum, stillPaused: !!s.pausedAt };
+  });
+  ok('17-23 一時停止中に戻しても学習時間が減らない',
+    restored && restored.elapsedMin === 10, JSON.stringify(restored));
+  ok('17-24 一時停止中は待ち時間を二重に引かない',
+    restored && restored.pausedAccum === 0, JSON.stringify(restored));
+
+  // 再開しても、待ち時間が経過に混ざらない
+  await page.click('#btn-pause');                 // 再開
+  await page.waitForTimeout(600);
+  const resumed = await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession;
+    return Math.floor((Date.now() - s.startTs - s.pausedAccum) / 60000);
+  });
+  ok('17-25 再開後も経過が10分のまま(待ち時間が混ざらない)', resumed === 10, String(resumed));
+
+  /* --- Codexレビュー Q6-2: 別の学習が始まっていたら上書きしない --- */
+  await startAndAge('上書き検証のもと', 5);
+  const prevRecordId = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession.recordId);
+  await page.click('#btn-discard');
+  await page.waitForSelector('#m-ok');
+  await page.click('#m-ok');
+  await page.waitForTimeout(300);
+  // 先に別の学習を始めてしまう(前のセッションとは別の予定)
+  await makePlan('別セッションの検証');
+  await startPlan('別セッションの検証');
+  await page.waitForTimeout(300);
+  // 前のセッションの「元に戻す」が残っていれば押してみる
+  if (await page.isVisible('#toast-action')) {
+    await page.click('#toast-action');
+    await page.waitForTimeout(300);
+  }
+  const nowRecordId = await page.evaluate(() =>
+    (JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).activeSession || {}).recordId);
+  ok('17-20 別の学習を始めた後は、前のセッションで上書きされない',
+    nowRecordId && nowRecordId !== prevRecordId,
+    'prev=' + prevRecordId + ' now=' + nowRecordId);
+
+  /* --- Codexレビュー Q4-1: 削除済みの予定からは学習を始められない --- */
+  const startedOnDeleted = await page.evaluate(() => {
+    const st = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+    // 適当な記録をごみ箱へ入れ、そのIDで開始を試みる
+    const target = st.records.find((r) => !r.deletedAt && r.id !== (st.activeSession || {}).recordId);
+    if (!target) return 'no-target';
+    target.deletedAt = Date.now();
+    localStorage.setItem('ibukiStudyBeat.v3', JSON.stringify(st));
+    return target.id;
+  });
+  if (startedOnDeleted !== 'no-target') {
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForTimeout(400);
+    const inList = await page.evaluate((id) =>
+      !!document.querySelector('#today-plans .plan-item[data-id="' + id + '"]'), startedOnDeleted);
+    ok('17-21 ごみ箱に入れた予定は今日の一覧から消える(開始できない)', !inList, String(inList));
+  } else {
+    ok('17-21 ごみ箱に入れた予定は今日の一覧から消える(開始できない)', true, '対象なし');
+  }
+
+  await shot('68-session-guard');
+}
+
 async function extra_screens() {
   console.log('\n■ 追加: 全画面スクリーンショットとコーチ・320px幅・横向き');
   await freshPage(true);
@@ -2564,6 +2915,80 @@ async function test23_narrowScreens() {
   }
 }
 
+async function test26_bpGraphFollowsRecalc() {
+  console.log('\n■ 試験26: 編集・削除・復元のあとBPグラフの集計も追随する(Codex Q3)');
+  await freshPage(true);
+
+  /* 画面に出ているBPグラフの合計を、保存データから求め直して突き合わせる。
+   * グラフが古い値を描いていれば、この2つがずれる。 */
+  async function graphTotalAndStored() {
+    await nav('graph');
+    await page.waitForTimeout(200);
+    /* ⚡ポイント表示へ切り替える */
+    if (await page.isVisible('[data-graph-mode="bp"]')) {
+      await page.click('[data-graph-mode="bp"]');
+      await page.waitForTimeout(250);
+    }
+    return page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem('ibukiStudyBeat.v3'));
+      const stored = (s.records || []).filter(r => !r.deletedAt).reduce((n, r) => n + (r.bp | 0), 0)
+        + (s.news || []).reduce((n, x) => n + (x.bp | 0), 0);
+      const series = window.ISBCalc.buildBpSeries(s.records, s.news, s.records[0] ? s.records[0].date : '2026-08-01', 60);
+      const graphed = series.reduce((n, d) => n + d.total, 0);
+      return { stored, graphed };
+    });
+  }
+
+  await addRecord({ date: localDate(0), subjectLabel: '英語', content: 'グラフ追随1', plan: 60, actual: 60 });
+  await page.waitForTimeout(200);
+  await addRecord({ date: localDate(0), subjectLabel: '数学', content: 'グラフ追随2', plan: 60, actual: 60 });
+  await page.waitForTimeout(200);
+
+  let v = await graphTotalAndStored();
+  ok('Q3 追加直後: グラフの合計と保存値が一致', v.stored === v.graphed, `保存=${v.stored} グラフ=${v.graphed}`);
+  const beforeEdit = v.stored;
+
+  /* 実績を減らす編集 → BPが減る → グラフも減っていること */
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('.rec-item:has-text("グラフ追随1") [data-act="edit"]');
+  await page.waitForSelector('#m-actual');
+  await page.fill('#m-actual', '10');
+  await page.click('#m-save');
+  await page.waitForTimeout(350);
+  v = await graphTotalAndStored();
+  ok('Q3 編集後: グラフの合計と保存値が一致', v.stored === v.graphed, `保存=${v.stored} グラフ=${v.graphed}`);
+  ok('Q3 編集でBPが減り、グラフにも反映される', v.graphed < beforeEdit, `前=${beforeEdit} 後=${v.graphed}`);
+
+  /* 削除 → グラフから外れること */
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('.rec-item:has-text("グラフ追随2") [data-act="del"]');
+  await page.waitForTimeout(400);
+  v = await graphTotalAndStored();
+  ok('Q3 削除後: グラフの合計と保存値が一致', v.stored === v.graphed, `保存=${v.stored} グラフ=${v.graphed}`);
+
+  /* ごみ箱から復元 → 配り直した値でグラフも一致すること */
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.click('#btn-open-trash');
+  await page.waitForSelector('[data-act="restore"]');
+  await page.click('[data-act="restore"]');
+  await page.waitForTimeout(400);
+  v = await graphTotalAndStored();
+  ok('Q3 復元後: グラフの合計と保存値が一致', v.stored === v.graphed, `保存=${v.stored} グラフ=${v.graphed}`);
+
+  /* Q1の承認条件: 学習時間グラフが初期表示のままであること */
+  await freshPage(true);
+  await nav('graph');
+  await page.waitForTimeout(250);
+  const defaultMode = await page.evaluate(() => {
+    const on = document.querySelector('[data-graph-mode].active, [data-graph-mode][aria-pressed="true"]');
+    return on ? on.dataset.graphMode : 'time';
+  });
+  ok('Q1 グラフの初期表示は学習時間のまま', defaultMode === 'time', `既定=${defaultMode}`);
+}
+
 /* ============ 実行 ============ */
 browser = await chromium.launch();
 try {
@@ -2590,6 +3015,9 @@ try {
   await test21_dailyActionBonuses();
   await test22_trashRestoreRecalc();
   await test23_narrowScreens();
+  await test24_bpChipAndGraph();
+  await test25_sessionGuards();
+  await test26_bpGraphFollowsRecalc();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);

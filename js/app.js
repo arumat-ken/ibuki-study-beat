@@ -5,7 +5,7 @@
 
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
-  var APP_VERSION = '4.2.0';
+  var APP_VERSION = '4.3.0';
   /* リリース表示用(画面右上)。更新のたびに日付を上げる。
    * モデル名は「未記録」固定とする(実行時のモデル識別子を断定してリポジトリの
    * 成果物に書き出さない方針のため。推測での記載はしない)。 */
@@ -74,6 +74,8 @@
     } catch (e) {
       toast('保存に失敗しました。空き容量を確認してください。', true);
     }
+    // ポイントが変わる操作はすべて save を通るため、ここで常時表示を更新する
+    try { renderBpBalance(); } catch (e2) { /* 起動途中は要素が無い */ }
   }
 
   function nextId(prefix) { state.seq = (state.seq || 1) + 1; return prefix + Date.now().toString(36) + state.seq; }
@@ -272,6 +274,7 @@
 
   var sloganIndex = 0;
   function renderToday() {
+    renderBpBalance();
     $('today-char-name').textContent = state.settings.characterName;
     $('today-greeting').textContent = greeting();
     $('today-beat').innerHTML = charImg(state.activeSession ? 'pose_billie_jean.png' : 'coach_stage.png');
@@ -334,6 +337,20 @@
       banner.innerHTML = '';
     }
   }
+
+  /* 獲得ポイントの常時表示(APP-470)。
+   * どの画面にいても「いま何ポイント持っているか」が上部で見えるようにする。
+   * タップすると今日のブースト内訳(倍率とBP残高)が開く。 */
+  function renderBpBalance() {
+    var text = C.calcBpBalance(state).toLocaleString('ja-JP');
+    var els = document.querySelectorAll('.bp-balance-val');
+    for (var i = 0; i < els.length; i++) els[i].textContent = text;
+  }
+
+  document.addEventListener('click', function (e) {
+    var chip = e.target && e.target.closest ? e.target.closest('.bp-balance') : null;
+    if (chip) openBoostModal();
+  });
 
   /** 今日のブーストカード(GUI_SPEC_v4.md 2.1)。開始ボタンより下、BP残高より倍率を先に見せる。 */
   function renderBoostCard() {
@@ -519,8 +536,9 @@
   });
 
   function startSessionForRecord(recordId) {
-    var rec = state.records.find(function (r) { return r.id === recordId; });
-    if (!rec) return;
+    // 削除済みの予定では学習を始めない(Codexレビュー Q4-1)
+    var rec = state.records.find(function (r) { return r.id === recordId && !r.deletedAt; });
+    if (!rec) { toast('その予定は見つからないよ', true); return; }
     /* APP-440 §2: 宣言済み時間が無いと、いつ止めるかを決められない。
      * 「勉強する意思もないのにタイマーだけカウントする」ことをさせないため、
      * 計画時間を決めてからでないと始められないようにする。 */
@@ -564,8 +582,20 @@
     var card = $('timer-card');
     clearInterval(timerInterval);
     if (!state.activeSession) { card.style.display = 'none'; return; }
-    var rec = state.records.find(function (r) { return r.id === state.activeSession.recordId; });
-    if (!rec) { state.activeSession = null; save(); card.style.display = 'none'; return; }
+    // 削除された予定は「無い」ものとして扱う(APP-471)。
+    // deletedAt を見ないと、ごみ箱に入れた予定のままタイマーが動き続け、
+    // 終了しても記録が削除済みのまま保存されて画面に出てこない。
+    var rec = state.records.find(function (r) {
+      return r.id === state.activeSession.recordId && !r.deletedAt;
+    });
+    if (!rec) {
+      // 学習中の予定が記録画面から削除された場合。黙って消さず、理由を伝える(APP-471)。
+      state.activeSession = null;
+      save();
+      card.style.display = 'none';
+      toast('学習中だった予定が削除されたので、タイマーを止めたよ', true);
+      return;
+    }
     var sub = subjectById(rec.subjectId);
     var paused = !!state.activeSession.pausedAt;
     var prog = sessionProgress();
@@ -621,24 +651,70 @@
     };
     $('btn-finish').onclick = function () { openFinishModal(rec); };
     $('btn-discard').onclick = function () {
+      // 何分ぶんが消えるのかを具体的に見せる(APP-471)。
+      // 「保存されません」だけでは、失う量が本人に分からない。
+      var lostMin = Math.floor(sessionElapsedMs() / 60000);
+      var lostText = lostMin >= 1
+        ? '<b style="color:var(--gold-bright)">' + C.fmtDuration(lostMin) + '</b>ぶんの記録が消えます。'
+        : 'まだ1分たっていないので、消えるのは0分です。';
       openModal(
         '<h3>記録せずにやめる<button class="icon-btn" id="m-close">✕</button></h3>' +
-        '<p class="small" style="margin-bottom:12px">今回の学習時間は保存されません。よろしいですか？</p>' +
+        '<p class="small" style="margin-bottom:6px">' + lostText + '</p>' +
+        '<p class="small muted" style="margin-bottom:12px">' +
+        'ここでやめても、あとで「元に戻す」で戻せるよ。' +
+        '勉強した時間を残したいなら「戻る」→「終了する ✓」を押してね。</p>' +
         '<div class="btn-row"><button class="btn" id="m-cancel">戻る</button>' +
         '<button class="btn danger" id="m-ok">記録せずにやめる</button></div>'
       );
       $('m-close').onclick = $('m-cancel').onclick = closeModal;
       $('m-ok').onclick = function () {
+        // 取り消せるように、やめた内容と「やめた時刻」を控えておく(APP-471)
+        var discarded = state.activeSession;
+        var discardedAt = Date.now();
         /* APP-440: 自動停止で確定済みなら、開始時点の実績まで戻してBPも計算し直す。
          * 「記録せずにやめる」と言った以上、確定した分も残さない。 */
-        var ses = state.activeSession;
-        if (ses && typeof ses.confirmedMin === 'number' && ses.confirmedMin >= 0) {
-          rec.actualMin = ses.baseActualMin || 0;
+        if (discarded && typeof discarded.confirmedMin === 'number' && discarded.confirmedMin >= 0) {
+          rec.actualMin = discarded.baseActualMin || 0;
           rec.updatedAt = Date.now();
           grantStudyBP(rec);
         }
         state.activeSession = null;
         save(); closeModal(); renderToday();
+        toast(lostMin >= 1 ? C.fmtDuration(lostMin) + 'を記録せずにやめたよ' : '記録せずにやめたよ',
+          false, '元に戻す', function () {
+            // すでに別の学習が始まっていたら、それを壊さない(Codexレビュー Q6-2)
+            if (state.activeSession) {
+              toast('別の学習が始まっているので戻せなかったよ', true);
+              return;
+            }
+            // 元の記録がまだあるときだけ戻す
+            var still = state.records.find(function (r) {
+              return r.id === discarded.recordId && !r.deletedAt;
+            });
+            if (!still) { toast('元の予定が見つからないので戻せなかったよ', true); return; }
+            /* やめてから戻すまでの時間は勉強していないので経過に含めない。
+             * ただし一時停止中にやめた場合は、pausedAt によって
+             * その時間が最初から除外されている。ここで足すと二重に引かれ、
+             * 戻した瞬間に学習時間が減ってしまう(Codexレビュー Q6-1 再指摘)。 */
+            var wasPaused = !!discarded.pausedAt;
+            var waitedMs = wasPaused ? 0 : Math.max(0, Date.now() - discardedAt);
+            /* APP-440との統合: 宣言済み時間・開始時実績・確定済み分数・学習区間を
+             * 落とさずに戻す。列挙し直すと新しい項目を書き忘れるので、
+             * 元の内容をそのまま複製して、待ち時間ぶんだけ差し替える。 */
+            var restored = Object.assign({}, discarded);
+            restored.pausedAccum = (discarded.pausedAccum || 0) + waitedMs;
+            /* やめている間は勉強していないので、開いていた学習区間も閉じる。
+             * 閉じずに戻すと、待ち時間が実学習区間に入りアイテムを消費する。 */
+            if (Array.isArray(discarded.segments)) {
+              restored.segments = discarded.segments.map(function (g) {
+                return { from: g.from, to: (g.to === null ? discardedAt : g.to) };
+              });
+              if (!wasPaused) restored.segments.push({ from: Date.now(), to: null });
+            }
+            state.activeSession = restored;
+            save(); renderToday();
+            toast('学習を再開したよ！');
+          });
       };
     };
   }
@@ -1424,6 +1500,39 @@
   function deleteRecord(id) {
     var rec = state.records.find(function (r) { return r.id === id; });
     if (!rec) return;
+
+    /* 学習中の予定は、そのまま消すと未保存の経過時間ごと失われる。
+     * 「タイマーが動き続ける」不具合を「勉強した時間が消える」不具合に
+     * すり替えないよう、削除の入口で止めて先に終わらせてもらう
+     * (Codexレビュー Q4-2)。 */
+    if (state.activeSession && state.activeSession.recordId === id) {
+      var runningMin = Math.floor(sessionElapsedMs() / 60000);
+      openModal(
+        '<h3>いま学習中の予定だよ<button class="icon-btn" id="m-close">✕</button></h3>' +
+        '<p class="small" style="margin-bottom:6px">' +
+        'この予定はいまタイマーが動いていて、' +
+        (runningMin >= 1
+          ? '<b style="color:var(--gold-bright)">' + C.fmtDuration(runningMin) + '</b>ぶんがまだ保存されていないよ。'
+          : 'まだ保存されていない時間があるよ。') +
+        '</p>' +
+        '<p class="small muted" style="margin-bottom:12px">先に終わらせてから消してね。</p>' +
+        '<button class="btn primary block" id="dl-finish">終了して記録する ✓</button>' +
+        '<button class="btn block" id="dl-discard" style="margin-top:8px">記録せずに終了して削除する</button>' +
+        '<button class="btn block" id="dl-cancel" style="margin-top:8px">やめる</button>'
+      );
+      $('m-close').onclick = $('dl-cancel').onclick = closeModal;
+      $('dl-finish').onclick = function () {
+        closeModal();
+        openFinishModal(rec);   // 保存が終われば、あらためて削除できる
+      };
+      $('dl-discard').onclick = function () {
+        state.activeSession = null;
+        save(); closeModal();
+        deleteRecord(id);       // タイマーを止めたので、通常の削除へ進む
+      };
+      return;
+    }
+
     rec.deletedAt = Date.now();
     /* 削除するとその日の枠が空くので、同じ日の他の記録を配り直す。 */
     recalcBpForDate(rec.date);
@@ -1525,7 +1634,22 @@
     t.addEventListener('click', function () { setRangeMode(t.dataset.range); });
   });
 
+  /* グラフの種類。'time' = 学習時間(従来どおり) / 'bp' = ポイント(APP-470)。
+   * 学習時間のグラフには手を触れず、ポイントは別の描画関数で描く。 */
+  var graphMode = 'time';
+
+  Array.prototype.forEach.call(document.querySelectorAll('#graph-mode-tabs .range-tab'), function (btn) {
+    btn.addEventListener('click', function () {
+      graphMode = btn.getAttribute('data-mode');
+      Array.prototype.forEach.call(document.querySelectorAll('#graph-mode-tabs .range-tab'), function (b) {
+        b.classList.toggle('active', b === btn);
+      });
+      renderGraphScreen();
+    });
+  });
+
   function renderGraphScreen() {
+    if (graphMode === 'bp') return renderBpGraphScreen();
     var days = graph.visibleDays;
     var start = C.addDays(graph.endDate, -(days - 1));
     var series = C.buildSeries(state.records, start, days);
@@ -1567,6 +1691,130 @@
     graph.endDate = todayStr();
     renderGraphScreen();
   });
+
+  /* ポイントのグラフ(APP-470)。
+   * 棒 = その日に獲得したポイント(学習ぶんとニュースぶんの積み上げ)、
+   * 線 = 期間内の累積。日付の範囲・スワイプ操作は学習時間と同じものを使う。 */
+  function renderBpGraphScreen() {
+    var days = graph.visibleDays;
+    var start = C.addDays(graph.endDate, -(days - 1));
+    var series = C.buildBpSeries(state.records, state.news, start, days);
+    var sum = C.summarizeBp(series);
+    var n = function (v) { return (v | 0).toLocaleString('ja-JP'); };
+
+    $('graph-stats').innerHTML =
+      '<div class="stat-chip c-act">獲得合計<b>' + n(sum.total) + '</b></div>' +
+      '<div class="stat-chip c-plan">学習から<b>' + n(sum.studyTotal) + '</b></div>' +
+      '<div class="stat-chip c-rate">ニュースから<b>' + n(sum.newsTotal) + '</b></div>' +
+      '<div class="stat-chip c-cact">最高の1日<b>' + n(sum.best) + '</b></div>' +
+      '<div class="stat-chip c-cplan">記録した日の平均<b>' + n(sum.average) + '</b></div>';
+
+    $('chart-legend').innerHTML =
+      '<span class="lg"><span class="sw" style="background:#d9b24a"></span>学習でもらったBP</span>' +
+      '<span class="lg"><span class="sw" style="background:#4A90D9"></span>ニュースでもらったBP</span>' +
+      '<span class="lg"><span class="ln" style="background:#3b82f6"></span>この期間の累積</span>' +
+      '<span class="lg">いまの残高は上の ⚡ をタップ</span>';
+
+    drawBpChart(series, start, days);
+
+    var todayIn = start <= todayStr() && todayStr() <= graph.endDate;
+    $('btn-goto-today').style.display = todayIn ? 'none' : '';
+    $('day-detail').style.display = 'none';
+    renderEventList();
+  }
+
+  function drawBpChart(series, start, days) {
+    var wrap = $('chart-svg-wrap');
+    var W = Math.max(280, wrap.clientWidth || 340);
+    var isLandscape = window.matchMedia('(orientation: landscape)').matches && window.innerHeight < 500;
+    var H = isLandscape ? Math.max(220, window.innerHeight - 150) : 320;
+    var padL = 44, padR = 44, padT = 14, padB = 34;
+    var plotW = Math.max(10, W - padL - padR);
+    var plotH = Math.max(10, H - padT - padB);
+
+    var maxBar = 0, maxCum = 0;
+    series.forEach(function (d) {
+      if (d.total > maxBar) maxBar = d.total;
+      if (d.cum > maxCum) maxCum = d.cum;
+    });
+    maxBar = niceCeil(maxBar || 100);
+    maxCum = niceCeil(maxCum || 100);
+
+    var slot = plotW / Math.max(1, series.length);
+    var barW = Math.max(3, Math.min(26, slot * 0.6));
+    var svg = '';
+
+    // 目盛り(左=1日の獲得、右=累積)
+    for (var g = 0; g <= 4; g++) {
+      var y = padT + plotH - (plotH * g / 4);
+      svg += '<line x1="' + padL + '" y1="' + y + '" x2="' + (padL + plotW) + '" y2="' + y +
+        '" stroke="#2a2a36" stroke-width="1"/>';
+      svg += '<text x="' + (padL - 6) + '" y="' + (y + 4) + '" text-anchor="end" font-size="10" fill="#9a978f">' +
+        shortNum(maxBar * g / 4) + '</text>';
+      svg += '<text x="' + (padL + plotW + 6) + '" y="' + (y + 4) + '" font-size="10" fill="#3b82f6">' +
+        shortNum(maxCum * g / 4) + '</text>';
+    }
+
+    // 棒(学習ぶんの上にニュースぶんを積む)
+    series.forEach(function (d, i) {
+      var cx = padL + slot * i + slot / 2;
+      var x = cx - barW / 2;
+      var yBase = padT + plotH;
+      var hStudy = maxBar ? (d.study / maxBar) * plotH : 0;
+      var hNews = maxBar ? (d.news / maxBar) * plotH : 0;
+      if (hStudy > 0) {
+        svg += '<rect x="' + x + '" y="' + (yBase - hStudy) + '" width="' + barW + '" height="' + hStudy +
+          '" rx="2" fill="#d9b24a"/>';
+      }
+      if (hNews > 0) {
+        svg += '<rect x="' + x + '" y="' + (yBase - hStudy - hNews) + '" width="' + barW + '" height="' + hNews +
+          '" rx="2" fill="#4A90D9"/>';
+      }
+    });
+
+    // 累積の線
+    var pts = series.map(function (d, i) {
+      var cx = padL + slot * i + slot / 2;
+      var y = padT + plotH - (maxCum ? (d.cum / maxCum) * plotH : 0);
+      return cx.toFixed(1) + ',' + y.toFixed(1);
+    }).join(' ');
+    svg += '<polyline points="' + pts + '" fill="none" stroke="#3b82f6" stroke-width="2" ' +
+      'stroke-linejoin="round" stroke-linecap="round"/>';
+
+    // 「今日」の目印(学習時間のグラフと揃える)
+    var todayIdx = -1;
+    series.forEach(function (d, i) { if (d.date === todayStr()) todayIdx = i; });
+    if (todayIdx >= 0) {
+      var tx = padL + slot * todayIdx + slot / 2;
+      svg += '<line x1="' + tx + '" y1="' + padT + '" x2="' + tx + '" y2="' + (padT + plotH) +
+        '" stroke="#333" stroke-width="1" stroke-dasharray="4 3"/>';
+      svg += '<rect x="' + (tx - 18) + '" y="' + (padT - 2) + '" width="36" height="15" rx="3" fill="#1b1b25"/>';
+      svg += '<text x="' + tx + '" y="' + (padT + 9) + '" text-anchor="middle" font-size="9" fill="#f0c75e">今日</text>';
+    }
+
+    // 日付ラベル(間引く)
+    var step = Math.max(1, Math.ceil(series.length / 7));
+    series.forEach(function (d, i) {
+      if (i % step !== 0 && i !== series.length - 1) return;
+      var cx = padL + slot * i + slot / 2;
+      svg += '<text x="' + cx + '" y="' + (padT + plotH + 16) + '" text-anchor="middle" font-size="9" fill="#9a978f">' +
+        d.date.slice(5).replace('-', '/') + '</text>';
+    });
+
+    wrap.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H +
+      '" role="img" aria-label="ポイントの推移">' + svg + '</svg>';
+  }
+
+  function niceCeil(v) {
+    if (v <= 0) return 1;
+    var mag = Math.pow(10, Math.floor(Math.log(v) / Math.LN10));
+    return Math.ceil(v / mag) * mag;
+  }
+
+  function shortNum(v) {
+    v = Math.round(v);
+    return v >= 10000 ? (Math.round(v / 100) / 10) + '万' : v.toLocaleString('ja-JP');
+  }
 
   function drawChart(series, start, days) {
     var ax = state.settings.axis;
@@ -3089,9 +3337,11 @@
       'placeholder="例: コーチのメッセージボタンを押しても何も出てこない"></textarea></div>' +
       '<div class="field"><label>送られる内容(自動)</label>' +
       '<pre id="rp-preview" class="report-preview"></pre></div>' +
-      '<button class="btn primary block" id="rp-copy">📋 コピーする</button>' +
+      '<button class="btn primary block" id="rp-send">📤 LINEなどで送る</button>' +
+      '<button class="btn block" id="rp-copy" style="margin-top:8px">📋 コピーする</button>' +
       '<div class="small" style="margin-top:10px;line-height:1.8">' +
-      'コピーしたら、LINEで送るか、GitHubの Issues に貼り付けてください。' +
+      '「送る」を押すと共有画面が出るので、LINEを選んでね。' +
+      '出てこないときは「コピーする」で写して、LINEに貼り付けてね。' +
       '</div>'
     );
     $('m-close').onclick = closeModal;
@@ -3103,6 +3353,32 @@
         toast(okCopy ? 'コピーしたよ！LINEなどに貼り付けてね' : 'コピーできなかった。長押しで選んでコピーしてね', !okCopy);
       });
     };
+    $('rp-send').onclick = function () { shareReport(buildReportText($('rp-text').value)); };
+  }
+
+  /* 報告文を端末の共有画面へ渡す(APP-470)。
+   * アプリ自身は通信しない。文章をiOSの共有シートへ渡すだけで、
+   * どこへ送るかは本人がその場で選ぶ(LINE・メールなど)。
+   * 共有が使えない環境ではコピーに落とす。 */
+  function shareReport(text) {
+    if (navigator.share) {
+      navigator.share({ title: 'IBUKI STUDY BEAT 不具合レポート', text: text })
+        .catch(function (e) {
+          // 本人が共有画面を閉じただけのときは何も言わない
+          if (e && e.name === 'AbortError') return;
+          fallbackShare(text);
+        });
+      return;
+    }
+    fallbackShare(text);
+  }
+
+  function fallbackShare(text) {
+    copyToClipboard(text).then(function (okCopy) {
+      toast(okCopy
+        ? 'この端末では共有画面が使えないよ。コピーしたからLINEに貼り付けてね'
+        : 'コピーできなかった。長押しで選んでコピーしてね', !okCopy);
+    });
   }
 
   /* ================= アップデートのお知らせ(APP-461) =================
@@ -3180,6 +3456,7 @@
 
   /* ================= 起動 ================= */
   function renderAll() {
+    renderBpBalance();
     renderToday();
     renderRecordScreen();
     if (currentScreen === 'graph') renderGraphScreen();

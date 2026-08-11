@@ -282,6 +282,65 @@
    * 各バケット: {date, plan:{subjectId:分}, actual:{}, planTotal, actualTotal, cumPlan, cumActual}
    * 累積は表示範囲内での積み上げ。
    */
+  /* ポイントの日別集計(APP-470)。
+   * 学習記録のBPとニュースのBPを日ごとに足し、累積も返す。
+   * 学習時間のグラフ(buildSeries)には手を触れず、別系統として用意する。 */
+  /* 学習セッションの時刻として妥当か。
+   * NaN・無限大・未来の時刻・古すぎる値(30日より前)は受け付けない。
+   * 30日は、宣言時間の上限(計画+延長)を大きく超える長さとして選んだ。 */
+  var MAX_SESSION_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+  function isSaneTimestamp(ts, nowMs) {
+    if (typeof ts !== 'number' || !isFinite(ts)) return false;
+    var now = typeof nowMs === 'number' && isFinite(nowMs) ? nowMs : Date.now();
+    if (ts > now + 60 * 1000) return false;              // 未来(1分の時計ずれは許す)
+    if (ts < now - MAX_SESSION_AGE_MS) return false;     // 古すぎる
+    return true;
+  }
+
+  function buildBpSeries(records, news, startDate, days) {
+    var byDate = {};
+    function add(date, kind, amount) {
+      if (!isDateStr(date) || !(amount > 0)) return;
+      var b = byDate[date] || (byDate[date] = { study: 0, news: 0 });
+      b[kind] += amount;
+    }
+    activeRecords(records).forEach(function (r) { add(r.date, 'study', r.bp | 0); });
+    (news || []).forEach(function (n) { add(n.date, 'news', n.bp | 0); });
+
+    var series = [];
+    var cum = 0;
+    for (var i = 0; i < days; i++) {
+      var date = addDays(startDate, i);
+      var b = byDate[date] || { study: 0, news: 0 };
+      var total = b.study + b.news;
+      cum += total;
+      series.push({ date: date, study: b.study, news: b.news, total: total, cum: cum });
+    }
+    return series;
+  }
+
+  function summarizeBp(series) {
+    var studyTotal = 0, newsTotal = 0, best = 0, bestDate = null, activeDays = 0;
+    series.forEach(function (d) {
+      studyTotal += d.study;
+      newsTotal += d.news;
+      if (d.total > best) { best = d.total; bestDate = d.date; }
+      if (d.total > 0) activeDays += 1;
+    });
+    var total = studyTotal + newsTotal;
+    return {
+      studyTotal: studyTotal,
+      newsTotal: newsTotal,
+      total: total,
+      best: best,
+      bestDate: bestDate,
+      activeDays: activeDays,
+      average: activeDays > 0 ? Math.round(total / activeDays) : 0,
+      cum: series.length ? series[series.length - 1].cum : 0
+    };
+  }
+
   function buildSeries(records, startDate, days) {
     var recs = activeRecords(records);
     var byDate = {};
@@ -606,14 +665,21 @@
         return { id: typeof m.id === 'string' ? m.id : 'm' + Math.random().toString(36).slice(2, 10), role: m.role, text: m.text.slice(0, 500), ts: typeof m.ts === 'number' ? m.ts : 0 };
       }).slice(-200);
     }
+    /* 学習中セッションの復元。開始時刻が壊れていると、経過時間が
+     * 途方もない値になったり NaN になったりする。読み込みの時点で弾く
+     * (Codexレビュー Q5)。 */
     if (parsed.activeSession && typeof parsed.activeSession === 'object' &&
       typeof parsed.activeSession.recordId === 'string' &&
-      typeof parsed.activeSession.startTs === 'number') {
+      isSaneTimestamp(parsed.activeSession.startTs)) {
+      var pa = parsed.activeSession.pausedAccum;
+      var pt = parsed.activeSession.pausedAt;
       out.activeSession = {
         recordId: parsed.activeSession.recordId,
         startTs: parsed.activeSession.startTs,
-        pausedAccum: typeof parsed.activeSession.pausedAccum === 'number' ? parsed.activeSession.pausedAccum : 0,
-        pausedAt: typeof parsed.activeSession.pausedAt === 'number' ? parsed.activeSession.pausedAt : null,
+        /* APP-471(Codex Q5): 壊れた値で経過時間が途方もない値やNaNにならないよう、
+         * 読み込みの時点で弾く。 */
+        pausedAccum: (typeof pa === 'number' && isFinite(pa) && pa >= 0) ? pa : 0,
+        pausedAt: isSaneTimestamp(pt) ? pt : null,
         /* APP-440 §2: 開始時に宣言した時間と、開始時点の実績。
          * 旧セッションは持たないので0。呼び出し側で記録の計画時間から補う。 */
         declaredMin: isIntInRange(parsed.activeSession.declaredMin, 0, MAX_MIN_PER_RECORD)
@@ -1975,6 +2041,9 @@
     FACULTY_IDS: FACULTY_IDS,
     activeRecords: activeRecords,
     buildSeries: buildSeries,
+    isSaneTimestamp: isSaneTimestamp,
+    buildBpSeries: buildBpSeries,
+    summarizeBp: summarizeBp,
     summarize: summarize,
     streakDays: streakDays,
     niceMax: niceMax,
