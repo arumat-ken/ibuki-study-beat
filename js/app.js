@@ -5,7 +5,7 @@
 
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
-  var APP_VERSION = '4.5.0';
+  var APP_VERSION = '4.6.0';
   /* リリース表示用(画面右上)。更新のたびに日付を上げる。
    * モデル名は「未記録」固定とする(実行時のモデル識別子を断定してリポジトリの
    * 成果物に書き出さない方針のため。推測での記載はしない)。 */
@@ -86,6 +86,13 @@
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
+  }
+  /* APP-481: 内容欄が空で開始した記録を、一覧やタイマーで空白のまま出さない。
+   * 表示だけの仮文言で、保存されている値は空文字のまま(編集画面では
+   * そのまま空欄で出るので、仮文言を消してから打ち直す手間がない)。 */
+  function contentLabel(content) {
+    var t = (content || '').trim();
+    return t ? esc(t) : '<span class="muted">内容未入力</span>';
   }
   function subjectById(id) {
     for (var i = 0; i < state.settings.subjects.length; i++) {
@@ -293,7 +300,7 @@
         listHtml +=
           '<div class="plan-item" data-id="' + r.id + '">' +
           '<span class="dot" style="background:' + sub.color + '"></span>' +
-          '<div class="p-main"><div class="p-title">' + esc(r.content) + '</div>' +
+          '<div class="p-main"><div class="p-title">' + contentLabel(r.content) + '</div>' +
           '<div class="p-sub">' + esc(sub.name) + (r.kind ? '・' + esc(r.kind) : '') + '</div></div>' +
           (r.actualMin > 0
             ? '<span class="p-done">✓ ' + C.fmtDuration(r.actualMin) + '</span>'
@@ -492,7 +499,10 @@
         score: null, maxScore: null, reflection: '',
         createdAt: Date.now(), updatedAt: Date.now(), deletedAt: null
       };
-      var v = C.validateRecord(rec, state.settings.subjects);
+      /* APP-481: 「学習を開始する」から急いで始めるときだけ、内容欄の
+       * 空欄を許す。「予定に追加する」(thenStart が無い経路)は従来どおり
+       * 内容を必須のままにする。要望の範囲をここだけに絞る。 */
+      var v = C.validateRecord(rec, state.settings.subjects, { allowEmptyContent: !!thenStart });
       if (!v.ok) { toast(v.errors[0], true); return; }
       state.records.push(rec);
       save(); closeModal(); renderToday();
@@ -523,7 +533,7 @@
       var sub = subjectById(r.subjectId);
       html += '<button class="plan-item" data-id="' + r.id + '" style="width:100%;cursor:pointer">' +
         '<span class="dot" style="background:' + sub.color + '"></span>' +
-        '<div class="p-main" style="text-align:left"><div class="p-title">' + esc(r.content) + '</div>' +
+        '<div class="p-main" style="text-align:left"><div class="p-title">' + contentLabel(r.content) + '</div>' +
         '<div class="p-sub">' + esc(sub.name) + '・計画' + C.fmtDuration(r.planMin) + '</div></div>▶</button>';
     });
     html += '</div><button class="btn block" id="m-new" style="margin-top:10px">＋ 新しい内容で開始</button>';
@@ -618,7 +628,7 @@
     card.innerHTML =
       '<h2>学習中</h2>' +
       '<div class="timer-big" id="timer-elapsed">0:00</div>' +
-      '<div class="timer-sub">' + esc(sub.name) + '・' + esc(rec.content) +
+      '<div class="timer-sub">' + esc(sub.name) + '・' + contentLabel(rec.content) +
       (declaredMin > 0 ? '(' + C.fmtDuration(declaredMin) + 'で完了)' : '') + '</div>' +
       '<div class="btn-row">' +
       '<button class="btn" id="btn-pause">' + (paused ? '▶ 再開' : '⏸ 一時停止') + '</button>' +
@@ -823,7 +833,7 @@
     card.innerHTML =
       '<h2 id="timer-completed">完了！ ' + C.fmtDuration(min) + '</h2>' +
       lateNotice +
-      '<div class="timer-sub">' + esc(sub.name) + '・' + esc(rec.content) + '</div>' +
+      '<div class="timer-sub">' + esc(sub.name) + '・' + contentLabel(rec.content) + '</div>' +
       '<p class="small" style="margin:10px 0">' + C.fmtDuration(min) +
       'ぶんのビートを記録したよ。<b>このままアプリを閉じても残る</b>から安心して</p>' +
       extendBtns +
@@ -881,7 +891,7 @@
       ((ses && ses.confirmedMin >= 0)
         ? '<p class="small" style="margin-bottom:10px">この時間はもう記録済みだよ。減らしたいときだけ直してね</p>'
         : '') +
-      '<p class="small muted" style="margin-bottom:10px">' + esc(rec.content) + '(計測 ' + C.fmtDuration(elapsedMin) + ')</p>' +
+      '<p class="small muted" style="margin-bottom:10px">' + contentLabel(rec.content) + '(計測 ' + C.fmtDuration(elapsedMin) + ')</p>' +
       (rec.extendedMin > 0
         ? '<p class="small" style="margin-bottom:10px">計画 ' + C.fmtDuration(rec.planMin) +
           ' ＋ 延長 ' + C.fmtDuration(rec.extendedMin) + '</p>'
@@ -902,7 +912,12 @@
         return;
       }
       var candidate = Object.assign({}, rec, { actualMin: actual, reflection: $('m-refl').value.trim() });
-      var v = C.validateRecord(candidate, state.settings.subjects);
+      /* APP-481: この画面には内容欄が無い(開始時に決めた内容のまま)。
+       * 内容欄が空で始めた記録(rec.content が既に空)は、ここで
+       * 「内容を入力してください」に止められると終了できなくなる。
+       * 内容を打ち直す入口は記録編集にあるので、ここでは弾かない。 */
+      var v = C.validateRecord(candidate, state.settings.subjects,
+        { allowEmptyContent: rec.content.trim() === '' });
       if (!v.ok) { toast(v.errors[0], true); return; }
       rec.actualMin = actual;
       rec.reflection = candidate.reflection;
@@ -1417,7 +1432,7 @@
       var scoreTxt = (r.score != null && r.maxScore != null) ? '・' + r.score + '/' + r.maxScore + '点' : '';
       html += '<div class="rec-item" data-id="' + r.id + '">' +
         '<span class="dot" style="background:' + sub.color + '"></span>' +
-        '<div class="r-main"><div class="r-title">' + esc(r.content) + '</div>' +
+        '<div class="r-main"><div class="r-title">' + contentLabel(r.content) + '</div>' +
         '<div class="r-sub">' + esc(sub.name) + '・' + esc(r.kind) +
         '・計画' + r.planMin + '分 / 実績' + r.actualMin + '分' + scoreTxt + '</div>' +
         (r.reflection ? '<div class="r-refl">' + esc(r.reflection) + '</div>' : '') +
@@ -1558,7 +1573,7 @@
         var sub = subjectById(r.subjectId);
         html += '<div class="rec-item" data-id="' + r.id + '">' +
           '<span class="dot" style="background:' + sub.color + '"></span>' +
-          '<div class="r-main"><div class="r-title">' + esc(r.content) + '</div>' +
+          '<div class="r-main"><div class="r-title">' + contentLabel(r.content) + '</div>' +
           '<div class="r-sub">' + fmtDateJa(r.date) + '・' + esc(sub.name) + '・実績' + r.actualMin + '分</div></div>' +
           '<div class="rec-actions">' +
           '<button class="btn small" data-act="restore" style="min-height:40px">復元</button>' +
@@ -1983,7 +1998,7 @@
         var sub = subjectById(r.subjectId);
         pt += r.planMin; at += r.actualMin;
         html += '<tr><td><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + sub.color + ';margin-right:4px"></span>' + esc(sub.name) + '</td>' +
-          '<td>' + esc(r.content) + (r.reflection ? '<div class="muted small">' + esc(r.reflection) + '</div>' : '') + '</td>' +
+          '<td>' + contentLabel(r.content) + (r.reflection ? '<div class="muted small">' + esc(r.reflection) + '</div>' : '') + '</td>' +
           '<td class="num">' + r.planMin + '分</td><td class="num">' + r.actualMin + '分</td></tr>';
       });
       html += '<tr><td colspan="2"><b>合計</b></td><td class="num"><b>' + pt + '分</b></td><td class="num"><b>' + at + '分</b></td></tr></table>';
@@ -3553,6 +3568,7 @@
   /* APP-430: 更新で何が変わったかを一言で伝える。
    * 版番号だけでは、利用者から見て何が新しいのか分からない。 */
   var WHATS_NEW = {
+    '4.6.0': '内容を決めていなくても、学習をすぐ始められるようになったよ。',
     '4.5.0': '不具合報告にスクリーンショットを添付できるようになったよ。',
     '4.4.0': 'ショップに15種類の画像プレビューを追加したよ。',
     '4.3.0': 'ポイント残高がいつも見えるようになって、ポイントのグラフも増えたよ。',

@@ -1765,3 +1765,22 @@ test('APP-440 §5: 旧記録を600分へ編集してもBP対象は増えない',
   });
   assert.equal(manualEdited.bpMin, 45, '旧手入力記録は45分以下');
 });
+
+test('APP-481: allowEmptyContent は内容欄の空欄チェックだけを外す', () => {
+  const empty = rec({ content: '' });
+  assert.ok(!C.validateRecord(empty, SUBJECTS).ok, '既定では引き続き拒否(範囲を広げない)');
+  assert.ok(C.validateRecord(empty, SUBJECTS, { allowEmptyContent: true }).ok,
+    'allowEmptyContent:true なら通す');
+
+  // 他の検査は allowEmptyContent の影響を受けない
+  const badSubject = rec({ content: '', subjectId: 'nope' });
+  assert.ok(!C.validateRecord(badSubject, SUBJECTS, { allowEmptyContent: true }).ok,
+    '内容以外の不備はallowEmptyContentでも拒否したまま');
+
+  const bothZero = rec({ content: '', planMin: 0, actualMin: 0 });
+  assert.ok(!C.validateRecord(bothZero, SUBJECTS, { allowEmptyContent: true }).ok,
+    '計画も実績も0はallowEmptyContentでも拒否したまま');
+
+  // 空白だけの内容も「空」として扱う
+  assert.ok(C.validateRecord(rec({ content: '   ' }), SUBJECTS, { allowEmptyContent: true }).ok);
+});

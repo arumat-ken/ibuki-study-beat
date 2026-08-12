@@ -1988,7 +1988,7 @@ async function freshPageWithClock(startMs) {
 }
 
 /** 今日の予定を作ってタイマーを開始する */
-async function startPlanTimer({ subjectLabel = '英語', kind = '単語・熟語', content, plan }) {
+async function startPlanTimer({ subjectLabel = '英語', kind = '単語・熟語', content = '', plan }) {
   await page.click('#btn-start-study');
   await page.waitForSelector('#modal-back.open');
   await page.selectOption('#m-subject', { label: subjectLabel });
@@ -3280,6 +3280,106 @@ async function test28_reportScreenshot() {
   await page.setViewportSize({ width: 390, height: 844 });
 }
 
+async function test29_emptyContentStart() {
+  console.log('\n■ 試験29: 内容欄が空でも学習を開始できる(APP-481)');
+  const T0 = new Date(2026, 7, 12, 10, 0, 0).getTime();
+  await freshPageWithClock(T0);
+
+  /* --- 空欄開始→自動停止→保存 --- */
+  await startPlanTimer({ content: '', plan: 20 });
+  ok('内容欄が空でもタイマーが始まる', await page.isVisible('#timer-card:visible'));
+  const runningLabel = await page.textContent('#timer-card .timer-sub');
+  ok('学習中の表示は空白ではなく仮表示になる', runningLabel.includes('内容未入力'), runningLabel);
+
+  await page.clock.fastForward(20 * 60 * 1000);
+  await page.waitForTimeout(300);
+  ok('内容未入力のまま自動停止して完了画面が出る', await page.isVisible('#timer-completed'));
+  const completedLabel = await page.textContent('#timer-card .timer-sub');
+  ok('完了画面でも仮表示になる', completedLabel.includes('内容未入力'), completedLabel);
+
+  /* --- 保存(終了する)。ここが従来ブロックされていた経路 --- */
+  await page.click('#btn-finish');
+  await page.waitForSelector('#m-actual');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  const stillBlocked = await page.isVisible('#m-actual');
+  ok('内容が空のままでも保存できる(以前は「内容を入力してください」で止まっていた)', !stillBlocked);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+
+  let st = await getState();
+  let rec = st.records.find(r => r.actualMin === 20 && r.date === localDate(0) && r.content === '');
+  ok('保存された記録の内容は空文字のまま(仮表示の文字列を書き込まない)',
+    rec && rec.content === '', rec ? `content=${JSON.stringify(rec.content)}` : '記録なし');
+  ok('BPは通常どおり付く', rec && rec.bp > 0, rec ? `bp=${rec.bp}` : '');
+
+  /* --- 一覧・グラフでも仮表示になる --- */
+  await nav('record');
+  await page.waitForTimeout(200);
+  const listLabel = await page.textContent('.rec-item .r-title');
+  ok('記録一覧でも空白ではなく仮表示になる', listLabel.includes('内容未入力'), listLabel);
+
+  /* --- 再起動後も保持される --- */
+  await reload();
+  st = await getState();
+  rec = st.records.find(r => r.actualMin === 20 && r.date === localDate(0));
+  ok('再起動後も内容は空文字のまま保持される(実績・BPも保たれる)',
+    rec && rec.content === '' && rec.actualMin === 20 && rec.bp > 0,
+    rec ? JSON.stringify({ content: rec.content, actual: rec.actualMin, bp: rec.bp }) : '記録なし');
+
+  /* --- 後から編集で具体的な内容へ変更できる --- */
+  await nav('record');
+  await page.waitForTimeout(200);
+  await page.click('.rec-item:has-text("内容未入力") [data-act="edit"]');
+  await page.waitForSelector('#m-content');
+  const editValue = await page.inputValue('#m-content');
+  ok('編集画面では仮表示ではなく空欄のまま出る(打ち直す手間がない)', editValue === '', `value=${JSON.stringify(editValue)}`);
+  await page.fill('#m-content', '英単語 20語');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  st = await getState();
+  rec = st.records.find(r => r.content === '英単語 20語');
+  ok('編集で具体的な内容へ変更できる', !!rec, JSON.stringify(st.records.map(r => r.content)));
+
+  /* --- 「予定に追加する」経路は従来どおり内容が必須 --- */
+  await freshPage(true);
+  await page.click('#btn-add-plan');
+  await page.waitForSelector('#modal-back.open');
+  await page.selectOption('#m-subject', { label: '英語' });
+  await page.fill('#m-content', '');
+  await page.fill('#m-plan', '20');
+  await page.click('#m-save');
+  await page.waitForTimeout(250);
+  ok('「予定に追加する」は内容が空だと従来どおり拒否される(検査範囲を広げない)',
+    await page.isVisible('#modal-back.open'));
+  await page.click('#m-close');
+
+  /* --- 通常の手入力記録も従来どおり内容が必須 --- */
+  await nav('record');
+  await page.waitForTimeout(150);
+  await page.selectOption('#rf-subject', { label: '英語' });
+  await page.fill('#rf-content', '');
+  await page.fill('#rf-plan', '20');
+  await page.fill('#rf-actual', '20');
+  await page.click('#rf-save');
+  await page.waitForTimeout(250);
+  const rfCount = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('ibukiStudyBeat.v3')).records.filter(r => r.actualMin === 20 && r.content === '').length);
+  ok('通常の手入力記録は内容が空だと従来どおり拒否される', rfCount === 0, `件数=${rfCount}`);
+
+  /* --- 計画時間1分以上の必須条件は変わらない --- */
+  await freshPage(true);
+  await page.click('#btn-start-study');
+  await page.waitForSelector('#modal-back.open');
+  await page.selectOption('#m-subject', { label: '英語' });
+  await page.fill('#m-content', '');
+  await page.fill('#m-plan', '0');
+  await page.click('#m-save');
+  await page.waitForTimeout(250);
+  ok('計画時間0分では内容が空でも開始できない(条件は変えない)', await page.isVisible('#modal-back.open'));
+  await page.click('#m-close');
+  await shot('90-empty-content-start');
+}
+
 /* ============ 実行 ============ */
 browser = await chromium.launch();
 try {
@@ -3311,6 +3411,7 @@ try {
   await test26_bpGraphFollowsRecalc();
   await test27_itemImages();
   await test28_reportScreenshot();
+  await test29_emptyContentStart();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);
