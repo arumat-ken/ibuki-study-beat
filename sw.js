@@ -1,5 +1,5 @@
 /* IBUKI STUDY BEAT — Service Worker (オフライン対応) */
-var CACHE = 'isb-v4.4.0';
+var CACHE = 'isb-v4.5.0';
 var ASSETS = [
   /* APP-430: アイテムの絵。オフラインでもショップと装備欄に出す。 */
   'assets/items/anti_gravity_lean.png',

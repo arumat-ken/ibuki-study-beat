@@ -5,6 +5,7 @@
  */
 import { createRequire } from 'node:module';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 
 /* playwright の場所は環境によって違う。通常の解決を先に試し、
@@ -29,7 +30,7 @@ function loadPlaywright() {
 const { chromium, devices } = loadPlaywright();
 
 const BASE = process.env.BASE_URL || 'http://127.0.0.1:8787';
-const SHOT_DIR = new URL('../../docs/screenshots/', import.meta.url).pathname;
+const SHOT_DIR = fileURLToPath(new URL('../../docs/screenshots/', import.meta.url));
 mkdirSync(SHOT_DIR, { recursive: true });
 
 const results = [];
@@ -3133,6 +3134,152 @@ async function test27_itemImages() {
   consoleErrors.length = errsBeforeAbort;
 }
 
+async function test28_reportScreenshot() {
+  console.log('\n■ 試験28: 不具合報告にスクリーンショットを添付する(APP-480)');
+  const sampleImage = fileURLToPath(new URL('../../icons/icon-192.png', import.meta.url));
+
+  async function openReport() {
+    await nav('settings');
+    await page.click('.settings-item[data-panel="report"]');
+    await page.waitForSelector('#rp-preview');
+  }
+
+  /* --- 画像選択欄がある。まだ選んでいない時は隠れている --- */
+  await freshPage(true);
+  await openReport();
+  ok('28-1 画像を選ぶボタンがある', await page.isVisible('#rp-pick'));
+  ok('28-2 何も選んでいない時はプレビュー行が隠れている', !(await page.isVisible('#rp-image-row')));
+
+  /* --- 画像を選ぶと、分かる表示(サムネ・ファイル名)が出る --- */
+  await page.setInputFiles('#rp-file', sampleImage);
+  await page.waitForTimeout(200);
+  ok('28-3 画像を選ぶとプレビュー行が表示される', await page.isVisible('#rp-image-row'));
+  const thumbSrc = await page.getAttribute('#rp-image-thumb', 'src');
+  ok('28-4 選んだ画像のサムネイルが表示される', !!thumbSrc && thumbSrc.indexOf('data:image') === 0,
+    (thumbSrc || '').slice(0, 20));
+  const nameText = await page.textContent('#rp-image-name');
+  ok('28-5 選んだ画像のファイル名が分かる', !!nameText && nameText.indexOf('icon-192') !== -1, nameText);
+  await shot('84-report-image-selected');
+
+  /* --- 画像自体をlocalStorageへ保存しない --- */
+  const storageCheck = await page.evaluate(() => {
+    var raw = localStorage.getItem('ibukiStudyBeat.v3') || '';
+    var hasDataUri = raw.indexOf('data:image') !== -1;
+    var keys = Object.keys(localStorage);
+    return { hasDataUri, keys };
+  });
+  ok('28-6 画像データが保存キーの中身に入らない', !storageCheck.hasDataUri);
+  ok('28-7 画像用の新しい保存キーを作らない',
+    storageCheck.keys.every((k) => k.indexOf('ibukiStudyBeat') === 0 || k === 'ibuki_beat_state'),
+    storageCheck.keys.join(','));
+
+  /* --- 選択解除 --- */
+  await page.click('#rp-image-clear');
+  await page.waitForTimeout(150);
+  ok('28-8 選択解除するとプレビュー行が消える', !(await page.isVisible('#rp-image-row')));
+  const clearedThumb = await page.getAttribute('#rp-image-thumb', 'src');
+  ok('28-9 選択解除するとサムネイルの参照も消える', !clearedThumb);
+
+  /* --- 対応端末: canShareがtrueなら画像込みで共有に渡る --- */
+  await page.setInputFiles('#rp-file', sampleImage);
+  await page.waitForTimeout(200);
+  let shared = await page.evaluate(() => {
+    window.__shared = null;
+    window.File = window.File || function () {};
+    navigator.canShare = () => true;
+    navigator.share = (d) => { window.__shared = d; return Promise.resolve(); };
+    document.getElementById('rp-send').click();
+    return new Promise((r) => setTimeout(() => r(window.__shared), 200));
+  });
+  ok('28-10 対応端末では画像込みで共有に渡る',
+    shared && Array.isArray(shared.files) && shared.files.length === 1,
+    shared ? JSON.stringify({ hasFiles: !!shared.files, text: (shared.text || '').slice(0, 20) }) : 'null');
+  ok('28-11 画像込みでも報告文が一緒に渡る',
+    shared && (shared.text || '').includes('IBUKI STUDY BEAT 不具合レポート'));
+  await page.click('#m-close');
+  await page.waitForTimeout(150);
+
+  /* --- 非対応端末: canShareがfalse/未対応なら文章のみの共有に落ちる --- */
+  await openReport();
+  await page.setInputFiles('#rp-file', sampleImage);
+  await page.waitForTimeout(200);
+  shared = await page.evaluate(() => {
+    window.__shared = null;
+    navigator.canShare = () => false;
+    navigator.share = (d) => { window.__shared = d; return Promise.resolve(); };
+    document.getElementById('rp-send').click();
+    return new Promise((r) => setTimeout(() => r(window.__shared), 200));
+  });
+  ok('28-12 非対応端末では画像なしで文章だけ共有に渡る',
+    shared && !shared.files && (shared.text || '').includes('IBUKI STUDY BEAT 不具合レポート'),
+    shared ? JSON.stringify({ hasFiles: !!shared.files }) : 'null');
+  const warnToastVisible = await page.evaluate(() => document.getElementById('toast').classList.contains('warn'));
+  ok('28-13 非対応時は文章だけ送った旨をやさしく伝える', warnToastVisible);
+  await page.click('#m-close');
+  await page.waitForTimeout(150);
+
+  /* --- 共有APIそのものが無い端末: 従来どおりコピーへ落ちる --- */
+  await openReport();
+  await page.fill('#rp-text', '共有API非対応環境の確認');
+  await page.waitForTimeout(150);
+  const copyResult = await page.evaluate(() => {
+    window.__copied = null;
+    delete navigator.share;
+    // navigator.clipboard はgetterのみのプロパティなので、直接代入では上書きできない(defineProperty必須)
+    Object.defineProperty(navigator, 'clipboard',
+      { value: { writeText: (t) => { window.__copied = t; return Promise.resolve(); } }, configurable: true });
+    document.getElementById('rp-send').click();
+    return new Promise((r) => setTimeout(() => r(window.__copied), 300));
+  });
+  ok('28-14 共有APIが無い端末では文章のコピーに落ちる',
+    !!copyResult && copyResult.includes('共有API非対応環境の確認'),
+    (copyResult || '').slice(0, 30));
+  await page.click('#m-close');
+  await page.waitForTimeout(150);
+
+  /* --- キャンセルはエラー扱いにしない(コピーへ落とさない) --- */
+  await openReport();
+  const cancelResult = await page.evaluate(() => {
+    window.__copyCalled = false;
+    navigator.share = () => { var e = new Error('cancel'); e.name = 'AbortError'; return Promise.reject(e); };
+    Object.defineProperty(navigator, 'clipboard',
+      { value: { writeText: () => { window.__copyCalled = true; return Promise.resolve(); } }, configurable: true });
+    document.getElementById('rp-send').click();
+    return new Promise((r) => setTimeout(() => r(window.__copyCalled), 300));
+  });
+  ok('28-15 共有をキャンセルしてもコピーへのフォールバックが起きない(エラー扱いにしない)',
+    cancelResult === false);
+  const errToastAfterCancel = await page.evaluate(() => document.getElementById('toast').classList.contains('warn'));
+  ok('28-16 共有をキャンセルしてもエラーのトーストが出ない', !errToastAfterCancel);
+  await page.click('#m-close');
+  await page.waitForTimeout(150);
+
+  /* --- 320px / 390px で画像選択欄・説明・ボタンが重ならない --- */
+  for (const width of [320, 390]) {
+    await freshPage(true);
+    await page.setViewportSize({ width, height: 760 });
+    await openReport();
+    await page.setInputFiles('#rp-file', sampleImage);
+    await page.waitForTimeout(200);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 2);
+    ok(`${width}px 28-17 画像選択済みの報告画面で横スクロールが出ない`, !overflow);
+    const rowFits = await page.$eval('#rp-image-row', (el) => {
+      const b = el.getBoundingClientRect();
+      return b.right <= window.innerWidth + 1 && b.left >= -1;
+    });
+    ok(`${width}px 28-18 画像プレビュー行が画面内に収まる`, rowFits);
+    const clearTappable = await page.$eval('#rp-image-clear', (el) => {
+      const b = el.getBoundingClientRect();
+      const t = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+      return !!(t && (t === el || el.contains(t))) && b.height >= 32;
+    });
+    ok(`${width}px 28-19 選択解除ボタンが押せる大きさで他要素に隠れていない`, clearTappable);
+    await shot(width === 320 ? '85-report-image-320px' : '86-report-image-390px');
+  }
+  await page.click('#m-close');
+  await page.setViewportSize({ width: 390, height: 844 });
+}
+
 /* ============ 実行 ============ */
 browser = await chromium.launch();
 try {
@@ -3163,6 +3310,7 @@ try {
   await test25_sessionGuards();
   await test26_bpGraphFollowsRecalc();
   await test27_itemImages();
+  await test28_reportScreenshot();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);
@@ -3178,5 +3326,5 @@ console.log(`\n===== 結果: ${passed}/${results.length} 合格 =====`);
 const md = ['# 受け入れ試験結果', '', `実行日: ${new Date().toISOString().slice(0, 10)} / 環境: Playwright + Chromium (iPhone 13 viewport)`, '',
   `**${passed}/${results.length} 合格**`, '', '| 結果 | 項目 | 詳細 |', '|---|---|---|',
   ...results.map(r => `| ${r.pass ? '✅' : '❌'} | ${r.name} | ${r.detail} |`), ''].join('\n');
-writeFileSync(new URL('../../TEST_RESULTS.md', import.meta.url).pathname, md);
+writeFileSync(fileURLToPath(new URL('../../TEST_RESULTS.md', import.meta.url)), md);
 process.exit(passed === results.length ? 0 : 1);
