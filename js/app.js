@@ -3415,6 +3415,9 @@
         $('rp-image-name').textContent = f.name || '画像';
         $('rp-image-row').style.display = '';
       };
+      // 壊れたファイル等で読み込みに失敗したとき、無反応のまま
+      // selectedImageが古い状態で残らないようにする(Antigravityレビュー指摘)。
+      reader.onerror = function () { toast('画像を読み込めなかったよ', true); clearImage(); };
       reader.readAsDataURL(f);
     });
     $('rp-image-clear').onclick = clearImage;
