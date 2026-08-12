@@ -5,7 +5,7 @@
 
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
-  var APP_VERSION = '4.4.0';
+  var APP_VERSION = '4.5.0';
   /* リリース表示用(画面右上)。更新のたびに日付を上げる。
    * モデル名は「未記録」固定とする(実行時のモデル識別子を断定してリポジトリの
    * 成果物に書き出さない方針のため。推測での記載はしない)。 */
@@ -3355,6 +3355,9 @@
   }
 
   function openReportPanel() {
+    // 選んだ画像はこの関数のスコープだけで持ち、localStorageへは一切保存しない(APP-480)。
+    var selectedImage = null;
+
     openModal(
       '<h3>不具合を報告する<button class="icon-btn" id="m-close">✕</button></h3>' +
       '<div class="small" style="line-height:1.8;margin-bottom:10px">' +
@@ -3365,49 +3368,99 @@
       '<div class="field"><label>どこで、何が起きた?</label>' +
       '<textarea id="rp-text" maxlength="500" rows="4" ' +
       'placeholder="例: コーチのメッセージボタンを押しても何も出てこない"></textarea></div>' +
-      '<div class="field"><label>送られる内容(自動)</label>' +
+      '<div class="field"><label>スクリーンショット(任意)</label>' +
+      '<input type="file" id="rp-file" accept="image/*" style="display:none">' +
+      '<button class="btn block" id="rp-pick">🖼️ 画像を選ぶ</button>' +
+      '<div id="rp-image-row" class="rp-image-row" style="display:none">' +
+      '<img id="rp-image-thumb" class="rp-image-thumb" alt="選んだ画像のプレビュー">' +
+      '<span id="rp-image-name" class="rp-image-name"></span>' +
+      '<button class="btn compact" id="rp-image-clear" type="button">✕ 選択解除</button>' +
+      '</div>' +
+      '<div class="small" style="margin-top:6px;line-height:1.7">' +
+      '画像はこの画面を閉じると消えます。端末に保存されず、対応端末では「送る」を押したときだけ共有画面へ渡ります。' +
+      '</div></div>' +
+      '<div class="field"><label>送られる内容(自動・文章のみ)</label>' +
       '<pre id="rp-preview" class="report-preview"></pre></div>' +
       '<button class="btn primary block" id="rp-send">📤 LINEなどで送る</button>' +
-      '<button class="btn block" id="rp-copy" style="margin-top:8px">📋 コピーする</button>' +
+      '<button class="btn block" id="rp-copy" style="margin-top:8px">📋 文章をコピーする</button>' +
       '<div class="small" style="margin-top:10px;line-height:1.8">' +
       '「送る」を押すと共有画面が出るので、LINEを選んでね。' +
       '出てこないときは「コピーする」で写して、LINEに貼り付けてね。' +
       '</div>'
     );
-    $('m-close').onclick = closeModal;
+    $('m-close').onclick = function () { clearImage(); closeModal(); };
     function refresh() { $('rp-preview').textContent = buildReportText($('rp-text').value); }
     $('rp-text').addEventListener('input', refresh);
     refresh();
+
+    function clearImage() {
+      selectedImage = null;
+      $('rp-file').value = '';
+      $('rp-image-row').style.display = 'none';
+      $('rp-image-thumb').src = '';
+    }
+    $('rp-pick').onclick = function () { $('rp-file').click(); };
+    $('rp-file').addEventListener('change', function () {
+      var f = this.files && this.files[0];
+      if (!f) return;
+      if (f.type.indexOf('image/') !== 0) {
+        toast('画像ファイルを選んでね', true);
+        clearImage();
+        return;
+      }
+      var reader = new FileReader();
+      reader.onload = function () {
+        selectedImage = f;
+        $('rp-image-thumb').src = reader.result;
+        $('rp-image-name').textContent = f.name || '画像';
+        $('rp-image-row').style.display = '';
+      };
+      // 壊れたファイル等で読み込みに失敗したとき、無反応のまま
+      // selectedImageが古い状態で残らないようにする(Antigravityレビュー指摘)。
+      reader.onerror = function () { toast('画像を読み込めなかったよ', true); clearImage(); };
+      reader.readAsDataURL(f);
+    });
+    $('rp-image-clear').onclick = clearImage;
+
     $('rp-copy').onclick = function () {
       copyToClipboard(buildReportText($('rp-text').value)).then(function (okCopy) {
         toast(okCopy ? 'コピーしたよ！LINEなどに貼り付けてね' : 'コピーできなかった。長押しで選んでコピーしてね', !okCopy);
       });
     };
-    $('rp-send').onclick = function () { shareReport(buildReportText($('rp-text').value)); };
+    $('rp-send').onclick = function () {
+      shareReport(buildReportText($('rp-text').value), selectedImage);
+    };
   }
 
-  /* 報告文を端末の共有画面へ渡す(APP-470)。
-   * アプリ自身は通信しない。文章をiOSの共有シートへ渡すだけで、
+  /* 報告文(と選んだ画像)を端末の共有画面へ渡す(APP-470 / APP-480)。
+   * アプリ自身は通信しない。iOSの共有シートへ渡すだけで、
    * どこへ送るかは本人がその場で選ぶ(LINE・メールなど)。
-   * 共有が使えない環境ではコピーに落とす。 */
-  function shareReport(text) {
-    if (navigator.share) {
-      navigator.share({ title: 'IBUKI STUDY BEAT 不具合レポート', text: text })
-        .catch(function (e) {
-          // 本人が共有画面を閉じただけのときは何も言わない
-          if (e && e.name === 'AbortError') return;
-          fallbackShare(text);
-        });
-      return;
+   * 画像はメモリ上のFileのみを扱い、localStorageへは保存しない。
+   * 共有が使えない/画像に対応しない環境では、文章だけの共有・コピーに落とす。 */
+  function shareReport(text, imageFile) {
+    if (!navigator.share) { fallbackShare(text, imageFile); return; }
+
+    var data = { title: 'IBUKI STUDY BEAT 不具合レポート', text: text };
+    if (imageFile && navigator.canShare && window.File &&
+        navigator.canShare({ files: [imageFile] })) {
+      data.files = [imageFile];
+    } else if (imageFile) {
+      toast('この端末では画像を共有に添付できないよ。文章だけ送るね', true);
     }
-    fallbackShare(text);
+    navigator.share(data).catch(function (e) {
+      // 本人が共有画面を閉じただけのときは何も言わない
+      if (e && e.name === 'AbortError') return;
+      fallbackShare(text, imageFile);
+    });
   }
 
-  function fallbackShare(text) {
+  function fallbackShare(text, imageFile) {
     copyToClipboard(text).then(function (okCopy) {
-      toast(okCopy
+      var msg = okCopy
         ? 'この端末では共有画面が使えないよ。コピーしたからLINEに貼り付けてね'
-        : 'コピーできなかった。長押しで選んでコピーしてね', !okCopy);
+        : 'コピーできなかった。長押しで選んでコピーしてね';
+      if (imageFile && okCopy) msg += '(画像は別途、写真アプリから貼り付けてね)';
+      toast(msg, !okCopy);
     });
   }
 
@@ -3500,6 +3553,7 @@
   /* APP-430: 更新で何が変わったかを一言で伝える。
    * 版番号だけでは、利用者から見て何が新しいのか分からない。 */
   var WHATS_NEW = {
+    '4.5.0': '不具合報告にスクリーンショットを添付できるようになったよ。',
     '4.4.0': 'ショップに15種類の画像プレビューを追加したよ。',
     '4.3.0': 'ポイント残高がいつも見えるようになって、ポイントのグラフも増えたよ。',
     '4.2.0': 'タイマーが決めた時間で自動的に止まるようになったよ。'

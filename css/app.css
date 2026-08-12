@@ -185,6 +185,20 @@ input[type="color"] { padding: 2px; width: 44px; min-width: 44px; height: 44px; 
   max-height: 180px; overflow: auto; white-space: pre-wrap; word-break: break-all;
   color: var(--dim); margin: 0; -webkit-overflow-scrolling: touch;
 }
+/* 不具合報告のスクリーンショット選択(APP-480)。320px幅でも折り返して重ならない。 */
+.rp-image-row {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-top: 8px; padding: 8px; min-width: 0;
+  background: var(--card-2); border: 1px solid var(--line); border-radius: 10px;
+}
+.rp-image-thumb {
+  width: 44px; height: 44px; border-radius: 8px; object-fit: cover;
+  border: 1px solid var(--line); flex-shrink: 0;
+}
+.rp-image-name {
+  flex: 1 1 100px; min-width: 0; font-size: 0.75rem; color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .settings-item .dot {
   width: 9px; height: 9px; border-radius: 50%; background: #E8604C;
   display: inline-block; margin-left: 6px; vertical-align: middle;

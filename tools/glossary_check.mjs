@@ -15,8 +15,9 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, extname, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const ROOT = new URL('..', import.meta.url).pathname.replace(/\/$/, '');
+const ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '');
 const GLOSSARY = join(ROOT, 'docs/GLOSSARY.md');
 const IGNORE = join(ROOT, 'tools/glossary_ignore.json');
 
