@@ -223,13 +223,24 @@
     return item.durationMin * 60000;
   }
 
-  function validateRecord(rec, subjects) {
+  /**
+   * opts.allowEmptyContent: 内容欄の空欄チェックだけを外す(APP-481)。
+   *
+   * 「学習を開始する」から急いで始めたいとき、内容を考えて入力することを
+   * 必須にしない、という限定的な要望に対応するため。通常の予定追加・
+   * 手入力記録の検査範囲は変えない(既定は false で、これまでどおり
+   * 内容が空なら弾く)。
+   */
+  function validateRecord(rec, subjects, opts) {
+    var o = opts || {};
     var errors = [];
     if (!rec || typeof rec !== 'object') return { ok: false, errors: ['記録データが不正です'] };
     if (!isDateStr(rec.date)) errors.push('日付が正しくありません');
     var subjectIds = (subjects || []).map(function (s) { return s.id; });
     if (subjectIds.indexOf(rec.subjectId) === -1) errors.push('科目を選択してください');
-    if (typeof rec.content !== 'string' || rec.content.trim() === '') errors.push('内容を入力してください');
+    if (!o.allowEmptyContent && (typeof rec.content !== 'string' || rec.content.trim() === '')) {
+      errors.push('内容を入力してください');
+    }
     var plan = rec.planMin, actual = rec.actualMin;
     if (!isIntInRange(plan, 0, MAX_MIN_PER_RECORD)) errors.push('計画時間は0〜' + MAX_MIN_PER_RECORD + '分で入力してください');
     if (!isIntInRange(actual, 0, MAX_MIN_PER_RECORD)) errors.push('実績時間は0〜' + MAX_MIN_PER_RECORD + '分で入力してください');
