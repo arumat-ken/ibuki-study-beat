@@ -72,6 +72,23 @@ test('受け入れ4: 誤入力は拒否される', () => {
   assert.ok(C.validateRecord(rec({ kind: 'テスト', score: 80, maxScore: 100 }), SUBJECTS).ok, '80/100点は有効');
 });
 
+test('後からの時刻入力: 同じ日の開始・終了から実績を決め、不一致や日またぎは拒否する', () => {
+  assert.ok(C.isTimeStr('00:00'));
+  assert.ok(C.isTimeStr('23:59'));
+  assert.ok(!C.isTimeStr('24:00'));
+  assert.ok(!C.isTimeStr('9:00'));
+  assert.equal(C.minutesBetweenTimes('16:10', '17:25'), 75);
+  assert.equal(C.minutesBetweenTimes('17:25', '16:10'), null, '日またぎ・逆順は受け付けない');
+
+  assert.ok(C.validateRecord(rec({ planMin: 75, actualMin: 75, startTime: '16:10', endTime: '17:25' }), SUBJECTS).ok);
+  assert.ok(!C.validateRecord(rec({ actualMin: 74, startTime: '16:10', endTime: '17:25' }), SUBJECTS).ok,
+    '時刻差と実績が違う記録は拒否');
+  assert.ok(!C.validateRecord(rec({ startTime: '16:10', endTime: null }), SUBJECTS).ok,
+    '開始だけの記録は拒否');
+  assert.ok(!C.validateRecord(rec({ actualMin: 720, startTime: '08:00', endTime: '23:00' }), SUBJECTS).ok,
+    '12時間を超える時刻差は拒否');
+});
+
 test('受け入れ5: 削除済み(ごみ箱)の記録は集計から除外', () => {
   const records = [
     rec({ id: 'a', actualMin: 30 }),
@@ -115,6 +132,18 @@ test('sanitizeState: 正常な状態は保持される', () => {
   assert.equal(out.records[0].actualMin, 28);
   assert.equal(out.events.length, 1);
   assert.equal(out.settings.subjects.length, 6);
+});
+
+test('sanitizeState: 正しい時刻範囲だけを残し、旧記録の実績とBPは守る', () => {
+  const st = C.defaultState('2026-08-01');
+  st.records.push(rec({ id: 'timed', planMin: 75, actualMin: 75, startTime: '16:10', endTime: '17:25' }));
+  st.records.push(rec({ id: 'broken-time', actualMin: 30, startTime: '17:00', endTime: '16:30' }));
+  const out = C.sanitizeState(JSON.parse(JSON.stringify(st)), '2026-08-01');
+  const timed = out.records.find(r => r.id === 'timed');
+  const broken = out.records.find(r => r.id === 'broken-time');
+  assert.deepEqual({ start: timed.startTime, end: timed.endTime }, { start: '16:10', end: '17:25' });
+  assert.deepEqual({ start: broken.startTime, end: broken.endTime, actual: broken.actualMin },
+    { start: null, end: null, actual: 30 }, '壊れた時刻だけを捨てる');
 });
 
 test('sanitizeState: 破損データはnullを返し例外を出さない', () => {

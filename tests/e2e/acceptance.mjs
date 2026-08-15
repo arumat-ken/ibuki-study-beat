@@ -482,7 +482,7 @@ async function test9_versionAndUpdate() {
   // リリース表示(更新日・更新AI・モデル)。モデル名は断定せず「未記録」を許容する。
   const build = (await page.textContent('#app-build')).trim();
   ok('画面右上に更新日が表示される', /\d{4}-\d{2}-\d{2}/.test(build), build);
-  ok('画面右上に更新したAI(Claude Code)が表示される', build.includes('Claude Code'), build);
+  ok('画面右上に更新したAIが表示される', /更新\s+(Claude Code|Codex)/.test(build), build);
   ok('画面右上にモデル欄が表示される(未記録も許容)', /モデル\s*(未記録|\S+)/.test(build), build);
   await page.setViewportSize({ width: 320, height: 680 });
   await page.reload();
@@ -3283,6 +3283,9 @@ async function test28_reportScreenshot() {
 async function test29_emptyContentStart() {
   console.log('\n■ 試験29: 内容欄が空でも学習を開始できる(APP-481)');
   const T0 = new Date(2026, 7, 12, 10, 0, 0).getTime();
+  /* この試験だけは時計を2026-08-12に固定する。実行した当日の日付ではなく、
+   * 固定時計と同じ日付を探さないと、日付が進んだ後に記録を見失ってしまう。 */
+  const fixedToday = new Date(T0).toISOString().slice(0, 10);
   await freshPageWithClock(T0);
 
   /* --- 空欄開始→自動停止→保存 --- */
@@ -3307,7 +3310,7 @@ async function test29_emptyContentStart() {
   if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
 
   let st = await getState();
-  let rec = st.records.find(r => r.actualMin === 20 && r.date === localDate(0) && r.content === '');
+  let rec = st.records.find(r => r.actualMin === 20 && r.date === fixedToday && r.content === '');
   ok('保存された記録の内容は空文字のまま(仮表示の文字列を書き込まない)',
     rec && rec.content === '', rec ? `content=${JSON.stringify(rec.content)}` : '記録なし');
   ok('BPは通常どおり付く', rec && rec.bp > 0, rec ? `bp=${rec.bp}` : '');
@@ -3321,7 +3324,7 @@ async function test29_emptyContentStart() {
   /* --- 再起動後も保持される --- */
   await reload();
   st = await getState();
-  rec = st.records.find(r => r.actualMin === 20 && r.date === localDate(0));
+  rec = st.records.find(r => r.actualMin === 20 && r.date === fixedToday);
   ok('再起動後も内容は空文字のまま保持される(実績・BPも保たれる)',
     rec && rec.content === '' && rec.actualMin === 20 && rec.bp > 0,
     rec ? JSON.stringify({ content: rec.content, actual: rec.actualMin, bp: rec.bp }) : '記録なし');
@@ -3380,8 +3383,88 @@ async function test29_emptyContentStart() {
   await shot('90-empty-content-start');
 }
 
+async function test30_laterStudyEntryWithTimes() {
+  console.log('\n■ 試験30: 後からの学習を開始・終了時刻つきで記録(APP-490)');
+  await freshPage(true);
+  await nav('record');
+  await page.fill('#rf-date', localDate(-1));
+  await page.selectOption('#rf-subject', { label: '数学' });
+  await page.fill('#rf-content', '因数分解の復習');
+  await page.fill('#rf-plan', '75');
+  await page.fill('#rf-start-time', '16:10');
+  await page.fill('#rf-end-time', '17:25');
+  await page.waitForTimeout(120);
+  ok('開始16:10・終了17:25から実績75分を自動計算',
+    await page.inputValue('#rf-actual') === '75');
+  ok('時刻を入れた実績欄は手入力できない', await page.getAttribute('#rf-actual', 'readonly') !== null);
+  await page.click('#rf-save');
+  await page.waitForTimeout(300);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+
+  let st = await getState();
+  let saved = st.records.find(r => r.content === '因数分解の復習');
+  const initialBp = saved ? saved.bp : -1;
+  ok('過去の日付・科目・種別・内容・開始/終了時刻をまとめて保存',
+    saved && saved.date === localDate(-1) && saved.subjectId === 'math' &&
+      saved.actualMin === 75 && saved.startTime === '16:10' && saved.endTime === '17:25',
+    saved ? JSON.stringify({ date: saved.date, subject: saved.subjectId, actual: saved.actualMin, start: saved.startTime, end: saved.endTime }) : '記録なし');
+  const rowText = await page.textContent('.rec-item:has-text("因数分解の復習")');
+  ok('一覧にも開始・終了時刻を表示', rowText.includes('16:10〜17:25'), rowText);
+
+  await reload();
+  st = await getState();
+  saved = st.records.find(r => r.content === '因数分解の復習');
+  ok('再起動後も時刻と実績を保持', saved && saved.actualMin === 75 && saved.startTime === '16:10' && saved.endTime === '17:25');
+
+  await nav('record');
+  await page.click('.rec-item:has-text("因数分解の復習") [data-act="edit"]');
+  await page.waitForSelector('#m-start-time');
+  await page.fill('#m-end-time', '17:35');
+  await page.waitForTimeout(80);
+  ok('編集時も終了時刻から実績85分を自動計算', await page.inputValue('#m-actual') === '85');
+  await page.click('#m-save');
+  await page.waitForTimeout(300);
+  st = await getState();
+  saved = st.records.find(r => r.content === '因数分解の復習');
+  ok('後から終了時刻を延ばしても初回のBPを超えない',
+    saved && saved.bp <= initialBp, saved ? `before=${initialBp}, after=${saved.bp}` : '記録なし');
+
+  const beforeInvalid = st.records.length;
+  await page.fill('#rf-content', '時刻の誤入力');
+  await page.fill('#rf-plan', '30');
+  await page.fill('#rf-actual', '30');
+  await page.fill('#rf-start-time', '18:00');
+  await page.fill('#rf-end-time', '17:00');
+  await page.click('#rf-save');
+  await page.waitForTimeout(200);
+  st = await getState();
+  ok('終了が開始以前の時刻入力は保存しない', st.records.length === beforeInvalid, `records=${st.records.length}`);
+  await page.fill('#rf-start-time', '');
+  await page.fill('#rf-end-time', '');
+  await page.fill('#rf-content', '手入力は従来どおり');
+  await page.click('#rf-save');
+  await page.waitForTimeout(250);
+  if (await page.isVisible('#celebrate.open')) await page.click('#celebrate-close');
+  st = await getState();
+  ok('時刻を空にすれば従来の実績分による手入力も使える',
+    st.records.some(r => r.content === '手入力は従来どおり' && r.actualMin === 30 && !r.startTime && !r.endTime));
+  await page.setViewportSize({ width: 320, height: 680 });
+  await nav('record');
+  const narrowOverflow = await page.evaluate(() => document.documentElement.scrollWidth > 330);
+  ok('後から記録する時刻入力も320px幅で横スクロールしない', !narrowOverflow);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const iphoneOverflow = await page.evaluate(() => document.documentElement.scrollWidth > 400);
+  ok('後から記録する時刻入力も390px幅で横スクロールしない', !iphoneOverflow);
+  await shot('91-later-study-entry');
+}
+
 /* ============ 実行 ============ */
-browser = await chromium.launch();
+/* Codexなど、テスト用ブラウザをアプリ本体とは別に管理する環境では、
+ * PLAYWRIGHT_EXECUTABLE_PATH で公式Chromiumの場所を指定できる。未指定時は
+ * Playwright標準のブラウザを使うため、通常の開発環境の動作は変わらない。 */
+browser = await chromium.launch(process.env.PLAYWRIGHT_EXECUTABLE_PATH
+  ? { executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH }
+  : {});
 try {
   await test1_firstStudy();
   await test2_sevenDays();
@@ -3412,6 +3495,7 @@ try {
   await test27_itemImages();
   await test28_reportScreenshot();
   await test29_emptyContentStart();
+  await test30_laterStudyEntryWithTimes();
   await extra_screens();
 } catch (e) {
   console.error('試験実行エラー:', e);
