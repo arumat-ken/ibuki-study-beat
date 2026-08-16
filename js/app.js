@@ -5,12 +5,12 @@
 
   /* アプリのバージョン。更新時はここと sw.js の CACHE を一緒に上げる。
    * 保存キー(KEY)は絶対に変えないこと(過去の記録が読めなくなるため)。 */
-  var APP_VERSION = '4.6.0';
+  var APP_VERSION = '4.7.0';
   /* リリース表示用(画面右上)。更新のたびに日付を上げる。
    * モデル名は「未記録」固定とする(実行時のモデル識別子を断定してリポジトリの
    * 成果物に書き出さない方針のため。推測での記載はしない)。 */
-  var BUILD_DATE = '2026-08-12';
-  var BUILD_UPDATER = 'Claude Code';
+  var BUILD_DATE = '2026-08-16';
+  var BUILD_UPDATER = 'Codex';
   var BUILD_MODEL = '未記録';
 
   /* ================= ストレージ ================= */
@@ -517,6 +517,39 @@
     if (v === '' || v == null) return 0;
     var n = Number(v);
     return (isFinite(n) && Math.floor(n) === n) ? n : NaN;
+  }
+
+  /* 開始・終了時刻を両方入力したときは、実績時間を時刻差に固定する。
+   * 手入力の実績時間も必要なため、時刻欄が空なら従来どおり編集できる。 */
+  function bindTimeRange(startId, endId, actualId, hintId) {
+    var startEl = $(startId), endEl = $(endId), actualEl = $(actualId), hintEl = $(hintId);
+    if (!startEl || !endEl || !actualEl) return;
+    function refresh() {
+      var hasStart = !!startEl.value, hasEnd = !!endEl.value;
+      var minutes = C.minutesBetweenTimes(startEl.value, endEl.value);
+      if (hasStart && hasEnd && minutes !== null && minutes <= C.MAX_MIN_PER_RECORD) {
+        actualEl.value = String(minutes);
+        actualEl.readOnly = true;
+        if (hintEl) hintEl.textContent = '実績時間を' + minutes + '分に自動計算しました。時刻を直すと更新されます。';
+      } else {
+        actualEl.readOnly = false;
+        if (hintEl) {
+          if (hasStart && hasEnd && minutes === null) {
+            hintEl.textContent = '終了時刻は開始時刻より後にしてください。日をまたぐ記録はできません。';
+          } else if (hasStart && hasEnd) {
+            hintEl.textContent = '開始・終了時刻は同じ日の中で、最長' +
+              (C.MAX_MIN_PER_RECORD / 60) + '時間（' + C.MAX_MIN_PER_RECORD + '分）の範囲にしてください。';
+          } else if (hasStart || hasEnd) {
+            hintEl.textContent = '開始時刻と終了時刻は両方入力してください。';
+          } else {
+            hintEl.textContent = '両方を入れると、実績時間を自動で計算します。同じ日の記録に使えます。';
+          }
+        }
+      }
+    }
+    startEl.addEventListener('input', refresh);
+    endEl.addEventListener('input', refresh);
+    refresh();
   }
 
   /* --- 学習セッション(タイマー) --- */
@@ -1374,11 +1407,16 @@
     $('rf-score-row').style.display = this.value === C.TEST_KIND ? '' : 'none';
   });
   bindKindToSubject('rf-subject', 'rf-kind', 'rf-score-row');
+  bindTimeRange('rf-start-time', 'rf-end-time', 'rf-actual', 'rf-time-hint');
 
   $('record-form').addEventListener('submit', function (e) {
     e.preventDefault();
     var kind = $('rf-kind').value;
     var scoreV = $('rf-score').value, maxV = $('rf-maxscore').value;
+    var startTime = $('rf-start-time').value || null;
+    var endTime = $('rf-end-time').value || null;
+    var timedActual = C.minutesBetweenTimes(startTime, endTime);
+    var actualMin = timedActual === null ? parseIntSafe($('rf-actual').value) : timedActual;
     var rec = {
       id: nextId('r'),
       date: $('rf-date').value,
@@ -1386,14 +1424,16 @@
       content: $('rf-content').value.trim(),
       kind: kind,
       planMin: parseIntSafe($('rf-plan').value),
-      actualMin: parseIntSafe($('rf-actual').value),
+      actualMin: actualMin,
+      startTime: startTime,
+      endTime: endTime,
       score: (kind === 'テスト' && scoreV !== '') ? parseIntSafe(scoreV) : null,
       maxScore: (kind === 'テスト' && maxV !== '') ? parseIntSafe(maxV) : null,
       reflection: $('rf-reflection').value.trim(),
       createdAt: Date.now(), updatedAt: Date.now(), deletedAt: null,
       /* APP-440 §5: 手入力には宣言済み時間が無いので、作成時の実績を
        * BPの上限として覚えておく。あとから増やしてもBPは増えない。 */
-      bpMinInitial: parseIntSafe($('rf-actual').value),
+      bpMinInitial: actualMin,
       timerUsed: false
     };
     var v = C.validateRecord(rec, state.settings.subjects);
@@ -1409,6 +1449,9 @@
     }
     save();
     $('rf-content').value = ''; $('rf-plan').value = ''; $('rf-actual').value = '';
+    $('rf-start-time').value = ''; $('rf-end-time').value = '';
+    $('rf-actual').readOnly = false;
+    $('rf-time-hint').textContent = '両方を入れると、実績時間を自動で計算します。同じ日の記録に使えます。';
     $('rf-score').value = ''; $('rf-maxscore').value = ''; $('rf-reflection').value = '';
     renderRecordList();
     checkPoseUnlocks();
@@ -1432,11 +1475,13 @@
       }
       var sub = subjectById(r.subjectId);
       var scoreTxt = (r.score != null && r.maxScore != null) ? '・' + r.score + '/' + r.maxScore + '点' : '';
+      var timeTxt = (C.minutesBetweenTimes(r.startTime, r.endTime) !== null)
+        ? '・' + esc(r.startTime) + '〜' + esc(r.endTime) : '';
       html += '<div class="rec-item" data-id="' + r.id + '">' +
         '<span class="dot" style="background:' + sub.color + '"></span>' +
         '<div class="r-main"><div class="r-title">' + contentLabel(r.content) + '</div>' +
         '<div class="r-sub">' + esc(sub.name) + '・' + esc(r.kind) +
-        '・計画' + r.planMin + '分 / 実績' + r.actualMin + '分' + scoreTxt + '</div>' +
+        '・計画' + r.planMin + '分 / 実績' + r.actualMin + '分' + timeTxt + scoreTxt + '</div>' +
         (r.reflection ? '<div class="r-refl">' + esc(r.reflection) + '</div>' : '') +
         '</div>' +
         '<div class="rec-actions">' +
@@ -1467,6 +1512,11 @@
       '<div class="field"><label>内容</label><input type="text" id="m-content" maxlength="100" value="' + esc(rec.content) + '"></div>' +
       '<div class="field"><label>学習種別</label><select id="m-kind">' + kindOptions(rec.kind, rec.subjectId) + '</select></div>' +
       '<div class="field-row">' +
+      '<div class="field"><label>開始時刻</label><input type="time" id="m-start-time" value="' + esc(rec.startTime || '') + '"></div>' +
+      '<div class="field"><label>終了時刻</label><input type="time" id="m-end-time" value="' + esc(rec.endTime || '') + '"></div>' +
+      '</div>' +
+      '<p class="small muted" id="m-time-hint"></p>' +
+      '<div class="field-row">' +
       '<div class="field"><label>計画(分)</label><input type="number" id="m-plan" min="0" max="720" inputmode="numeric" value="' + rec.planMin + '"></div>' +
       '<div class="field"><label>実績(分)</label><input type="number" id="m-actual" min="0" max="720" inputmode="numeric" value="' + rec.actualMin + '"></div>' +
       '</div>' +
@@ -1484,16 +1534,22 @@
     $('m-subject').onchange = function () {
       refreshKindForSubject($('m-kind'), this.value, $('m-score-row'), 'flex');
     };
+    bindTimeRange('m-start-time', 'm-end-time', 'm-actual', 'm-time-hint');
     $('m-save').onclick = function () {
       var kind = $('m-kind').value;
       var scoreV = $('m-score').value, maxV = $('m-maxscore').value;
+      var startTime = $('m-start-time').value || null;
+      var endTime = $('m-end-time').value || null;
+      var timedActual = C.minutesBetweenTimes(startTime, endTime);
       var cand = Object.assign({}, rec, {
         date: $('m-date').value,
         subjectId: $('m-subject').value,
         content: $('m-content').value.trim(),
         kind: kind,
         planMin: parseIntSafe($('m-plan').value),
-        actualMin: parseIntSafe($('m-actual').value),
+        actualMin: timedActual === null ? parseIntSafe($('m-actual').value) : timedActual,
+        startTime: startTime,
+        endTime: endTime,
         score: (kind === 'テスト' && scoreV !== '') ? parseIntSafe(scoreV) : null,
         maxScore: (kind === 'テスト' && maxV !== '') ? parseIntSafe(maxV) : null,
         reflection: $('m-refl').value.trim()
@@ -3570,6 +3626,7 @@
   /* APP-430: 更新で何が変わったかを一言で伝える。
    * 版番号だけでは、利用者から見て何が新しいのか分からない。 */
   var WHATS_NEW = {
+    '4.7.0': 'あとからの学習も、開始・終了時刻を入れてまとめて記録できるようになったよ。',
     '4.6.0': '内容を決めていなくても、学習をすぐ始められるようになったよ。',
     '4.5.0': '不具合報告にスクリーンショットを添付できるようになったよ。',
     '4.4.0': 'ショップに15種類の画像プレビューを追加したよ。',

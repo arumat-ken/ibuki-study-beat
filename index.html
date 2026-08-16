@@ -85,7 +85,7 @@
       <button class="head-btn" id="btn-open-trash" aria-label="ごみ箱">🗑</button>
     </div>
     <div class="card">
-      <h2>記録を追加(後からでもOK)</h2>
+      <h2>記録を追加(後からまとめてOK)</h2>
       <form id="record-form" autocomplete="off">
         <div class="field-row">
           <div class="field">
@@ -105,6 +105,17 @@
           <label for="rf-kind">学習種別</label>
           <select id="rf-kind"></select>
         </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="rf-start-time">開始時刻</label>
+            <input type="time" id="rf-start-time">
+          </div>
+          <div class="field">
+            <label for="rf-end-time">終了時刻</label>
+            <input type="time" id="rf-end-time">
+          </div>
+        </div>
+        <p class="small muted" id="rf-time-hint">両方を入れると、実績時間を自動で計算します。同じ日の記録に使えます。</p>
         <div class="field-row">
           <div class="field">
             <label for="rf-plan">計画(分)</label>

@@ -247,6 +247,23 @@
     if (isIntInRange(plan, 0, MAX_MIN_PER_RECORD) && isIntInRange(actual, 0, MAX_MIN_PER_RECORD) && plan === 0 && actual === 0) {
       errors.push('計画時間か実績時間のどちらかを入力してください');
     }
+    /* 後から入力する開始・終了時刻。日付をまたぐ入力は曖昧になりやすいため、
+     * この画面では同じ日の範囲だけを受け付ける。時刻を使うときは実績時間を
+     * 必ず時刻差と一致させ、BPだけを増やせる別経路を作らない。 */
+    var hasStart = rec.startTime != null && rec.startTime !== '';
+    var hasEnd = rec.endTime != null && rec.endTime !== '';
+    if (hasStart !== hasEnd) {
+      errors.push('開始時刻と終了時刻は両方入力してください');
+    } else if (hasStart && hasEnd) {
+      var timeMin = minutesBetweenTimes(rec.startTime, rec.endTime);
+      if (timeMin === null) {
+        errors.push('終了時刻は開始時刻より後にしてください');
+      } else if (timeMin > MAX_MIN_PER_RECORD) {
+        errors.push('開始から終了までは' + MAX_MIN_PER_RECORD + '分以内で入力してください');
+      } else if (isIntInRange(actual, 0, MAX_MIN_PER_RECORD) && actual !== timeMin) {
+        errors.push('実績時間は開始・終了時刻から自動計算した時間と一致させてください');
+      }
+    }
     if (rec.kind !== undefined && rec.kind !== '' && !isValidStudyKind(rec.kind)) errors.push('学習種別が不正です');
     if (rec.kind === 'テスト' && (rec.score !== null && rec.score !== undefined && rec.score !== '')) {
       var score = rec.score, max = rec.maxScore;
@@ -258,6 +275,23 @@
 
   function isIntInRange(v, min, max) {
     return typeof v === 'number' && isFinite(v) && Math.floor(v) === v && v >= min && v <= max;
+  }
+
+  /** HH:MM形式(00:00〜23:59)かを調べる。時刻は端末のタイムゾーンに変換せず、
+   * 本人が見た時計の時刻としてそのまま保存する。 */
+  function isTimeStr(value) {
+    if (typeof value !== 'string' || !/^\d{2}:\d{2}$/.test(value)) return false;
+    var parts = value.split(':');
+    var hour = Number(parts[0]), minute = Number(parts[1]);
+    return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+  }
+
+  /** 同じ日の開始・終了時刻の差を分で返す。不正または日またぎはnull。 */
+  function minutesBetweenTimes(startTime, endTime) {
+    if (!isTimeStr(startTime) || !isTimeStr(endTime)) return null;
+    var s = Number(startTime.slice(0, 2)) * 60 + Number(startTime.slice(3, 5));
+    var e = Number(endTime.slice(0, 2)) * 60 + Number(endTime.slice(3, 5));
+    return e > s ? e - s : null;
   }
 
   /** 配列から重複を除く(順序は保持)。 */
@@ -602,6 +636,11 @@
          * 読み込み時に入れるだけなので、未編集の残高は変わらない。 */
         var bpMinInitialValue = isIntInRange(r.bpMinInitial, 0, MAX_MIN_PER_RECORD)
           ? r.bpMinInitial : bpMinValue;
+        var timeMin = minutesBetweenTimes(r.startTime, r.endTime);
+        /* 時刻を持つ記録は、時刻差と実績が一致するときだけ復元する。
+         * 旧記録や壊れた入力は、時刻だけを捨てて既存の実績・BPを守る。 */
+        var keepTime = timeMin !== null && timeMin === (r.actualMin | 0) &&
+          timeMin <= MAX_MIN_PER_RECORD;
         return {
           id: typeof r.id === 'string' ? r.id : 'r' + Math.random().toString(36).slice(2, 10),
           date: r.date,
@@ -610,6 +649,8 @@
           kind: isValidStudyKind(r.kind) ? r.kind : 'その他',
           planMin: r.planMin | 0,
           actualMin: r.actualMin | 0,
+          startTime: keepTime ? r.startTime : null,
+          endTime: keepTime ? r.endTime : null,
           score: isIntInRange(r.score, 0, 10000) ? r.score : null,
           maxScore: isIntInRange(r.maxScore, 1, 10000) ? r.maxScore : null,
           reflection: typeof r.reflection === 'string' ? r.reflection.slice(0, 300) : '',
@@ -2041,6 +2082,8 @@
     pad2: pad2,
     toDateStr: toDateStr,
     isDateStr: isDateStr,
+    isTimeStr: isTimeStr,
+    minutesBetweenTimes: minutesBetweenTimes,
     parseDate: parseDate,
     addDays: addDays,
     diffDays: diffDays,
