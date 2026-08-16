@@ -79,8 +79,12 @@ test('後からの時刻入力: 同じ日の開始・終了から実績を決め
   assert.ok(!C.isTimeStr('9:00'));
   assert.equal(C.minutesBetweenTimes('16:10', '17:25'), 75);
   assert.equal(C.minutesBetweenTimes('17:25', '16:10'), null, '日またぎ・逆順は受け付けない');
+  assert.equal(C.minutesBetweenTimes('10:00', '10:00'), null, '同時刻の0分は受け付けない');
+  assert.equal(C.minutesBetweenTimes('08:00', '20:00'), 720, '12時間ちょうどは有効');
 
   assert.ok(C.validateRecord(rec({ planMin: 75, actualMin: 75, startTime: '16:10', endTime: '17:25' }), SUBJECTS).ok);
+  assert.ok(C.validateRecord(rec({ planMin: 720, actualMin: 720, startTime: '08:00', endTime: '20:00' }), SUBJECTS).ok,
+    '12時間ちょうどは保存できる');
   assert.ok(!C.validateRecord(rec({ actualMin: 74, startTime: '16:10', endTime: '17:25' }), SUBJECTS).ok,
     '時刻差と実績が違う記録は拒否');
   assert.ok(!C.validateRecord(rec({ startTime: '16:10', endTime: null }), SUBJECTS).ok,

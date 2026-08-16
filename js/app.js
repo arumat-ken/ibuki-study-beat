@@ -534,9 +534,16 @@
       } else {
         actualEl.readOnly = false;
         if (hintEl) {
-          hintEl.textContent = hasStart || hasEnd
-            ? '開始・終了時刻は両方入力し、同じ日の範囲にしてください。'
-            : '両方を入れると、実績時間を自動で計算します。同じ日の記録に使えます。';
+          if (hasStart && hasEnd && minutes === null) {
+            hintEl.textContent = '終了時刻は開始時刻より後にしてください。日をまたぐ記録はできません。';
+          } else if (hasStart && hasEnd) {
+            hintEl.textContent = '開始・終了時刻は同じ日の中で、最長' +
+              (C.MAX_MIN_PER_RECORD / 60) + '時間（' + C.MAX_MIN_PER_RECORD + '分）の範囲にしてください。';
+          } else if (hasStart || hasEnd) {
+            hintEl.textContent = '開始時刻と終了時刻は両方入力してください。';
+          } else {
+            hintEl.textContent = '両方を入れると、実績時間を自動で計算します。同じ日の記録に使えます。';
+          }
         }
       }
     }
