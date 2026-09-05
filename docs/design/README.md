@@ -15,7 +15,9 @@ ChatGPT が画面設計を行い、Claude(Claude Code)が実装します。
 | `FEATURE_SPEC_v4.md` | 追加機能の確定設計(ポイント・ニュース・金融) | Claude(作成済み) |
 | `GUI_SPEC_v4.md` | **← ChatGPTの成果物①(設計書)を置く場所** | **ChatGPT** |
 | `AVATAR_TALK_DESIGN.md` | **AI会話アニメーションツールの設計と実装手順**(本体アプリとは独立したPythonツール) | Claude(作成済み) |
-| `avatar_face_prompts.json` | 表情パーツ生成プロンプトの正本(`AVATAR_TALK_DESIGN.md` から参照) | Claude(作成済み) |
+| `AVATAR_TALK_GEMINI_BRIEF.md` | **Geminiに渡す画像26枚の指示書**(表情18枚+全身8枚) | Claude(作成済み) |
+| `avatar_face_prompts.json` | 画像生成プロンプトの正本。**Codexが直接推敲してよい** | Claude→**Codex** |
+| `reference/character_base_v1.jpg` | キャラクターの基準画像(Gemini生成・確定済み) | Gemini |
 | `../mockups/v4.html` | **← ChatGPTの成果物②(HTMLモック)を置く場所** | **ChatGPT** |
 
 ## 進め方

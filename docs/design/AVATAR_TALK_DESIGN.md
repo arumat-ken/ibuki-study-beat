@@ -41,10 +41,18 @@ flowchart LR
   F --> G[口の形<br/>閉じ/半開き/開き]
   C --> H[set_expression<br/>ツール呼び出し]
   H --> I[表情<br/>喜怒哀楽+中立+驚き]
+  C --> P[play_pose<br/>ツール呼び出し]
+  P --> Q[全身の動作<br/>挨拶・喜ぶ・考える…]
   G --> J[画像を重ねて描く]
   I --> J
-  K[Geminiで作った<br/>表情パーツPNG] --> J
+  Q --> J
+  R[呼吸・重心の揺れ<br/>うなずき(計算で作る)] --> J
+  K[Geminiで作った<br/>26枚のPNG] --> J
 ```
+
+**キャラクターの基準画像は `docs/design/reference/character_base_v1.jpg`**(Gemini が生成した全身写真)。
+ここから 26 枚を作り足す。作り方の指示は
+[`AVATAR_TALK_GEMINI_BRIEF.md`](AVATAR_TALK_GEMINI_BRIEF.md) にまとめてある。
 
 ### 0.3 用語(この文書で使うもの)
 
@@ -133,7 +141,7 @@ flowchart TB
 | ❌ 受信した瞬間(`response.output_audio.delta` が届いた時) | Realtime API は音声を**まとめて先に**送ってくる。数百ミリ秒〜数秒ぶんが一気に届くこともある。受信時に測ると、**口だけが声より先に動く**(声が出ていないのにパクパクする) |
 | ✅ スピーカーへ渡す瞬間(出力コールバックの中) | いま鳴っているバイト列そのものから測るので、**耳に聞こえる音と口が必ず一致する** |
 
-`Player._callback()` の中で、デバイスへ書き込む `block` の RMS をそのまま使う(付録 A-5)。
+`Player._callback()` の中で、デバイスへ書き込む `block` の RMS をそのまま使う(付録 A-6)。
 バッファに何ミリ秒ぶん溜まっていようと、ずれない。
 
 ---
@@ -185,6 +193,9 @@ Authorization: Bearer <OPENAI_API_KEY>
 
 - 主線は `set_expression` ツール。`config.py` に定義し、`instructions` で
   「**感情を音声で読み上げてはいけない**」と明示する。
+- 全身の動作は別のツール `play_pose(pose)` に分ける。**表情と動作は頻度が違う**
+  ためで、表情は発話ごとに変わってよいが、全身は 1 回の会話で 2〜3 度まで。
+  同じツールにまとめると、モデルが毎回全身を出してしまい会話が途切れる。
 - 保険として、読み上げ文からタグを抜く `TagStreamParser` も実装しておく(付録 A-1)。
   モデルが指示を無視してタグを書いた場合に、**少なくとも字幕には出さない**ため。
 
@@ -212,9 +223,26 @@ Authorization: Bearer <OPENAI_API_KEY>
 
 ## 4. ビジュアル表示 —— GUI とアセット
 
-### 4.1 画像の重ね方
+### 4.1 2つのビュー —— 会話用と全身用
 
-キャラクターは**1枚絵ではなく、重ねた層**として描く。口だけを差し替えれば口が動く。
+**1つの絵で会話も全身の動作もまかなおうとすると破綻する。**
+全身の引きで撮ると、顔は画面の数%しかない。そこで口を動かしても**見えない**。
+かといってバストアップだけでは、挨拶もお辞儀も表現できない。
+
+そこで**ビューを2つに分ける**。
+
+| ビュー | 画角 | 用途 | 口パク | 枚数 |
+|---|---|---|---|---|
+| `talk` | バストアップ(1024×1024) | **会話中はずっとこれ。**顔が大きいので口の動きが見える | する | 6表情 × 3口 = **18枚** |
+| `pose` | 全身(768×1024) | 挨拶・喜び・驚き・お辞儀。**数秒だけ出して talk へ戻る** | しない(顔が小さい) | 8動作 = **8枚** |
+
+合計 **26枚**。全身を出しっぱなしにしないのが肝心で、
+出したままだと口が動かないので「会話が死んで見える」。
+`AvatarState.show_pose()` は既定 2.2 秒で自動的に `talk` へ戻す。
+
+### 4.1.1 画像の重ね方
+
+`talk` ビューは**1枚絵ではなく、重ねた層**として描く。口だけを差し替えれば口が動く。
 
 | 順 | レイヤー | 中身 | 必須 |
 |---|---|---|---|
@@ -225,7 +253,7 @@ Authorization: Bearer <OPENAI_API_KEY>
 | 5 | `mouth` | **口の差分**(`half` / `open`)。`closed` は `body` に含まれるので無し | 推奨 |
 | 6 | `effect` | 汗・怒りマークなど | 任意 |
 
-**最小構成は「表情ごとに `body` 1枚 + 口 2枚」= 6表情 × 3枚 = 18枚。**
+`pose` ビューは差し替えの必要が無いので `background` / `body` / `effect` の3層だけ。
 
 ### 4.2 マニフェスト(`manifest.json`)
 
@@ -234,19 +262,32 @@ Authorization: Bearer <OPENAI_API_KEY>
 
 ```json
 {
-  "schemaVersion": 1,
-  "characterId": "ibuki",
-  "canvas": { "width": 1024, "height": 1024 },
-  "layers": ["background", "body", "brows", "eyes", "mouth", "effect"],
-  "defaultEmotion": "neutral",
-  "emotions": {
-    "neutral": {
-      "body": "neutral_body.png",
-      "mouth": { "half": "neutral_mouth_half.png", "open": "neutral_mouth_open.png" }
+  "schemaVersion": 2,
+  "characterId": "ibuki_navi",
+  "defaultView": "talk",
+  "views": {
+    "talk": {
+      "canvas": { "width": 1024, "height": 1024 },
+      "layers": ["background", "body", "brows", "eyes", "mouth", "effect"],
+      "defaultEmotion": "neutral",
+      "emotions": {
+        "neutral": {
+          "body": "talk_neutral_body.png",
+          "mouth": {
+            "half": "talk_neutral_mouth_half.png",
+            "open": "talk_neutral_mouth_open.png"
+          }
+        }
+      }
     },
-    "joy": {
-      "body": "joy_body.png",
-      "mouth": { "half": "joy_mouth_half.png", "open": "joy_mouth_open.png" }
+    "pose": {
+      "canvas": { "width": 768, "height": 1024 },
+      "layers": ["background", "body", "effect"],
+      "defaultPose": "idle",
+      "poses": {
+        "idle":  { "body": "pose_idle.png" },
+        "greet": { "body": "pose_greet.png" }
+      }
     }
   }
 }
@@ -257,9 +298,12 @@ Authorization: Bearer <OPENAI_API_KEY>
 | 欠けたもの | どうなるか |
 |---|---|
 | 知らない表情を指定された | `defaultEmotion` の顔で描く |
+| 知らないポーズを指定された | `defaultPose`(`idle`)の立ち姿で描く |
+| 知らないビュー名 | `defaultView`(`talk`)へ縮退する |
 | その表情に `closed` の口が無い | 同じ表情の中で `half` → `open` の順に探す |
 | ファイルが実在しない | **そのレイヤーだけ飛ばして描く**。例外は投げない。`missing` に記録して起動ログに出す |
 | 画像が1枚も無い | 「画像がありません(会話は動きます)」と画面に出す。**会話機能は動く** |
+| `pose` ビューがまだ無い | `talk` だけで動く。全身の演出が出ないだけ |
 
 `schemaVersion` が違う場合だけは、起動時に落として原因を出す。黙って違う絵を出すより良い。
 
@@ -320,14 +364,38 @@ Authorization: Bearer <OPENAI_API_KEY>
   戻すと、しゃべり終わるたびに真顔になって不自然になる。
 - **知らない感情名**が来たら、無視して現在の表情を保ち、画面下に理由を出す。落とさない。
 
-### 4.5 描画
+### 4.5 体の動き —— 枚数を増やさずに動かす
+
+**絵をどれだけ良くしても、体が完全に静止していると「写真がパクパクしているだけ」に見える。**
+かといって動きのぶんだけ画像を用意するのは現実的でない。
+
+そこで**動きは計算で作る**。`core/motion.py` が、時刻と音量から
+「平行移動・拡大率・傾き」を1つ返し、描くときにかける。絵は1枚のままでよい。
+
+| 動き | 中身 | 効果 |
+|---|---|---|
+| 呼吸 | 3.8秒周期で 0.6% 拡縮 + わずかに上下。**吸うのを速く、吐くのを遅く**した非対称な波 | 生きている感じ。単なる `sin` だと機械的に見える |
+| 重心の揺れ | 9.1秒周期で左右 0.25% + 0.35° の傾き | 直立不動の不気味さが消える |
+| うなずき | 420ms で下げて戻す。**行きを速く、戻りをゆっくり** | 相づち。表情が変わった瞬間に自動で1回打つ |
+| 声の弾み | 音量に応じて最大 0.35% 持ち上げる | 声と体が繋がって見える |
+
+呼吸(3.8秒)と揺れ(9.1秒)の周期は**割り切れない比にしてある**。
+割り切れると数十秒に一度たまたま山が重なり、不自然に大きく動く。
+
+振れ幅はすべて**キャンバスの大きさに対する比**で返すので、画面の解像度に依存しない。
+安全弁として上下方向は 5% で頭打ちにしてある(絵の粗が目立ち、見ていて酔うため)。
+
+変形の中心は**体の中心より少し下(高さの72%)**に置く。頭のてっぺんを軸に回すと、
+うなずきではなく体ごと倒れる動きになる。
+
+### 4.6 描画
 
 `QTimer` で 60fps。毎フレーム `AvatarState.tick()` を呼び、返ってきた
-(表情・口・目)の組から**使うファイルの並び**を決める。
+(ビュー・表情/ポーズ・口・目・変形)から**使うファイルの並び**を決める。
 
-**前フレームとファイルの並びが同じなら再描画しない。**
-口は 20ms 単位でしか変わらないので、実際の再描画は毎秒数回で済む。
-`QPixmap` は一度読んだら使い回す(毎フレーム読み込むと 60fps は出ない)。
+**体の動きは毎フレーム変わるので、描画そのものは毎回行う。**
+重いのは画像の読み込みなので、`QPixmap` は一度読んだら使い回す
+(毎フレーム読み込むと 60fps は出ない)。
 
 ---
 
@@ -337,12 +405,16 @@ Authorization: Bearer <OPENAI_API_KEY>
 
 **毎回テキストだけから作ると、同じキャラクターにならない。** 髪型も服も顔も変わる。
 
+**基準画像はすでにある。** `docs/design/reference/character_base_v1.jpg`
+(Gemini が生成済みの全身写真、682×1024)。これを毎回の参照として渡す。
+
 ```
-① 基準の1枚を作る(neutral・口閉じ)
-        ↓  この画像を参照として毎回渡す
-② 6表情 × 口3段階 = 18枚を作る
+① 基準画像(確定済み)
+        ↓  毎回これを参照として渡す
+② 会話用バストアップ 6表情 × 口3段階 = 18枚
+   全身の動作 8枚
         ↓
-③ 差分を取って「口レイヤー」に分ける(5.2)
+③ 差分を取って「口レイヤー」に分ける(5.2)※会話用だけ
         ↓
 ④ manifest.json と MANIFEST.md を作る(5.3)
         ↓
@@ -351,8 +423,11 @@ Authorization: Bearer <OPENAI_API_KEY>
 
 プロンプトの正本は **`docs/design/avatar_face_prompts.json`**。
 `docs/design/item_image_prompts.json` と同じ扱いで、**コードにプロンプトを書かない**。
-「参照画像とまったく同じ人物・同じ構図・同じ大きさ・同じ位置・同じ光。
-**変えてよいのは表情と口の形だけ**」という指示を毎回添える。
+基準画像から起こしたキャラクターシート(髪・服・アクセサリー・体型・配色)が
+その中に入っていて、生成のたびに必ず添える。**ここがぶれると26枚すべてがぶれる。**
+
+Gemini にそのまま渡せる指示書は
+[`AVATAR_TALK_GEMINI_BRIEF.md`](AVATAR_TALK_GEMINI_BRIEF.md)。
 
 ### 5.2 差分から口レイヤーを作る —— 核心の工夫
 
@@ -503,7 +578,7 @@ cd avatar_talk
 python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
 ```
 
-`pyproject.toml`(付録 A-20)と `.env.example`(付録 A-21)を置き、`.gitignore` に
+`pyproject.toml`(付録 A-22)と `.env.example`(付録 A-23)を置き、`.gitignore` に
 `avatar_talk/.env` / `avatar_talk/raw/` / `.venv/` を足す。
 
 ```bash
@@ -516,7 +591,7 @@ pip install -e ".[dev]"
 
 ### STEP 1 — 純ロジックを作る(2〜3時間)★ここが土台
 
-**API も画像も音声デバイスも要らない。** `core/` の4ファイルとテストを書く。
+**API も画像も音声デバイスも要らない。** `core/` の5ファイルとテストを書く。
 
 | 作るもの | 付録 |
 |---|---|
@@ -524,13 +599,14 @@ pip install -e ".[dev]"
 | `src/avatar_talk/core/lipsync.py` | A-2 |
 | `src/avatar_talk/core/assets.py` | A-3 |
 | `src/avatar_talk/core/state.py` | A-4 |
-| `tests/test_{emotion,lipsync,assets,state}.py` | A-16〜19 |
+| `src/avatar_talk/core/motion.py` | A-5 |
+| `tests/test_{emotion,lipsync,assets,state,motion}.py` | A-17〜21 |
 
 **完了条件**:
 
 ```bash
 ruff check src tests && pytest -q
-# → 29 passed
+# → 42 passed
 ```
 
 **つまずきやすい点**: 口パクを「しきい値を超えたら開く」と素朴に書かないこと。
@@ -564,7 +640,7 @@ done
 python tools/build_manifest.py assets/characters/ibuki --canvas 512
 ```
 
-`gui/stage.py`(A-7)、`gui/app.py`(A-8)、`__main__.py`(A-9)を書く。
+`gui/stage.py`(A-8)、`gui/app.py`(A-9)、`__main__.py`(A-10)を書く。
 
 **完了条件**:
 
@@ -579,7 +655,7 @@ python -m avatar_talk --demo
 
 ### STEP 3 — 音声を通す(API はまだ使わない)(2時間)
 
-`audio/capture.py`(A-6)と `audio/playback.py`(A-5)を書き、
+`audio/capture.py`(A-7)と `audio/playback.py`(A-6)を書き、
 **マイクの音をそのままスピーカーへ返す**確認用スクリプトで試す。
 
 ```python
@@ -602,7 +678,7 @@ from avatar_talk.core.state import AvatarState
 
 ### STEP 4 — Realtime API に繋ぐ(3時間)★ここから課金
 
-`config.py`(A-10)と `realtime/client.py`(A-11)を書く。
+`config.py`(A-11)と `realtime/client.py`(A-12)を書く。
 **最初は音声の再生を繋がず、`error` イベントと字幕だけを見る。**
 
 ```bash
@@ -650,35 +726,38 @@ python -m avatar_talk --verbose
 
 ### STEP 8 — 本番の絵に差し替える(半日〜1日)
 
+基準画像は確定済み(`docs/design/reference/character_base_v1.jpg`)なので、
+26枚を作り足す作業から始める。手順の全文は
+[`AVATAR_TALK_GEMINI_BRIEF.md`](AVATAR_TALK_GEMINI_BRIEF.md)。
+
 ```bash
 pip install -e ".[assets]"
 export GEMINI_API_KEY=...
-python tools/gen_face_assets.py --base        # ① 基準の1枚
-# → raw/neutral_closed.png を目で見て、気に入るまで作り直す
-python tools/gen_face_assets.py --all         # ② 残り17枚(基準を参照)
+python tools/gen_face_assets.py --all         # 会話用18枚 + 全身8枚
 for e in neutral joy anger sad fun surprise; do
-  python tools/split_mouth.py raw/${e}_closed.png raw/${e}_half.png raw/${e}_open.png \
-      --out assets/characters/ibuki --emotion $e
+  python tools/split_mouth.py raw/talk_${e}_closed.png raw/talk_${e}_half.png \
+      raw/talk_${e}_open.png --out assets/characters/ibuki_navi --emotion talk_${e}
 done
-python tools/build_manifest.py assets/characters/ibuki --canvas 1024
-python tools/check_assets.py assets/characters/ibuki/manifest.json --require-all-emotions
-python -m avatar_talk --demo                  # ③ 見た目を確認
+python tools/build_manifest.py assets/characters/ibuki_navi
+python tools/check_assets.py assets/characters/ibuki_navi/manifest.json --require-all
+python -m avatar_talk --demo                  # 見た目を確認
 ```
 
-**完了条件**: `check_assets.py` が `OK: 6 表情、すべて描ける` を返し、
-`--demo` で見た目が破綻していない。
+**完了条件**: `check_assets.py` が
+`OK: 会話用 6 表情 / 全身 8 動作、すべて描ける` を返し、`--demo` で破綻していない。
 
 **つまずきやすい点**:
-- **①で妥協しない。** 基準がぶれると、以降18枚すべてがぶれる
-- 口の位置がずれた画像が混ざると、`split_mouth.py` の差分が顔全体に広がる。
-  出来た口レイヤーを開いて、**口の周りだけが残っているか**を目で確かめる
+- **会話用18枚は顔の位置と大きさが揃っていること。** ずれていると `split_mouth.py` の
+  差分が顔全体に広がる。出来た口レイヤーを開いて、**口の周りだけが残っているか**を
+  必ず目で確かめる
+- 全身8枚は**指の本数を数える**。手は生成が破綻しやすい
 - 生成物の**出所と利用許諾は `SOURCES.md` に人が書く**。自動生成物に推測を書かない
 
 ---
 
 ### STEP 9 — CI と引き渡し(1時間)
 
-`.github/workflows/avatar-talk.yml`(付録 A-22)を置き、PR を作る。
+`.github/workflows/avatar-talk.yml`(付録 A-24)を置き、PR を作る。
 
 **完了条件**: CI の4段すべてが緑。`docs/exchange/STATUS.md` を更新して合図する。
 
@@ -706,7 +785,7 @@ python -m avatar_talk --demo                  # ③ 見た目を確認
 
 | 確かめたこと | 方法 | 結果 |
 |---|---|---|
-| 純ロジックが正しいか | `pytest`(29件) | **全て合格** |
+| 純ロジックが正しいか | `pytest`(42件) | **全て合格** |
 | 書き方が揃っているか | `ruff check`(100桁 / E,F,W,I,UP,B,SIM) | **指摘ゼロ** |
 | 口パクが実際に動くか | 音節9個の合成音声(3秒 / 150フレーム)を流す | 4.3 節の図のとおり。立ち上がり40ms、末尾は閉じる |
 | 小さい声でも動くか | -38dBFS を流し、固定しきい値と比較 | 固定では開かず、追従ありでは開いた |
@@ -714,8 +793,11 @@ python -m avatar_talk --demo                  # ③ 見た目を確認
 | 差分から口レイヤーが作れるか | 口だけが違う合成画像18枚で全工程を実行 | `body + mouth_open` が元画像と**画素単位で一致**(平均差 0.00) |
 | マニフェストが機能するか | 6表情ぶんを生成 → `check_assets.py` | `OK: 6 表情、すべて描ける` |
 | 画像が欠けても落ちないか | ファイルを消してから `resolve()` | そのレイヤーだけ飛ばして描画。例外なし |
-| **この文書のコードがそのまま動くか** | **付録 A から機械的に取り出して `ruff` と `pytest`** | **指摘ゼロ / 29件合格** |
-| **STEP 2 の手順どおりに進むか** | **この文書のコマンドをそのまま実行** | **仮の絵18枚 → マニフェスト → 検査まで通った** |
+| 2つのビューが切り替わるか | 仮の絵26枚で `talk` → `pose` → `talk` を通す | 2.2秒で自動的に会話画面へ戻った |
+| 体の動きが行儀よく収まるか | 2000フレームぶん、上下・傾き・拡縮の範囲を検査 | 上下 5%・傾き 2.5°・拡縮 2% 以内 |
+| 呼吸と揺れが重ならないか | 周期の比が整数でないことを検査 | 3.8秒 : 9.1秒 = 2.39倍。重ならない |
+| **この文書のコードがそのまま動くか** | **付録 A から機械的に取り出して `ruff` と `pytest`** | **指摘ゼロ / 42件合格** |
+| **STEP 2 の手順どおりに進むか** | **この文書のコマンドをそのまま実行** | **仮の絵26枚 → マニフェスト → 検査まで通った** |
 
 **確かめていないこと**(手元に環境が無いため):
 
@@ -746,7 +828,7 @@ python -m avatar_talk --demo                  # ③ 見た目を確認
 
 ## 10. 付録A — コード全文
 
-以下は **`ruff` の指摘ゼロ、`pytest` 29件合格**を確認したもの。
+以下は **`ruff` の指摘ゼロ、`pytest` 42件合格**を確認したもの。
 そのまま置けば STEP 1〜2 が動く。
 
 ### A-1. `src/avatar_talk/core/emotion.py`
@@ -987,6 +1069,10 @@ class LipSync:
 
 画像そのものは扱わない(Qt にも Pillow にも依存しない)。返すのはパスの列だけ。
 こうしておくと GUI 無しでテストでき、CI でもアセットの検査ができる。
+
+**ビューは2つある。**
+  talk … 会話用のバストアップ。表情と口を差し替える(口パクが見える大きさ)
+  pose … 全身の動作。ポーズ画像を丸ごと差し替える(顔が小さいので口は動かさない)
 """
 from __future__ import annotations
 
@@ -994,8 +1080,9 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-SCHEMA_VERSION = 1
-DEFAULT_LAYER_ORDER = ("background", "body", "brows", "eyes", "mouth", "effect")
+SCHEMA_VERSION = 2
+TALK_LAYERS = ("background", "body", "brows", "eyes", "mouth", "effect")
+POSE_LAYERS = ("background", "body", "effect")
 PART_FALLBACK = {"mouth": ("closed", "half", "open"), "eyes": ("open", "half", "closed")}
 
 
@@ -1004,26 +1091,24 @@ class ManifestError(Exception):
 
 
 @dataclass
-class CharacterAssets:
-    """1キャラクター分の画像パーツ一式。"""
+class View:
+    """1つのビュー(talk か pose)。差し替えの単位をまとめて持つ。"""
 
+    name: str
     root: Path
-    character_id: str
     canvas: tuple[int, int]
     layer_order: tuple[str, ...]
-    default_emotion: str
-    emotions: dict[str, dict]
+    default_key: str
+    entries: dict[str, dict]
     missing: list[str] = field(default_factory=list)
 
-    # ---------------------------------------------------------------- 解決
-
-    def resolve(self, emotion: str, mouth: str = "closed", eye: str = "open") -> list[Path]:
+    def resolve(self, key: str, mouth: str = "closed", eye: str = "open") -> list[Path]:
         """描画順(奥→手前)に並んだ、実在するファイルのパスを返す。
 
         画像が1枚も無くてもここは空リストを返すだけで、例外は投げない。
         アセットが揃う前でもアプリが動くようにするための約束。
         """
-        spec = self.emotions.get(emotion) or self.emotions.get(self.default_emotion) or {}
+        spec = self.entries.get(key) or self.entries.get(self.default_key) or {}
         wanted = {"mouth": mouth, "eyes": eye}
         out: list[Path] = []
         for layer in self.layer_order:
@@ -1034,7 +1119,7 @@ class CharacterAssets:
             if path.is_file():
                 out.append(path)
             else:
-                self._note_missing(f"{emotion}/{layer}: {name} が見つからない")
+                self._note_missing(f"{self.name}/{key}/{layer}: {name} が見つからない")
         return out
 
     def _pick(self, spec: dict, layer: str, key: str | None) -> str | None:
@@ -1056,14 +1141,11 @@ class CharacterAssets:
         if message not in self.missing:
             self.missing.append(message)
 
-    # ---------------------------------------------------------------- 検査
-
     def validate(self) -> list[str]:
-        """CI とツールから呼ぶ全数検査。問題の一覧を返す(空なら合格)。"""
         problems: list[str] = []
-        if self.default_emotion not in self.emotions:
-            problems.append(f"defaultEmotion `{self.default_emotion}` が emotions に無い")
-        for emotion, spec in sorted(self.emotions.items()):
+        if self.default_key not in self.entries:
+            problems.append(f"{self.name}: 既定の `{self.default_key}` が定義に無い")
+        for key, spec in sorted(self.entries.items()):
             for layer in self.layer_order:
                 value = spec.get(layer)
                 if isinstance(value, str):
@@ -1074,8 +1156,55 @@ class CharacterAssets:
                     names = []
                 for name in names:
                     if not (self.root / name).is_file():
-                        problems.append(f"{emotion}.{layer}: `{name}` が存在しない")
+                        problems.append(f"{self.name}.{key}.{layer}: `{name}` が存在しない")
         return problems
+
+
+@dataclass
+class CharacterAssets:
+    """1キャラクター分の画像一式。ビューをまとめて持つ。"""
+
+    root: Path
+    character_id: str
+    default_view: str
+    views: dict[str, View]
+
+    def view(self, name: str) -> View:
+        """知らないビュー名でも落とさず、既定のビューを返す。"""
+        return self.views.get(name) or self.views[self.default_view]
+
+    @property
+    def talk(self) -> View:
+        return self.view("talk")
+
+    @property
+    def missing(self) -> list[str]:
+        return [m for v in self.views.values() for m in v.missing]
+
+    def validate(self) -> list[str]:
+        return [p for v in self.views.values() for p in v.validate()]
+
+
+def _build_view(name: str, root: Path, data: dict) -> View:
+    canvas = data.get("canvas") or {}
+    if name == "pose":
+        entries = data.get("poses") or {}
+        default_key = str(data.get("defaultPose", "idle"))
+        layers = data.get("layers") or POSE_LAYERS
+    else:
+        entries = data.get("emotions") or {}
+        default_key = str(data.get("defaultEmotion", "neutral"))
+        layers = data.get("layers") or TALK_LAYERS
+    if not isinstance(entries, dict) or not entries:
+        raise ManifestError(f"ビュー `{name}` の中身が空。最低でも1つ要る")
+    return View(
+        name=name,
+        root=root,
+        canvas=(int(canvas.get("width", 1024)), int(canvas.get("height", 1024))),
+        layer_order=tuple(layers),
+        default_key=default_key,
+        entries=entries,
+    )
 
 
 def load(manifest_path: str | Path) -> CharacterAssets:
@@ -1092,32 +1221,34 @@ def load(manifest_path: str | Path) -> CharacterAssets:
     if version != SCHEMA_VERSION:
         raise ManifestError(f"schemaVersion が {version}。このツールは {SCHEMA_VERSION} のみ対応")
 
-    emotions = data.get("emotions")
-    if not isinstance(emotions, dict) or not emotions:
-        raise ManifestError("emotions が空。最低でも1つの表情が要る")
+    raw_views = data.get("views")
+    if not isinstance(raw_views, dict) or not raw_views:
+        raise ManifestError("views が空。talk ビューだけでも定義すること")
 
-    canvas = data.get("canvas") or {}
-    layers = data.get("layers") or DEFAULT_LAYER_ORDER
+    root = path.parent
+    views = {name: _build_view(name, root, spec) for name, spec in raw_views.items()}
+    default_view = str(data.get("defaultView", "talk"))
+    if default_view not in views:
+        raise ManifestError(f"defaultView `{default_view}` が views に無い")
+
     return CharacterAssets(
-        root=path.parent,
-        character_id=str(data.get("characterId", path.parent.name)),
-        canvas=(int(canvas.get("width", 1024)), int(canvas.get("height", 1024))),
-        layer_order=tuple(layers),
-        default_emotion=str(data.get("defaultEmotion", "neutral")),
-        emotions=emotions,
+        root=root,
+        character_id=str(data.get("characterId", root.name)),
+        default_view=default_view,
+        views=views,
     )
 ```
 
 ### A-4. `src/avatar_talk/core/state.py`
 
 ```python
-"""キャラクターの見た目の状態(表情・口・まばたき)をまとめる。
+"""キャラクターの見た目の状態(ビュー・表情・口・まばたき・体の動き)をまとめる。
 
 スレッドの約束:
   * 音声スレッドは `submit_level()` / `end_speech()` だけを呼ぶ。書き換わるのは
     float 1つと bool 1つだけで、CPython の単純代入は途中で割り込まれない。
-  * 画面スレッドは `tick()` だけを呼ぶ。口とまばたきの計算はすべてここで行う。
-  * 表情の切り替え `set_emotion()` は画面スレッドから呼ぶ(Qt シグナル経由)。
+  * 画面スレッドは `tick()` だけを呼ぶ。口・まばたき・体の動きの計算はすべてここ。
+  * `set_emotion()` / `show_pose()` は画面スレッドから呼ぶ(Qt シグナル経由)。
 この分け方にすると、ロックが1つも要らない。
 """
 from __future__ import annotations
@@ -1128,6 +1259,12 @@ from enum import StrEnum
 
 from .emotion import Emotion
 from .lipsync import LipSync, LipSyncConfig, Mouth
+from .motion import BodyMotion, MotionConfig, Transform
+
+TALK = "talk"
+POSE = "pose"
+POSE_HOLD_MS = 2200.0
+"""全身ポーズを見せておく長さ。これを過ぎたら会話用のバストアップへ戻る。"""
 
 
 class Eye(StrEnum):
@@ -1138,11 +1275,13 @@ class Eye(StrEnum):
 
 @dataclass(frozen=True)
 class Frame:
-    """この瞬間に描くべきパーツの組み合わせ。"""
+    """この瞬間に描くべき、ビュー・パーツ・変形の組み合わせ。"""
 
-    emotion: Emotion
+    view: str
+    key: str          # talk なら表情名、pose ならポーズ名
     mouth: Mouth
     eye: Eye
+    transform: Transform
 
 
 @dataclass(frozen=True)
@@ -1158,12 +1297,16 @@ class AvatarState:
         self,
         lipsync: LipSyncConfig | None = None,
         blink: BlinkConfig | None = None,
+        motion: MotionConfig | None = None,
         rng: random.Random | None = None,
     ) -> None:
         self.lipsync = LipSync(lipsync)
+        self.motion = BodyMotion(motion)
         self.blink_cfg = blink or BlinkConfig()
         self._rng = rng or random.Random()
         self._emotion = Emotion.NEUTRAL
+        self._pose: str | None = None
+        self._pose_until_ms = 0.0
         self._rms = 0.0          # 音声スレッドが書き、画面スレッドが読む
         self._stop_requested = False
         self._last_tick_ms: float | None = None
@@ -1183,15 +1326,27 @@ class AvatarState:
 
     # ------------------------------------------------- 画面スレッドから呼ぶ
 
-    def set_emotion(self, emotion: Emotion) -> None:
+    def set_emotion(self, emotion: Emotion, now_ms: float | None = None) -> None:
+        """表情を変える。変わった瞬間に軽くうなずかせると、切り替えが自然になる。"""
+        changed = emotion is not self._emotion
         self._emotion = emotion
+        if changed and now_ms is not None:
+            self.motion.nod(now_ms)
+
+    def show_pose(self, pose: str, now_ms: float, hold_ms: float = POSE_HOLD_MS) -> None:
+        """全身のポーズを一定時間だけ見せる。時間が来たら自動で会話画面へ戻る。"""
+        self._pose = pose
+        self._pose_until_ms = now_ms + hold_ms
+
+    def nod(self, now_ms: float) -> None:
+        self.motion.nod(now_ms)
 
     @property
     def emotion(self) -> Emotion:
         return self._emotion
 
     def tick(self, now_ms: float) -> Frame:
-        """描画の直前に呼ぶ。経過時間から口とまばたきを進める。"""
+        """描画の直前に呼ぶ。経過時間から口・まばたき・体の動きを進める。"""
         frame_ms = 16.7 if self._last_tick_ms is None else max(1.0, now_ms - self._last_tick_ms)
         self._last_tick_ms = now_ms
 
@@ -1201,7 +1356,17 @@ class AvatarState:
         else:
             mouth = self.lipsync.update(self._rms, frame_ms)
 
-        return Frame(emotion=self._emotion, mouth=mouth, eye=self._blink(now_ms))
+        if self._pose is not None and now_ms >= self._pose_until_ms:
+            self._pose = None
+
+        in_pose = self._pose is not None
+        return Frame(
+            view=POSE if in_pose else TALK,
+            key=self._pose if in_pose else self._emotion.value,
+            mouth=mouth,
+            eye=self._blink(now_ms),
+            transform=self.motion.tick(now_ms, self.lipsync.level),
+        )
 
     # ------------------------------------------------------------ まばたき
 
@@ -1231,7 +1396,116 @@ class AvatarState:
         return self._rng.uniform(self.blink_cfg.min_interval_ms, self.blink_cfg.max_interval_ms)
 ```
 
-### A-5. `src/avatar_talk/audio/playback.py`
+### A-5. `src/avatar_talk/core/motion.py`
+
+```python
+"""静止画に「生きている感じ」を与える、体の微妙な動き。
+
+**枚数を増やさずに動かす**ための部品。呼吸・重心の揺れ・うなずきを計算で作り、
+描くときの平行移動・拡大率・傾きとして渡す。絵は1枚のままでよい。
+
+これが無いと、どれだけ良い絵でも「止まった写真がパクパクしているだけ」に見える。
+
+値はすべて**キャンバスの大きさに対する比**で返す。画面の解像度に依存しない。
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Transform:
+    """描画時にかける変形。単位は キャンバス比 と 度。"""
+
+    dx: float = 0.0
+    dy: float = 0.0
+    scale: float = 1.0
+    angle: float = 0.0
+
+    def __add__(self, other: Transform) -> Transform:
+        return Transform(
+            dx=self.dx + other.dx,
+            dy=self.dy + other.dy,
+            scale=self.scale * other.scale,
+            angle=self.angle + other.angle,
+        )
+
+
+@dataclass(frozen=True)
+class MotionConfig:
+    """振れ幅は控えめに。大きくすると酔うし、絵の粗が目立つ。"""
+
+    breathe_period_ms: float = 3800.0
+    breathe_scale: float = 0.006    # 呼吸による拡縮(0.6%)
+    breathe_dy: float = 0.003       # 呼吸による上下
+    sway_period_ms: float = 9100.0  # 呼吸と割り切れない周期にして、重なりを避ける
+    sway_dx: float = 0.0025         # 重心の左右移動
+    sway_angle: float = 0.35        # わずかな傾き(度)
+    nod_ms: float = 420.0           # うなずき1回の長さ
+    nod_dy: float = 0.020
+    nod_angle: float = 1.4
+    talk_bounce: float = 0.0035     # 声の大きさに応じた上下
+    max_dy: float = 0.05            # 安全弁。これ以上は動かさない
+
+
+class BodyMotion:
+    """時刻と音量から、体の変形を1つ作る。
+
+    呼吸と揺れは**止まらない**。会話していない間もキャラクターは生きている。
+    うなずきだけが単発で、`nod()` を呼んだときに1回だけ走る。
+    """
+
+    def __init__(self, config: MotionConfig | None = None) -> None:
+        self.cfg = config or MotionConfig()
+        self._nod_started_ms: float | None = None
+
+    def nod(self, now_ms: float) -> None:
+        """相づちを1回打つ。話し始めや、表情が変わった瞬間に呼ぶ。"""
+        self._nod_started_ms = now_ms
+
+    def tick(self, now_ms: float, level: float = 0.0) -> Transform:
+        """`level` は口の開き具合(0.0〜1.0)。声が大きいほど少し弾む。"""
+        cfg = self.cfg
+        t = self._breathe(now_ms) + self._sway(now_ms) + self._nod(now_ms)
+        t = t + Transform(dy=-cfg.talk_bounce * max(0.0, min(1.0, level)))
+        clamped = max(-cfg.max_dy, min(cfg.max_dy, t.dy))
+        return Transform(dx=t.dx, dy=clamped, scale=t.scale, angle=t.angle)
+
+    # ------------------------------------------------------------ 内訳
+
+    def _breathe(self, now_ms: float) -> Transform:
+        """胸がふくらんで少し上がる。sin をそのまま使うと機械的なので、
+        吸う方を短く吐く方を長くする(実際の呼吸に近い)。"""
+        phase = (now_ms % self.cfg.breathe_period_ms) / self.cfg.breathe_period_ms
+        shaped = math.sin(math.pi * (phase**0.7))  # 立ち上がりを速く
+        return Transform(
+            dy=-self.cfg.breathe_dy * shaped,
+            scale=1.0 + self.cfg.breathe_scale * shaped,
+        )
+
+    def _sway(self, now_ms: float) -> Transform:
+        """重心をゆっくり左右へ。ずっと直立不動だと不気味に見える。"""
+        phase = 2 * math.pi * now_ms / self.cfg.sway_period_ms
+        return Transform(
+            dx=self.cfg.sway_dx * math.sin(phase),
+            angle=self.cfg.sway_angle * math.sin(phase),
+        )
+
+    def _nod(self, now_ms: float) -> Transform:
+        """下げてから戻す。行きを速く、戻りをゆっくりにすると人間らしい。"""
+        if self._nod_started_ms is None:
+            return Transform()
+        elapsed = now_ms - self._nod_started_ms
+        if elapsed < 0 or elapsed > self.cfg.nod_ms:
+            self._nod_started_ms = None
+            return Transform()
+        phase = elapsed / self.cfg.nod_ms
+        shaped = math.sin(math.pi * phase) * (1.0 - phase * 0.35)
+        return Transform(dy=self.cfg.nod_dy * shaped, angle=self.cfg.nod_angle * shaped)
+```
+
+### A-6. `src/avatar_talk/audio/playback.py`
 
 ```python
 """応答音声の再生と、口パク用の音量測定。
@@ -1323,7 +1597,7 @@ def _rms(pcm: bytes) -> float:
     return float(np.sqrt(np.mean(samples * samples)))
 ```
 
-### A-6. `src/avatar_talk/audio/capture.py`
+### A-7. `src/avatar_talk/audio/capture.py`
 
 ```python
 """マイク入力。20ms ごとに生の PCM16 を取り出して非同期側へ渡す。"""
@@ -1376,15 +1650,15 @@ class Microphone:
             self.dropped += 1
 ```
 
-### A-7. `src/avatar_talk/gui/stage.py`
+### A-8. `src/avatar_talk/gui/stage.py`
 
 ```python
-"""キャラクターを描くウィジェット。透過 PNG を奥から手前へ重ねるだけ。"""
+"""キャラクターを描くウィジェット。透過 PNG を重ね、体の動きを変形で載せる。"""
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QRect, Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
@@ -1399,15 +1673,22 @@ class Stage(QWidget):
         super().__init__(parent)
         self.assets = assets
         self._cache: dict[Path, QPixmap] = {}
+        self._frame: Frame | None = None
         self._layers: list[Path] = []
-        self.setMinimumSize(360, 360)
+        self._canvas = assets.talk.canvas
+        self.setMinimumSize(360, 480)
 
     def set_frame(self, frame: Frame) -> None:
-        """新しいパーツの組み合わせを受け取る。変化が無ければ再描画しない。"""
-        layers = self.assets.resolve(frame.emotion.value, frame.mouth.value, frame.eye.value)
-        if layers != self._layers:
-            self._layers = layers
-            self.update()
+        """新しいパーツと変形を受け取る。
+
+        **体の動きは毎フレーム変わるので、ここでは必ず再描画する。**
+        重いのは画像の読み込みで、それは `_pixmap` の使い回しで避けている。
+        """
+        view = self.assets.view(frame.view)
+        self._layers = view.resolve(frame.key, frame.mouth.value, frame.eye.value)
+        self._canvas = view.canvas
+        self._frame = frame
+        self.update()
 
     def _pixmap(self, path: Path) -> QPixmap:
         """一度読んだ画像は使い回す。毎フレーム読み込むと 60fps が出ない。"""
@@ -1423,29 +1704,45 @@ class Stage(QWidget):
         painter.fillRect(self.rect(), BACKDROP)
 
         if not self._layers:
-            self._draw_placeholder(painter)
+            painter.setPen(QColor("#d9b24a"))
+            painter.drawText(self.rect(), Qt.AlignCenter, "画像がありません\n(会話は動きます)")
             return
 
         box = self._fit_box()
+        painter.save()
+        self._apply_motion(painter, box)
         for path in self._layers:
             pm = self._pixmap(path)
             if not pm.isNull():
-                painter.drawPixmap(box, pm)
+                painter.drawPixmap(box, pm, QRectF(pm.rect()))
+        painter.restore()
 
-    def _fit_box(self) -> QRect:
-        """縦横比を保ったまま中央に収める。"""
-        cw, ch = self.assets.canvas
+    def _apply_motion(self, painter: QPainter, box: QRectF) -> None:
+        """呼吸・揺れ・うなずきをかける。
+
+        変形の中心は**足元ではなく体の中心の少し下**に置く。頭のてっぺんを軸に
+        回すと、うなずきではなく体ごと倒れる動きになってしまう。
+        """
+        frame = self._frame
+        if frame is None:
+            return
+        t = frame.transform
+        cx = box.center().x()
+        cy = box.top() + box.height() * 0.72
+        painter.translate(cx + t.dx * box.width(), cy + t.dy * box.height())
+        painter.rotate(t.angle)
+        painter.scale(t.scale, t.scale)
+        painter.translate(-cx, -cy)
+
+    def _fit_box(self) -> QRectF:
+        """縦横比を保ったまま中央に収める。ビューが変わると比率も変わる。"""
+        cw, ch = self._canvas
         scale = min(self.width() / cw, self.height() / ch)
-        w, h = int(cw * scale), int(ch * scale)
-        return QRect((self.width() - w) // 2, (self.height() - h) // 2, w, h)
-
-    def _draw_placeholder(self, painter: QPainter) -> None:
-        """画像がまだ無いとき。落ちずに「無い」と伝える。"""
-        painter.setPen(QColor("#d9b24a"))
-        painter.drawText(self.rect(), Qt.AlignCenter, "画像がありません\n(会話は動きます)")
+        w, h = cw * scale, ch * scale
+        return QRectF((self.width() - w) / 2, (self.height() - h) / 2, w, h)
 ```
 
-### A-8. `src/avatar_talk/gui/app.py`
+### A-9. `src/avatar_talk/gui/app.py`
 
 ```python
 """ウィンドウ本体と、別スレッドからの通知の受け口。"""
@@ -1471,6 +1768,7 @@ class Bridge(QObject):
     """
 
     emotion_changed = Signal(str)
+    pose_played = Signal(str)
     transcript = Signal(str)
     status = Signal(str)
 
@@ -1500,6 +1798,7 @@ class MainWindow(QWidget):
         self.setStyleSheet("background:#0b0b10;")
 
         bridge.emotion_changed.connect(self._set_emotion)
+        bridge.pose_played.connect(self._play_pose)
         bridge.transcript.connect(self._append_caption)
         bridge.status.connect(self.status.setText)
 
@@ -1508,16 +1807,22 @@ class MainWindow(QWidget):
         self._timer.start(int(1000 / FPS))
         self._t0 = time.monotonic()
 
+    def _now_ms(self) -> float:
+        return (time.monotonic() - self._t0) * 1000.0
+
     def _tick(self) -> None:
-        now_ms = (time.monotonic() - self._t0) * 1000.0
-        self.stage.set_frame(self.state.tick(now_ms))
+        self.stage.set_frame(self.state.tick(self._now_ms()))
 
     def _set_emotion(self, name: str) -> None:
         emotion = normalize(name)
         if emotion is None:
             self.status.setText(f"知らない感情 `{name}` は無視した")
             return
-        self.state.set_emotion(emotion)
+        self.state.set_emotion(emotion, self._now_ms())
+
+    def _play_pose(self, name: str) -> None:
+        """知らないポーズ名でも落とさない。既定の立ち姿に縮退する。"""
+        self.state.show_pose(name, self._now_ms())
 
     def _append_caption(self, text: str) -> None:
         current = (self.caption.text() + text)[-140:]
@@ -1535,7 +1840,7 @@ def emotion_or_neutral(name: str) -> Emotion:
     return normalize(name) or Emotion.NEUTRAL
 ```
 
-### A-9. `src/avatar_talk/__main__.py`
+### A-10. `src/avatar_talk/__main__.py`
 
 ```python
 """起動口。3つのスレッドをここで組み立てる。
@@ -1566,6 +1871,7 @@ from .gui.app import Bridge, MainWindow
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="avatar_talk")
     parser.add_argument("--demo", action="store_true", help="API に繋がず見た目だけ確認する")
+    parser.add_argument("--say", default=None, help="デモで字幕に流す一言")
     parser.add_argument("--manifest", default=None)
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -1596,7 +1902,9 @@ def main(argv: list[str] | None = None) -> int:
 
     stop = threading.Event()
     if args.demo:
-        thread = threading.Thread(target=_demo_loop, args=(state, bridge, stop), daemon=True)
+        thread = threading.Thread(
+            target=_demo_loop, args=(state, bridge, stop, args.say), daemon=True
+        )
     else:
         thread = threading.Thread(
             target=_live_loop, args=(settings, state, bridge, stop), daemon=True
@@ -1612,21 +1920,30 @@ def main(argv: list[str] | None = None) -> int:
 # --------------------------------------------------------------- デモモード
 
 
-def _demo_loop(state: AvatarState, bridge: Bridge, stop: threading.Event) -> None:
-    """鍵も回線もマイクも使わず、口と表情だけ動かす。
+def _demo_loop(state: AvatarState, bridge: Bridge, stop: threading.Event, say=None) -> None:
+    """鍵も回線もマイクも使わず、口と表情と全身の動作だけ動かす。
 
     STEP 1〜2 の確認と、アセットを差し替えたときの見た目チェックに使う。
     """
     import time
 
     bridge.status.emit("デモモード(APIに接続していない)")
+    if say:
+        bridge.transcript.emit(say)
     cycle = [Emotion.NEUTRAL, Emotion.JOY, Emotion.FUN,
              Emotion.SURPRISE, Emotion.SAD, Emotion.ANGER]
-    t = 0.0
+    poses = ["greet", "cheer", "think", "surprise", "point", "bow"]
+    t, shown_emotion, shown_pose = 0.0, -1, -1
     while not stop.is_set():
-        # 3秒ごとに表情を送り、しゃべっている風の音量を作る
-        emotion = cycle[int(t / 3.0) % len(cycle)]
-        bridge.emotion_changed.emit(emotion.value)
+        # 3秒ごとに表情、9秒ごとに全身の動作を見せる
+        idx = int(t / 3.0)
+        if idx != shown_emotion:
+            shown_emotion = idx
+            bridge.emotion_changed.emit(cycle[idx % len(cycle)].value)
+        pose_idx = int(t / 9.0)
+        if pose_idx != shown_pose:
+            shown_pose = pose_idx
+            bridge.pose_played.emit(poses[pose_idx % len(poses)])
         envelope = max(0.0, math.sin(t * 3.1)) * (0.5 + 0.5 * math.sin(t * 11.0))
         state.submit_level(0.35 * envelope)
         time.sleep(0.02)
@@ -1664,6 +1981,7 @@ async def _live(settings, state: AvatarState, bridge: Bridge, stop: threading.Ev
         settings,
         on_audio=player.feed,
         on_emotion=bridge.emotion_changed.emit,
+        on_pose=bridge.pose_played.emit,
         on_transcript=bridge.transcript.emit,
         on_event=on_event,
     )
@@ -1685,7 +2003,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-### A-10. `src/avatar_talk/config.py`
+### A-11. `src/avatar_talk/config.py`
 
 ```python
 """接続設定と、Realtime セッションの中身。
@@ -1709,8 +2027,17 @@ INSTRUCTIONS = """\
 気持ちが変わったら、必ず set_expression ツールを呼んで顔を変えてください。
 ツールを呼んでも会話は止まりません。話し始める前に呼ぶと自然に見えます。
 使える感情は neutral / joy / anger / sad / fun / surprise の6つだけです。
-感情を音声で読み上げてはいけません(「かっこ喜び」などと言わない)。
+
+全身の動作について:
+挨拶・喜び・驚き・お辞儀など、体ぜんぶで伝えたいときだけ play_pose を呼びます。
+全身は数秒で会話画面に戻るので、**多用しないこと**。1回の会話で2〜3度まで。
+
+どちらのツールも、呼んだことを音声で読み上げてはいけません
+(「かっこ喜び」「ポーズを変えます」などと言わない)。
 """
+
+EMOTIONS = ["neutral", "joy", "anger", "sad", "fun", "surprise"]
+POSES = ["idle", "greet", "nod", "think", "cheer", "point", "surprise", "bow"]
 
 SET_EXPRESSION_TOOL = {
     "type": "function",
@@ -1719,13 +2046,26 @@ SET_EXPRESSION_TOOL = {
     "parameters": {
         "type": "object",
         "properties": {
-            "emotion": {
-                "type": "string",
-                "enum": ["neutral", "joy", "anger", "sad", "fun", "surprise"],
-                "description": "今の気持ち",
-            }
+            "emotion": {"type": "string", "enum": EMOTIONS, "description": "今の気持ち"}
         },
         "required": ["emotion"],
+        "additionalProperties": False,
+    },
+}
+
+PLAY_POSE_TOOL = {
+    "type": "function",
+    "name": "play_pose",
+    "description": (
+        "全身の動作を数秒だけ見せる。挨拶・喜び・驚き・お辞儀など、"
+        "体ぜんぶで伝えたいときだけ使う。多用しない。"
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "pose": {"type": "string", "enum": POSES, "description": "見せたい動作"}
+        },
+        "required": ["pose"],
         "additionalProperties": False,
     },
 }
@@ -1736,7 +2076,7 @@ class Settings:
     api_key: str
     model: str = DEFAULT_MODEL
     voice: str = "marin"
-    manifest: str = "assets/characters/ibuki/manifest.json"
+    manifest: str = "assets/characters/ibuki_navi/manifest.json"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -1778,13 +2118,13 @@ def session_payload(settings: Settings) -> dict:
                     "voice": settings.voice,
                 },
             },
-            "tools": [SET_EXPRESSION_TOOL],
+            "tools": [SET_EXPRESSION_TOOL, PLAY_POSE_TOOL],
             "tool_choice": "auto",
         },
     }
 ```
 
-### A-11. `src/avatar_talk/realtime/client.py`
+### A-12. `src/avatar_talk/realtime/client.py`
 
 ```python
 """OpenAI Realtime API(音声どうしの会話)のクライアント。
@@ -1795,6 +2135,7 @@ WebSocket を直に扱う。公式 Python SDK の `client.realtime.connect()` �
 呼び出し側へは4つのコールバックで知らせる:
   on_audio(pcm)        応答音声の断片(PCM16 24kHz)
   on_emotion(name)     set_expression ツールが呼ばれた
+  on_pose(name)        play_pose ツールが呼ばれた
   on_transcript(text)  応答の読み上げ文(字幕・ログ用)
   on_event(kind, data) 接続状態・割り込み・エラー
 """
@@ -1814,11 +2155,12 @@ log = logging.getLogger(__name__)
 
 class RealtimeClient:
     def __init__(
-        self, settings: Settings, *, on_audio, on_emotion, on_transcript, on_event
+        self, settings: Settings, *, on_audio, on_emotion, on_pose, on_transcript, on_event
     ) -> None:
         self.settings = settings
         self._on_audio = on_audio
         self._on_emotion = on_emotion
+        self._on_pose = on_pose
         self._on_transcript = on_transcript
         self._on_event = on_event
         self._ws: websockets.ClientConnection | None = None
@@ -1911,36 +2253,39 @@ class RealtimeClient:
             self._on_event("error", event)
 
     def _on_call(self, event: dict) -> None:
-        if event.get("name") != "set_expression":
+        name = event.get("name")
+        if name not in ("set_expression", "play_pose"):
             return
         try:
             args = json.loads(event.get("arguments") or "{}")
         except json.JSONDecodeError:
             args = {}
-        emotion = args.get("emotion")
-        if emotion:
-            self._on_emotion(emotion)
+
+        if name == "set_expression" and args.get("emotion"):
+            self._on_emotion(args["emotion"])
+        elif name == "play_pose" and args.get("pose"):
+            self._on_pose(args["pose"])
+
         call_id = event.get("call_id")
         if call_id:
             asyncio.create_task(self.send_tool_result(call_id, {"ok": True}))
 ```
 
-### A-12. `tools/gen_face_assets.py`
+### A-13. `tools/gen_face_assets.py`
 
 ```python
-"""Gemini でキャラクターの表情画像を作る。
+"""Gemini でキャラクターの26枚を作る。
 
-作る順番が大事。**まず基準の1枚を作り、それを参照画像として渡して残りを作る。**
-毎回テキストだけから作ると、同じキャラクターにならない。
+基準画像はすでにある(docs/design/reference/character_base_v1.jpg)。
+**その1枚を毎回参照として渡す。** テキストだけから作ると同じ人物にならない。
 
-    # 1) 基準(neutral・口閉じ)を1枚作る
-    python tools/gen_face_assets.py --base
-
-    # 2) 基準を見せながら、18枚(6表情 × 口3段階)を作る
-    python tools/gen_face_assets.py --all
+    python tools/gen_face_assets.py --talk       # 会話用 6表情 x 口3段階 = 18枚
+    python tools/gen_face_assets.py --pose       # 全身の動作 8枚
+    python tools/gen_face_assets.py --all        # 26枚まとめて
+    python tools/gen_face_assets.py --only joy   # 作り直したい表情/動作だけ
 
 プロンプトの正本は docs/design/avatar_face_prompts.json。
-ここを直したら再生成すること。**コードにプロンプトを書かない。**
+ここを直したら該当の raw/ を消して再生成する。**コードにプロンプトを書かない。**
 """
 from __future__ import annotations
 
@@ -1952,6 +2297,7 @@ from pathlib import Path
 
 MODEL = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image")
 PROMPTS = Path("docs/design/avatar_face_prompts.json")
+BASE_IMAGE = Path("docs/design/reference/character_base_v1.jpg")
 RAW = Path("raw")
 
 
@@ -1983,55 +2329,79 @@ def save_first_image(response, path: Path) -> bool:
     return False
 
 
+def sheet_text(spec: dict) -> str:
+    """キャラクターシートを1つの文章にする。毎回これを添える。"""
+    sheet = spec["character_sheet"]
+    lines = [f"- {k}: {v}" for k, v in sheet.items() if not k.startswith("_")]
+    return "【この人物の特徴(必ず守る)】\n" + "\n".join(lines)
+
+
+def style_text(spec: dict) -> str:
+    style = spec["style"]
+    return "\n".join(v for k, v in style.items() if not k.startswith("_"))
+
+
+def build_jobs(spec: dict, view: str) -> list[tuple[Path, str]]:
+    """(出力先, プロンプト) の一覧を作る。"""
+    head = [style_text(spec), sheet_text(spec), spec["consistency"],
+            spec["views"][view]["framing"]]
+    jobs: list[tuple[Path, str]] = []
+    if view == "talk":
+        for emotion, e_text in spec["emotions"].items():
+            for mouth, m_text in spec["mouths"].items():
+                jobs.append((RAW / f"talk_{emotion}_{mouth}.png",
+                             "\n".join([*head, e_text, m_text])))
+    else:
+        for pose, p_text in spec["poses"].items():
+            jobs.append((RAW / f"pose_{pose}.png", "\n".join([*head, p_text])))
+    return jobs
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base", action="store_true", help="基準の1枚だけ作る")
-    ap.add_argument("--all", action="store_true", help="基準を参照して全表情を作る")
-    ap.add_argument("--only", nargs="*", default=None, help="作り直す表情を指定")
+    ap.add_argument("--talk", action="store_true", help="会話用18枚")
+    ap.add_argument("--pose", action="store_true", help="全身8枚")
+    ap.add_argument("--all", action="store_true", help="26枚")
+    ap.add_argument("--only", nargs="*", default=None, help="名前に含む語で絞る")
+    ap.add_argument("--force", action="store_true", help="出来ている絵も作り直す")
     args = ap.parse_args()
 
+    if not (args.talk or args.pose or args.all or args.only):
+        ap.error("--talk / --pose / --all / --only のどれかを指定すること")
+    if not BASE_IMAGE.is_file():
+        raise SystemExit(f"基準画像が無い: {BASE_IMAGE}")
+
     spec = json.loads(PROMPTS.read_text(encoding="utf-8"))
-    gen = client()
-    base_path = RAW / "neutral_closed.png"
+    if spec.get("schemaVersion") != 2:
+        raise SystemExit(f"prompts の schemaVersion が {spec.get('schemaVersion')}。2 のみ対応")
 
-    if args.base:
-        prompt = spec["style"] + "\n" + spec["base"]
-        response = gen.models.generate_content(model=MODEL, contents=[prompt])
-        ok = save_first_image(response, base_path)
-        print(("作成: " if ok else "失敗: ") + str(base_path))
-        return 0 if ok else 1
-
-    if not args.all and not args.only:
-        ap.error("--base か --all か --only のどれかを指定すること")
-
-    if not base_path.is_file():
-        raise SystemExit(f"基準画像が無い。先に --base を実行すること ({base_path})")
+    views = ["talk", "pose"] if (args.all or args.only) else \
+            [v for v, on in (("talk", args.talk), ("pose", args.pose)) if on]
+    jobs = [j for v in views for j in build_jobs(spec, v)]
+    if args.only:
+        jobs = [j for j in jobs if any(word in j[0].name for word in args.only)]
+    if not jobs:
+        raise SystemExit("作る対象が1枚も無い。--only の指定を見直すこと")
 
     from PIL import Image
 
-    base = Image.open(base_path)
-    targets = args.only or list(spec["emotions"])
+    gen = client()
+    base = Image.open(BASE_IMAGE)
     failed = 0
-    for emotion in targets:
-        for mouth, mouth_prompt in spec["mouths"].items():
-            out = RAW / f"{emotion}_{mouth}.png"
-            if out.is_file():
-                print(f"  済み: {out}")
-                continue
-            prompt = "\n".join([
-                spec["style"],
-                spec["consistency"],       # 「同じ人物・同じ構図・同じ光」の指示
-                spec["emotions"][emotion],
-                mouth_prompt,
-            ])
-            # 参照画像を先に渡すと、モデルが「これを直す」と解釈しやすい
-            response = gen.models.generate_content(model=MODEL, contents=[base, prompt])
-            if save_first_image(response, out):
-                print(f"  作成: {out}")
-            else:
-                failed += 1
+    for out, prompt in jobs:
+        if out.is_file() and not args.force:
+            print(f"  済み: {out}")
+            continue
+        # 参照画像を先に渡すと、モデルが「これを直す」と解釈しやすい
+        response = gen.models.generate_content(model=MODEL, contents=[base, prompt])
+        if save_first_image(response, out):
+            print(f"  作成: {out}")
+        else:
+            failed += 1
 
-    print(f"\n失敗 {failed} 件。この後 tools/split_mouth.py で口レイヤーに分ける。")
+    print(f"\n{len(jobs)} 枚中 {failed} 件が失敗。")
+    print("次: tools/split_mouth.py で口レイヤーを作り、tools/build_manifest.py を実行する。")
+    print("受け入れ条件は docs/design/AVATAR_TALK_GEMINI_BRIEF.md の4節。**目で確かめること。**")
     return 1 if failed else 0
 
 
@@ -2039,7 +2409,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-### A-13. `tools/split_mouth.py`
+### A-14. `tools/split_mouth.py`
 
 ```python
 """口の開き画像から、透過の「口レイヤー」を作る。
@@ -2116,21 +2486,24 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-### A-14. `tools/build_manifest.py`
+### A-15. `tools/build_manifest.py`
 
 ```python
 """フォルダの中身から manifest.json と MANIFEST.md を作る。
 
 命名規則(ファイル名が仕様):
-    <感情>_body.png                     必須
-    <感情>_mouth_half.png / _open.png   口パク用(closed は body に含める)
-    <感情>_eyes_open|half|closed.png    まばたき用(任意)
-    <感情>_brows.png                    眉を分ける場合(任意)
+    会話用(バストアップ)
+      talk_<感情>_body.png                     必須
+      talk_<感情>_mouth_half.png / _open.png   口パク用(closed は body に含める)
+      talk_<感情>_eyes_open|half|closed.png    まばたき用(任意)
+      talk_<感情>_brows.png                    眉を分ける場合(任意)
+    全身動作
+      pose_<動作>.png                          1動作につき1枚
 
 MANIFEST.md には SHA-256 を残す。`assets/items/MANIFEST.md` と同じ考え方で、
 「この絵は本当にこのファイルか、差し替えられていないか」を後から確かめられる。
 
-    python tools/build_manifest.py assets/characters/ibuki --canvas 1024
+    python tools/build_manifest.py assets/characters/ibuki_navi
 """
 from __future__ import annotations
 
@@ -2139,81 +2512,108 @@ import hashlib
 import json
 from pathlib import Path
 
-LAYERS = ("background", "body", "brows", "eyes", "mouth", "effect")
+TALK_LAYERS = ("background", "body", "brows", "eyes", "mouth", "effect")
+POSE_LAYERS = ("background", "body", "effect")
 EMOTIONS = ("neutral", "joy", "anger", "sad", "fun", "surprise")
+POSES = ("idle", "greet", "nod", "think", "cheer", "point", "surprise", "bow")
 
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def collect(root: Path, emotion: str) -> dict | None:
-    body = root / f"{emotion}_body.png"
+def collect_talk(root: Path, emotion: str) -> dict | None:
+    body = root / f"talk_{emotion}_body.png"
     if not body.is_file():
         return None
     spec: dict = {"body": body.name}
 
-    brows = root / f"{emotion}_brows.png"
+    brows = root / f"talk_{emotion}_brows.png"
     if brows.is_file():
         spec["brows"] = brows.name
 
-    eyes = {k: f"{emotion}_eyes_{k}.png" for k in ("open", "half", "closed")}
+    eyes = {k: f"talk_{emotion}_eyes_{k}.png" for k in ("open", "half", "closed")}
     eyes = {k: v for k, v in eyes.items() if (root / v).is_file()}
     if eyes:
         spec["eyes"] = eyes
 
-    # closed は body に描かれているので、レイヤーとしては置かない(null)
-    mouth: dict = {"closed": None}
-    for key in ("half", "open"):
-        name = f"{emotion}_mouth_{key}.png"
-        if (root / name).is_file():
-            mouth[key] = name
-    spec["mouth"] = {k: v for k, v in mouth.items() if v is not None} or {}
+    # closed は body に描かれているので、レイヤーとしては置かない
+    mouth = {k: f"talk_{emotion}_mouth_{k}.png" for k in ("half", "open")}
+    spec["mouth"] = {k: v for k, v in mouth.items() if (root / v).is_file()}
     return spec
+
+
+def collect_pose(root: Path, pose: str) -> dict | None:
+    path = root / f"pose_{pose}.png"
+    return {"body": path.name} if path.is_file() else None
+
+
+def rows_for(view: str, entries: dict[str, dict], root: Path) -> list[str]:
+    rows = []
+    for key in sorted(entries):
+        for layer, value in sorted(entries[key].items()):
+            names = [value] if isinstance(value, str) else list(value.values())
+            for name in names:
+                p = root / name
+                rows.append(
+                    f"| `{name}` | {view} | {key} | {layer} | "
+                    f"{p.stat().st_size // 1024} KB | `{sha256(p)[:16]}` |"
+                )
+    return rows
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("root")
-    ap.add_argument("--canvas", type=int, default=1024)
+    ap.add_argument("--talk-canvas", type=int, nargs=2, default=(1024, 1024))
+    ap.add_argument("--pose-canvas", type=int, nargs=2, default=(768, 1024))
     ap.add_argument("--character-id", default=None)
     args = ap.parse_args()
 
     root = Path(args.root)
-    emotions = {e: spec for e in EMOTIONS if (spec := collect(root, e)) is not None}
-    if not emotions:
-        raise SystemExit(f"{root} に <感情>_body.png が1枚も無い")
+    talk = {e: spec for e in EMOTIONS if (spec := collect_talk(root, e)) is not None}
+    poses = {p: spec for p in POSES if (spec := collect_pose(root, p)) is not None}
+    if not talk:
+        raise SystemExit(f"{root} に talk_<感情>_body.png が1枚も無い")
+
+    views: dict = {
+        "talk": {
+            "canvas": {"width": args.talk_canvas[0], "height": args.talk_canvas[1]},
+            "layers": list(TALK_LAYERS),
+            "defaultEmotion": "neutral" if "neutral" in talk else sorted(talk)[0],
+            "emotions": talk,
+        }
+    }
+    if poses:
+        views["pose"] = {
+            "canvas": {"width": args.pose_canvas[0], "height": args.pose_canvas[1]},
+            "layers": list(POSE_LAYERS),
+            "defaultPose": "idle" if "idle" in poses else sorted(poses)[0],
+            "poses": poses,
+        }
 
     manifest = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "characterId": args.character_id or root.name,
-        "canvas": {"width": args.canvas, "height": args.canvas},
-        "layers": list(LAYERS),
-        "defaultEmotion": "neutral" if "neutral" in emotions else sorted(emotions)[0],
-        "emotions": emotions,
+        "defaultView": "talk",
+        "views": views,
     }
     (root / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
 
-    rows = ["| ファイル | 感情 | 役割 | 容量 | SHA-256(先頭16桁) |", "|---|---|---|---|---|"]
-    for emotion in sorted(emotions):
-        for layer, value in sorted(emotions[emotion].items()):
-            names = [value] if isinstance(value, str) else list(value.values())
-            for name in names:
-                path = root / name
-                rows.append(
-                    f"| `{name}` | {emotion} | {layer} | "
-                    f"{path.stat().st_size // 1024} KB | `{sha256(path)[:16]}` |"
-                )
+    rows = ["| ファイル | ビュー | 表情/動作 | 役割 | 容量 | SHA-256(先頭16桁) |",
+            "|---|---|---|---|---|---|"]
+    rows += rows_for("talk", talk, root)
+    rows += rows_for("pose", poses, root)
     (root / "MANIFEST.md").write_text(
-        f"# 表情パーツ マニフェスト({manifest['characterId']})\n\n"
+        f"# キャラクター画像 マニフェスト({manifest['characterId']})\n\n"
         "生成物。`python tools/build_manifest.py` が作る。手で編集しない。\n\n"
         "出所と利用許諾はファイルからは分からない。**推測で埋めず、"
         "`SOURCES.md` に人が書き残す。**\n\n" + "\n".join(rows) + "\n",
         encoding="utf-8",
     )
-    print(f"{len(emotions)} 表情 / {len(rows) - 2} ファイル を記録した")
+    print(f"会話用 {len(talk)} 表情 / 全身 {len(poses)} 動作 / {len(rows) - 2} ファイル を記録した")
     return 0
 
 
@@ -2221,12 +2621,12 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-### A-15. `tools/check_assets.py`
+### A-16. `tools/check_assets.py`
 
 ```python
 """CI 用の検査。マニフェストと実ファイルが食い違っていないか見る。
 
-    python tools/check_assets.py assets/characters/ibuki/manifest.json
+    python tools/check_assets.py assets/characters/ibuki_navi/manifest.json
 
 見つかるのは「食い違っている」ことだけで、絵の良し悪しは分からない。
 """
@@ -2242,11 +2642,13 @@ from avatar_talk.core import assets as assets_mod  # noqa: E402
 from avatar_talk.core.emotion import Emotion  # noqa: E402
 from avatar_talk.core.lipsync import Mouth  # noqa: E402
 
+REQUIRED_POSES = ("idle", "greet", "nod", "think", "cheer", "point", "surprise", "bow")
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("manifest")
-    ap.add_argument("--require-all-emotions", action="store_true")
+    ap.add_argument("--require-all", action="store_true", help="6表情と8動作が揃っているか見る")
     args = ap.parse_args()
 
     try:
@@ -2256,24 +2658,38 @@ def main() -> int:
         return 1
 
     problems = character.validate()
+    talk = character.talk
 
-    if args.require_all_emotions:
+    if args.require_all:
         for emotion in Emotion:
-            if emotion.value not in character.emotions:
+            if emotion.value not in talk.entries:
                 problems.append(f"表情 `{emotion.value}` がまだ無い")
+        pose_view = character.views.get("pose")
+        if pose_view is None:
+            problems.append("全身のビュー `pose` がまだ無い")
+        else:
+            for pose in REQUIRED_POSES:
+                if pose not in pose_view.entries:
+                    problems.append(f"動作 `{pose}` がまだ無い")
 
     # どの組み合わせでも1枚は描けること(全部空だと真っ黒な画面になる)
-    for emotion in character.emotions:
+    for emotion in talk.entries:
         for mouth in Mouth:
-            if not character.resolve(emotion, mouth.value):
-                problems.append(f"{emotion} / 口{mouth.value}: 描ける画像が1枚も無い")
+            if not talk.resolve(emotion, mouth.value):
+                problems.append(f"talk/{emotion} 口{mouth.value}: 描ける画像が1枚も無い")
+    pose_view = character.views.get("pose")
+    if pose_view is not None:
+        for pose in pose_view.entries:
+            if not pose_view.resolve(pose):
+                problems.append(f"pose/{pose}: 描ける画像が1枚も無い")
 
     for problem in problems:
         print(f"NG: {problem}")
     if problems:
         print(f"\n{len(problems)} 件の問題")
         return 1
-    print(f"OK: {len(character.emotions)} 表情、すべて描ける")
+    n_pose = len(pose_view.entries) if pose_view else 0
+    print(f"OK: 会話用 {len(talk.entries)} 表情 / 全身 {n_pose} 動作、すべて描ける")
     return 0
 
 
@@ -2281,7 +2697,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-### A-16. `tests/test_emotion.py`
+### A-17. `tests/test_emotion.py`
 
 ```python
 from avatar_talk.core.emotion import Emotion, TagStreamParser, extract, normalize
@@ -2331,7 +2747,7 @@ def test_long_unclosed_bracket_is_not_held_forever():
     assert body.startswith("[あ")
 ```
 
-### A-17. `tests/test_lipsync.py`
+### A-18. `tests/test_lipsync.py`
 
 ```python
 from avatar_talk.core.lipsync import LipSync, LipSyncConfig, Mouth, rms_to_level
@@ -2432,7 +2848,7 @@ def test_loud_peak_is_forgotten_over_time():
     assert ls.mouth is Mouth.OPEN
 ```
 
-### A-18. `tests/test_assets.py`
+### A-19. `tests/test_assets.py`
 
 ```python
 import json
@@ -2442,21 +2858,33 @@ import pytest
 from avatar_talk.core import assets
 
 
-def build(tmp_path, files=("body.png", "mouth_closed.png", "mouth_open.png"), **over):
+def build(tmp_path, **over):
+    files = ("body.png", "mouth_closed.png", "mouth_open.png", "pose_idle.png", "pose_greet.png")
     for name in files:
         (tmp_path / name).write_bytes(b"\x89PNG\r\n\x1a\n")
     data = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "characterId": "test",
-        "canvas": {"width": 512, "height": 512},
-        "layers": ["body", "eyes", "mouth"],
-        "defaultEmotion": "neutral",
-        "emotions": {
-            "neutral": {
-                "body": "body.png",
-                "mouth": {"closed": "mouth_closed.png", "open": "mouth_open.png"},
+        "defaultView": "talk",
+        "views": {
+            "talk": {
+                "canvas": {"width": 512, "height": 512},
+                "layers": ["body", "eyes", "mouth"],
+                "defaultEmotion": "neutral",
+                "emotions": {
+                    "neutral": {
+                        "body": "body.png",
+                        "mouth": {"closed": "mouth_closed.png", "open": "mouth_open.png"},
+                    },
+                    "joy": {"body": "body.png", "mouth": {"open": "mouth_open.png"}},
+                },
             },
-            "joy": {"body": "body.png", "mouth": {"open": "mouth_open.png"}},
+            "pose": {
+                "canvas": {"width": 384, "height": 512},
+                "layers": ["body"],
+                "defaultPose": "idle",
+                "poses": {"idle": {"body": "pose_idle.png"}, "greet": {"body": "pose_greet.png"}},
+            },
         },
     }
     data.update(over)
@@ -2467,27 +2895,44 @@ def build(tmp_path, files=("body.png", "mouth_closed.png", "mouth_open.png"), **
 
 def test_layers_come_back_in_draw_order(tmp_path):
     a = build(tmp_path)
-    got = [p.name for p in a.resolve("neutral", mouth="open")]
+    got = [p.name for p in a.talk.resolve("neutral", mouth="open")]
     assert got == ["body.png", "mouth_open.png"]
+
+
+def test_pose_view_is_separate_from_talk(tmp_path):
+    """全身は会話用とは別のビュー。キャンバスの縦横比も違う。"""
+    a = build(tmp_path)
+    assert [p.name for p in a.view("pose").resolve("greet")] == ["pose_greet.png"]
+    assert a.talk.canvas == (512, 512)
+    assert a.view("pose").canvas == (384, 512)
 
 
 def test_unknown_emotion_falls_back_to_default(tmp_path):
     a = build(tmp_path)
-    assert [p.name for p in a.resolve("しらない表情")] == ["body.png", "mouth_closed.png"]
+    assert [p.name for p in a.talk.resolve("しらない表情")] == ["body.png", "mouth_closed.png"]
+
+
+def test_unknown_pose_falls_back_to_idle(tmp_path):
+    a = build(tmp_path)
+    assert [p.name for p in a.view("pose").resolve("踊る")] == ["pose_idle.png"]
+
+
+def test_unknown_view_falls_back_to_default_view(tmp_path):
+    a = build(tmp_path)
+    assert a.view("しらないビュー") is a.talk
 
 
 def test_missing_part_falls_back_within_emotion(tmp_path):
     """joy には closed の口が無い。落ちずに別の口で描く。"""
     a = build(tmp_path)
-    assert [p.name for p in a.resolve("joy", mouth="closed")] == ["body.png", "mouth_open.png"]
+    assert [p.name for p in a.talk.resolve("joy", mouth="closed")] == ["body.png", "mouth_open.png"]
 
 
 def test_missing_file_is_skipped_not_raised(tmp_path):
     """画像が揃う前でもアプリは動く、という約束。"""
     a = build(tmp_path)
     (tmp_path / "mouth_open.png").unlink()
-    got = a.resolve("neutral", mouth="open")
-    assert [p.name for p in got] == ["body.png"]
+    assert [p.name for p in a.talk.resolve("neutral", mouth="open")] == ["body.png"]
     assert a.missing and "mouth_open.png" in a.missing[0]
 
 
@@ -2505,7 +2950,12 @@ def test_validate_passes_when_complete(tmp_path):
 
 def test_wrong_schema_version_is_refused(tmp_path):
     with pytest.raises(assets.ManifestError):
-        build(tmp_path, schemaVersion=999)
+        build(tmp_path, schemaVersion=1)
+
+
+def test_unknown_default_view_is_refused(tmp_path):
+    with pytest.raises(assets.ManifestError):
+        build(tmp_path, defaultView="ぜんしん")
 
 
 def test_broken_json_is_refused(tmp_path):
@@ -2514,20 +2964,22 @@ def test_broken_json_is_refused(tmp_path):
         assets.load(tmp_path / "manifest.json")
 ```
 
-### A-19. `tests/test_state.py`
+### A-20. `tests/test_state.py`
 
 ```python
 import random
 
 from avatar_talk.core.emotion import Emotion
 from avatar_talk.core.lipsync import Mouth
-from avatar_talk.core.state import AvatarState, BlinkConfig, Eye
+from avatar_talk.core.state import POSE, TALK, AvatarState, BlinkConfig, Eye
+
+LOUD = 10 ** (-12.0 / 20.0)
 
 
 def steady(state, ms_total, rms, step=16.0, start=0.0):
-    now = start
-    frame = None
+    now, frame = start, None
     while now < start + ms_total:
+        state.submit_level(rms)
         frame = state.tick(now)
         now += step
     return frame, now
@@ -2537,32 +2989,56 @@ def test_emotion_survives_until_changed():
     s = AvatarState(rng=random.Random(1))
     s.set_emotion(Emotion.ANGER)
     frame, _ = steady(s, 500, 0.0)
-    assert frame.emotion is Emotion.ANGER
+    assert frame.key == "anger"
+    assert frame.view == TALK
 
 
 def test_audio_level_opens_the_mouth():
     s = AvatarState(rng=random.Random(1))
-    s.submit_level(10 ** (-12.0 / 20.0))
-    frame, _ = steady(s, 400, 10 ** (-12.0 / 20.0))
+    frame, _ = steady(s, 400, LOUD)
     assert frame.mouth is Mouth.OPEN
 
 
 def test_end_speech_closes_the_mouth_at_once():
     s = AvatarState(rng=random.Random(1))
-    s.submit_level(10 ** (-12.0 / 20.0))
-    _, now = steady(s, 400, 10 ** (-12.0 / 20.0))
+    _, now = steady(s, 400, LOUD)
     s.end_speech()
     assert s.tick(now + 16).mouth is Mouth.CLOSED
+
+
+def test_pose_is_shown_then_returns_to_talk():
+    """全身は見せっぱなしにしない。口が動かないので会話が死んで見える。"""
+    s = AvatarState(rng=random.Random(1))
+    s.show_pose("greet", now_ms=0.0, hold_ms=1000.0)
+    assert s.tick(500.0).view == POSE
+    assert s.tick(500.0).key == "greet"
+    back = s.tick(1200.0)
+    assert back.view == TALK
+
+
+def test_changing_emotion_triggers_a_nod():
+    s = AvatarState(rng=random.Random(1))
+    s.tick(0.0)
+    flat = s.tick(200.0).transform.dy
+    s.set_emotion(Emotion.JOY, now_ms=200.0)
+    nodding = max(s.tick(200.0 + d).transform.dy for d in (60.0, 120.0, 200.0))
+    assert nodding > flat + 0.01
+
+
+def test_same_emotion_again_does_not_nod():
+    """同じ表情が続けて来ても、うなずき続けない。"""
+    s = AvatarState(rng=random.Random(1))
+    s.set_emotion(Emotion.NEUTRAL, now_ms=0.0)
+    s.tick(0.0)
+    flat = s.tick(300.0).transform.dy
+    s.set_emotion(Emotion.NEUTRAL, now_ms=300.0)
+    assert abs(s.tick(360.0).transform.dy - flat) < 0.01
 
 
 def test_blink_happens_and_reopens():
     blink = BlinkConfig(min_interval_ms=100, max_interval_ms=101)
     s = AvatarState(rng=random.Random(7), blink=blink)
-    seen = set()
-    now = 0.0
-    for _ in range(200):
-        seen.add(s.tick(now).eye)
-        now += 16.0
+    seen = {s.tick(i * 16.0).eye for i in range(200)}
     assert Eye.CLOSED in seen and Eye.HALF in seen and Eye.OPEN in seen
 
 
@@ -2573,7 +3049,63 @@ def test_blink_is_reproducible_with_a_seed():
         assert a.tick(i * 16.0) == b.tick(i * 16.0)
 ```
 
-### A-20. `pyproject.toml`
+### A-21. `tests/test_motion.py`
+
+```python
+from avatar_talk.core.motion import BodyMotion, MotionConfig, Transform
+
+
+def test_character_is_never_completely_still():
+    """止まった写真に見えないこと。呼吸と揺れは会話していなくても続く。"""
+    m = BodyMotion()
+    seen = {round(m.tick(t * 100.0).dy, 5) for t in range(60)}
+    assert len(seen) > 20
+
+
+def test_motion_stays_small():
+    """動きすぎると絵の粗が目立ち、見ていて酔う。"""
+    m = BodyMotion()
+    for t in range(2000):
+        tr = m.tick(t * 16.0, level=1.0)
+        assert abs(tr.dx) < 0.01
+        assert abs(tr.dy) < 0.06
+        assert abs(tr.angle) < 2.5
+        assert 0.98 < tr.scale < 1.02
+
+
+def test_nod_moves_down_then_returns():
+    m = BodyMotion()
+    base = m.tick(0.0).dy
+    m.nod(0.0)
+    peak = max(m.tick(t).dy for t in (60.0, 120.0, 180.0, 240.0))
+    after = m.tick(1000.0).dy
+    assert peak > base + 0.01          # うなずいて下がる
+    assert abs(after - base) < 0.005   # ちゃんと戻る
+
+
+def test_breathing_and_sway_do_not_beat_together():
+    """周期が割り切れると、たまたま重なって不自然に大きく動く。"""
+    cfg = MotionConfig()
+    ratio = cfg.sway_period_ms / cfg.breathe_period_ms
+    assert abs(ratio - round(ratio)) > 0.1
+
+
+def test_louder_voice_lifts_the_body():
+    m = BodyMotion()
+    quiet = m.tick(500.0, level=0.0).dy
+    loud = m.tick(500.0, level=1.0).dy
+    assert loud < quiet  # 画面座標では上が小さい
+
+
+def test_transforms_add_up():
+    a = Transform(dx=1.0, dy=2.0, scale=1.1, angle=3.0)
+    b = Transform(dx=0.5, dy=-1.0, scale=2.0, angle=1.0)
+    c = a + b
+    assert (c.dx, c.dy, c.angle) == (1.5, 1.0, 4.0)
+    assert abs(c.scale - 2.2) < 1e-9
+```
+
+### A-22. `pyproject.toml`
 
 ```toml
 [project]
@@ -2615,7 +3147,7 @@ target-version = "py311"
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ```
 
-### A-21. `.env.example`
+### A-23. `.env.example`
 
 ```bash
 # このファイルを .env としてコピーして使う。.env は絶対にコミットしない。
@@ -2625,11 +3157,11 @@ GEMINI_API_KEY=...
 # 任意
 AVATAR_MODEL=gpt-realtime
 AVATAR_VOICE=marin
-AVATAR_MANIFEST=assets/characters/ibuki/manifest.json
+AVATAR_MANIFEST=assets/characters/ibuki_navi/manifest.json
 GEMINI_IMAGE_MODEL=gemini-3.1-flash-image
 ```
 
-### A-22. `.github/workflows/avatar-talk.yml`
+### A-24. `.github/workflows/avatar-talk.yml`
 
 ```yaml
 name: avatar-talk
@@ -2667,7 +3199,7 @@ jobs:
         run: PYTHONPATH=src pytest tests -q
 
       - name: アセットとマニフェストの突き合わせ
-        run: python tools/check_assets.py assets/characters/ibuki/manifest.json
+        run: python tools/check_assets.py assets/characters/ibuki_navi/manifest.json
 
       - name: 鍵が混ざっていないか
         run: |
@@ -2676,7 +3208,7 @@ jobs:
           fi
 ```
 
-### A-23. 空のファイル
+### A-25. 空のファイル
 
 次の5つは中身が空でよい(パッケージとして認識させるためだけのもの)。
 

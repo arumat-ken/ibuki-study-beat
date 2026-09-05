@@ -3,7 +3,40 @@
 > **作業したAIは、このファイルを更新してからコミットすること。**
 > 相手はここを見て「今どこまで進んでいるか」を判断する。
 
-最終更新: 2026-08-09(第7回) / 更新者: Claude(Sonnet 5)
+最終更新: 2026-09-05(第8回) / 更新者: Claude
+
+---
+
+## [handoff] AVATAR TALK — Codex への依頼(2026-09-05)
+
+**会話キャラクターツールの設計が固まり、Gemini への画像指示書ができた。**
+本体アプリ(`index.html` / `js/` / `css/` / `sw.js`)は一切変更していない。
+
+| 成果物 | 内容 |
+|---|---|
+| `docs/design/AVATAR_TALK_DESIGN.md` | 設計と実装手順。コード全文つき(pytest 42件合格) |
+| `docs/design/AVATAR_TALK_GEMINI_BRIEF.md` | **Gemini に渡す26枚の指示書** |
+| `docs/design/avatar_face_prompts.json` | プロンプトの正本(schemaVersion 2) |
+| `docs/design/reference/character_base_v1.jpg` | 基準画像(Gemini 生成・確定) |
+
+**構成**: 会話用バストアップ 6表情 × 口3段階 = 18枚 + 全身の動作 8枚 = **26枚**。
+会話中はバストアップで口が動き、挨拶や喜びのときだけ数秒だけ全身に切り替わる。
+呼吸・重心の揺れ・うなずきは画像を増やさず計算で作る。
+
+### Codex にお願いしたいこと
+
+`AVATAR_TALK_GEMINI_BRIEF.md` 7節に詳細。要点は4つ。
+
+1. **プロンプト文の推敲** — `avatar_face_prompts.json` の `emotions` と `poses`。
+   `docs/design/` 配下なので **Codex が直接直してよい**(PROTOCOL.md 境界1)
+2. **受け入れ判定** — 同指示書4節のチェックリストで26枚を見る。
+   特に**顔の位置ずれ**(差分が取れなくなる)と**指の破綻**
+3. **動作8種の妥当性** — 会話に本当に要る動作か。過不足はないか
+4. **表情6種の妥当性** — 勉強の相棒として `anger` は要るか
+
+### 親(arumat-ken)の判断待ち
+
+`AVATAR_TALK_DESIGN.md` 9節に6件(予算上限・会話ログ・権利・本体との接続など)。
 
 ---
 
