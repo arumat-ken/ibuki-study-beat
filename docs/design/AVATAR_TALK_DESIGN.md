@@ -141,7 +141,7 @@ flowchart TB
 | ❌ 受信した瞬間(`response.output_audio.delta` が届いた時) | Realtime API は音声を**まとめて先に**送ってくる。数百ミリ秒〜数秒ぶんが一気に届くこともある。受信時に測ると、**口だけが声より先に動く**(声が出ていないのにパクパクする) |
 | ✅ スピーカーへ渡す瞬間(出力コールバックの中) | いま鳴っているバイト列そのものから測るので、**耳に聞こえる音と口が必ず一致する** |
 
-`Player._callback()` の中で、デバイスへ書き込む `block` の RMS をそのまま使う(付録 A-6)。
+`Player._callback()` の中で、デバイスへ書き込む `block` の RMS をそのまま使う(付録 A-7)。
 バッファに何ミリ秒ぶん溜まっていようと、ずれない。
 
 ---
@@ -590,7 +590,7 @@ cd avatar_talk
 python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
 ```
 
-`pyproject.toml`(付録 A-22)と `.env.example`(付録 A-23)を置き、`.gitignore` に
+`pyproject.toml`(付録 A-24)と `.env.example`(付録 A-25)を置き、`.gitignore` に
 `avatar_talk/.env` / `avatar_talk/raw/` / `.venv/` を足す。
 
 ```bash
@@ -603,7 +603,7 @@ pip install -e ".[dev]"
 
 ### STEP 1 — 純ロジックを作る(2〜3時間)★ここが土台
 
-**API も画像も音声デバイスも要らない。** `core/` の5ファイルとテストを書く。
+**API も画像も音声デバイスも要らない。** `core/` の6ファイルとテストを書く。
 
 | 作るもの | 付録 |
 |---|---|
@@ -612,13 +612,14 @@ pip install -e ".[dev]"
 | `src/avatar_talk/core/assets.py` | A-3 |
 | `src/avatar_talk/core/state.py` | A-4 |
 | `src/avatar_talk/core/motion.py` | A-5 |
-| `tests/test_{emotion,lipsync,assets,state,motion}.py` | A-17〜21 |
+| `src/avatar_talk/core/camera.py` | A-6(3D用。2Dでは使わない) |
+| `tests/test_{emotion,lipsync,assets,state,motion,camera}.py` | A-18〜23 |
 
 **完了条件**:
 
 ```bash
 ruff check src tests && pytest -q
-# → 42 passed
+# → 56 passed
 ```
 
 **つまずきやすい点**: 口パクを「しきい値を超えたら開く」と素朴に書かないこと。
@@ -652,7 +653,7 @@ done
 python tools/build_manifest.py assets/characters/ibuki --canvas 512
 ```
 
-`gui/stage.py`(A-8)、`gui/app.py`(A-9)、`__main__.py`(A-10)を書く。
+`gui/stage.py`(A-9)、`gui/app.py`(A-10)、`__main__.py`(A-11)を書く。
 
 **完了条件**:
 
@@ -667,7 +668,7 @@ python -m avatar_talk --demo
 
 ### STEP 3 — 音声を通す(API はまだ使わない)(2時間)
 
-`audio/capture.py`(A-7)と `audio/playback.py`(A-6)を書き、
+`audio/capture.py`(A-8)と `audio/playback.py`(A-7)を書き、
 **マイクの音をそのままスピーカーへ返す**確認用スクリプトで試す。
 
 ```python
@@ -690,7 +691,7 @@ from avatar_talk.core.state import AvatarState
 
 ### STEP 4 — Realtime API に繋ぐ(3時間)★ここから課金
 
-`config.py`(A-11)と `realtime/client.py`(A-12)を書く。
+`config.py`(A-12)と `realtime/client.py`(A-13)を書く。
 **最初は音声の再生を繋がず、`error` イベントと字幕だけを見る。**
 
 ```bash
@@ -769,7 +770,7 @@ python -m avatar_talk --demo                  # 見た目を確認
 
 ### STEP 9 — CI と引き渡し(1時間)
 
-`.github/workflows/avatar-talk.yml`(付録 A-24)を置き、PR を作る。
+`.github/workflows/avatar-talk.yml`(付録 A-26)を置き、PR を作る。
 
 **完了条件**: CI の4段すべてが緑。`docs/exchange/STATUS.md` を更新して合図する。
 
@@ -797,7 +798,7 @@ python -m avatar_talk --demo                  # 見た目を確認
 
 | 確かめたこと | 方法 | 結果 |
 |---|---|---|
-| 純ロジックが正しいか | `pytest`(42件) | **全て合格** |
+| 純ロジックが正しいか | `pytest`(56件) | **全て合格** |
 | 書き方が揃っているか | `ruff check`(100桁 / E,F,W,I,UP,B,SIM) | **指摘ゼロ** |
 | 口パクが実際に動くか | 音節9個の合成音声(3秒 / 150フレーム)を流す | 4.3 節の図のとおり。立ち上がり40ms、末尾は閉じる |
 | 小さい声でも動くか | -38dBFS を流し、固定しきい値と比較 | 固定では開かず、追従ありでは開いた |
@@ -808,7 +809,8 @@ python -m avatar_talk --demo                  # 見た目を確認
 | 2つのビューが切り替わるか | 仮の絵26枚で `talk` → `pose` → `talk` を通す | 2.2秒で自動的に会話画面へ戻った |
 | 体の動きが行儀よく収まるか | 2000フレームぶん、上下・傾き・拡縮の範囲を検査 | 上下 5%・傾き 2.5°・拡縮 2% 以内 |
 | 呼吸と揺れが重ならないか | 周期の比が整数でないことを検査 | 3.8秒 : 9.1秒 = 2.39倍。重ならない |
-| **この文書のコードがそのまま動くか** | **付録 A から機械的に取り出して `ruff` と `pytest`** | **指摘ゼロ / 42件合格** |
+| 指の操作が破綻しないか | 上下の回り込み・ピンチ・慣性を14件のテストで固定 | 全て合格。フレームレート差 0.44°(素朴な実装は 14.70°) |
+| **この文書のコードがそのまま動くか** | **付録 A から機械的に取り出して `ruff` と `pytest`** | **指摘ゼロ / 56件合格** |
 | **STEP 2 の手順どおりに進むか** | **この文書のコマンドをそのまま実行** | **仮の絵26枚 → マニフェスト → 検査まで通った** |
 
 **確かめていないこと**(手元に環境が無いため):
@@ -840,8 +842,11 @@ python -m avatar_talk --demo                  # 見た目を確認
 
 ## 10. 付録A — コード全文
 
-以下は **`ruff` の指摘ゼロ、`pytest` 42件合格**を確認したもの。
+以下は **`ruff` の指摘ゼロ、`pytest` 56件合格**を確認したもの。
 そのまま置けば STEP 1〜2 が動く。
+
+`core/camera.py`(A-6)だけは 2D の会話ツールでは使わない。
+**3D の指の操作の仕様書**として置いてある(`AVATAR3D_INTAKE.md` 8章)。
 
 ### A-1. `src/avatar_talk/core/emotion.py`
 
@@ -1517,7 +1522,176 @@ class BodyMotion:
         return Transform(dy=self.cfg.nod_dy * shaped, angle=self.cfg.nod_angle * shaped)
 ```
 
-### A-6. `src/avatar_talk/audio/playback.py`
+### A-6. `src/avatar_talk/core/camera.py`
+
+```python
+"""指の操作を、3Dカメラの位置に変える(純ロジック)。
+
+3D エンジンにも画面にも依存しない。**iPhone 実装の仕様書そのもの**として使う。
+Swift へ移植するときは、このファイルの計算をそのまま写せばよい。
+
+入力はすべて**画面の幅に対する比**(0.0〜1.0)で受ける。
+ピクセルで受けると、端末の解像度が変わったとき操作感が変わってしまう。
+
+    1本指ドラッグ  → orbit()  まわりを回る
+    2本指ピンチ    → pinch()  寄る・引く
+    2本指ドラッグ  → pan()    上下左右にずらす
+    指を離す       → fling()  慣性で少し流れて止まる
+    ダブルタップ   → reset()  最初の位置へ戻す
+"""
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class CameraLimits:
+    """ここを超えないという約束。**上下の回り込みを止めるのが一番大事。**
+
+    真上・真下を越えると像が上下反転し、操作の向きが逆になって迷子になる。
+    """
+
+    pitch_min_deg: float = -75.0
+    pitch_max_deg: float = 75.0
+    distance_min: float = 0.55   # 顔に寄れる限界
+    distance_max: float = 4.50   # 全身が入る位置
+    pan_limit: float = 0.60      # 注視点がこの箱から出ない(見失い防止)
+    orbit_deg_per_screen: float = 320.0  # 画面を端から端までなぞったときの回転角
+    fling_tau_ms: float = 320.0  # 慣性が消えるまでの時定数
+    fling_stop: float = 0.05     # これ以下の速度は止める(いつまでも微動しない)
+
+
+@dataclass(frozen=True)
+class CameraPose:
+    """今どこから見ているか。3D エンジンにはこれだけ渡せばよい。"""
+
+    yaw_deg: float
+    pitch_deg: float
+    distance: float
+    target_x: float
+    target_y: float
+
+
+DEFAULT_POSE = CameraPose(yaw_deg=0.0, pitch_deg=-5.0, distance=2.6,
+                          target_x=0.0, target_y=0.0)
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def _wrap_deg(deg: float) -> float:
+    """左右の回転は何周してもよいが、数値は -180〜180 に畳む。
+
+    畳まないと、ぐるぐる回すうちに値が際限なく増え、
+    float の精度が落ちて動きがガクつく。
+    """
+    return (deg + 180.0) % 360.0 - 180.0
+
+
+class CameraRig:
+    def __init__(self, limits: CameraLimits | None = None,
+                 home: CameraPose = DEFAULT_POSE) -> None:
+        self.limits = limits or CameraLimits()
+        self.home = home
+        self._yaw = home.yaw_deg
+        self._pitch = home.pitch_deg
+        self._distance = home.distance
+        self._tx = home.target_x
+        self._ty = home.target_y
+        self._vyaw = 0.0    # 慣性(度/秒)
+        self._vpitch = 0.0
+
+    # ------------------------------------------------------------ 指の操作
+
+    def orbit(self, dx: float, dy: float) -> None:
+        """1本指ドラッグ。`dx`,`dy` は画面幅に対する移動量の比。"""
+        gain = self.limits.orbit_deg_per_screen
+        self._yaw = _wrap_deg(self._yaw + dx * gain)
+        self._pitch = _clamp(self._pitch + dy * gain,
+                             self.limits.pitch_min_deg, self.limits.pitch_max_deg)
+
+    def pinch(self, scale: float) -> None:
+        """2本指ピンチ。`scale` は指の間隔の**比**(1.0 で変化なし)。
+
+        引き算ではなく掛け算で効かせる。引き算だと、寄っているときは
+        大ざっぱに、引いているときは効かない、という気持ち悪さになる。
+        """
+        if scale <= 0.0:
+            return
+        self._distance = _clamp(self._distance / scale,
+                                self.limits.distance_min, self.limits.distance_max)
+
+    def pan(self, dx: float, dy: float) -> None:
+        """2本指ドラッグ。**寄っているときほど、指の動きに対して小さく動く。**
+
+        距離に比例させないと、顔に寄っているときに少し動かしただけで
+        画面外へ飛んでいく。
+        """
+        limit = self.limits.pan_limit
+        self._tx = _clamp(self._tx - dx * self._distance, -limit, limit)
+        self._ty = _clamp(self._ty + dy * self._distance, -limit, limit)
+
+    def fling(self, vx: float, vy: float) -> None:
+        """指を離した瞬間の速度(画面比/秒)。慣性で少し流れる。"""
+        gain = self.limits.orbit_deg_per_screen
+        self._vyaw = vx * gain
+        self._vpitch = vy * gain
+
+    def stop(self) -> None:
+        """指を置いた瞬間に慣性を殺す。触ったのに動き続けると気持ち悪い。"""
+        self._vyaw = 0.0
+        self._vpitch = 0.0
+
+    def reset(self) -> None:
+        """ダブルタップ。最初の位置へ厳密に戻す。"""
+        self._yaw, self._pitch = self.home.yaw_deg, self.home.pitch_deg
+        self._distance = self.home.distance
+        self._tx, self._ty = self.home.target_x, self.home.target_y
+        self.stop()
+
+    # ------------------------------------------------------------ 毎フレーム
+
+    def tick(self, dt_ms: float) -> CameraPose:
+        """慣性を進める。**フレーム間隔が変わっても同じ距離だけ流れる。**
+
+        速度に dt を掛けるだけの素朴な実装だと、120Hz の端末と 60Hz の端末で
+        流れる量が変わる。指数減衰を積分した式を使えば、刻み方によらず一致する。
+
+            移動量 = v0 * tau * (1 - exp(-dt/tau))
+            残り速度 = v0 * exp(-dt/tau)
+        """
+        if dt_ms <= 0.0:
+            return self.pose
+        tau = self.limits.fling_tau_ms
+        decay = math.exp(-dt_ms / tau)
+        travel = tau / 1000.0 * (1.0 - decay)
+
+        if self._vyaw or self._vpitch:
+            self._yaw = _wrap_deg(self._yaw + self._vyaw * travel)
+            self._pitch = _clamp(self._pitch + self._vpitch * travel,
+                                 self.limits.pitch_min_deg, self.limits.pitch_max_deg)
+            self._vyaw *= decay
+            self._vpitch *= decay
+            if abs(self._vyaw) < self.limits.fling_stop:
+                self._vyaw = 0.0
+            if abs(self._vpitch) < self.limits.fling_stop:
+                self._vpitch = 0.0
+        return self.pose
+
+    @property
+    def pose(self) -> CameraPose:
+        return CameraPose(yaw_deg=self._yaw, pitch_deg=self._pitch,
+                          distance=self._distance, target_x=self._tx, target_y=self._ty)
+
+    @property
+    def is_settling(self) -> bool:
+        """まだ慣性で動いているか。止まっていれば描画を休められる。"""
+        return bool(self._vyaw or self._vpitch)
+```
+
+### A-7. `src/avatar_talk/audio/playback.py`
 
 ```python
 """応答音声の再生と、口パク用の音量測定。
@@ -1609,7 +1783,7 @@ def _rms(pcm: bytes) -> float:
     return float(np.sqrt(np.mean(samples * samples)))
 ```
 
-### A-7. `src/avatar_talk/audio/capture.py`
+### A-8. `src/avatar_talk/audio/capture.py`
 
 ```python
 """マイク入力。20ms ごとに生の PCM16 を取り出して非同期側へ渡す。"""
@@ -1662,7 +1836,7 @@ class Microphone:
             self.dropped += 1
 ```
 
-### A-8. `src/avatar_talk/gui/stage.py`
+### A-9. `src/avatar_talk/gui/stage.py`
 
 ```python
 """キャラクターを描くウィジェット。透過 PNG を重ね、体の動きを変形で載せる。"""
@@ -1754,7 +1928,7 @@ class Stage(QWidget):
         return QRectF((self.width() - w) / 2, (self.height() - h) / 2, w, h)
 ```
 
-### A-9. `src/avatar_talk/gui/app.py`
+### A-10. `src/avatar_talk/gui/app.py`
 
 ```python
 """ウィンドウ本体と、別スレッドからの通知の受け口。"""
@@ -1852,7 +2026,7 @@ def emotion_or_neutral(name: str) -> Emotion:
     return normalize(name) or Emotion.NEUTRAL
 ```
 
-### A-10. `src/avatar_talk/__main__.py`
+### A-11. `src/avatar_talk/__main__.py`
 
 ```python
 """起動口。3つのスレッドをここで組み立てる。
@@ -2015,7 +2189,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-### A-11. `src/avatar_talk/config.py`
+### A-12. `src/avatar_talk/config.py`
 
 ```python
 """接続設定と、Realtime セッションの中身。
@@ -2136,7 +2310,7 @@ def session_payload(settings: Settings) -> dict:
     }
 ```
 
-### A-12. `src/avatar_talk/realtime/client.py`
+### A-13. `src/avatar_talk/realtime/client.py`
 
 ```python
 """OpenAI Realtime API(音声どうしの会話)のクライアント。
@@ -2283,7 +2457,7 @@ class RealtimeClient:
             asyncio.create_task(self.send_tool_result(call_id, {"ok": True}))
 ```
 
-### A-13. `tools/gen_face_assets.py`
+### A-14. `tools/gen_face_assets.py`
 
 ```python
 """Gemini でキャラクターの26枚を作る。
@@ -2421,7 +2595,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-### A-14. `tools/split_mouth.py`
+### A-15. `tools/split_mouth.py`
 
 ```python
 """口の開き画像から、透過の「口レイヤー」を作る。
@@ -2498,7 +2672,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-### A-15. `tools/build_manifest.py`
+### A-16. `tools/build_manifest.py`
 
 ```python
 """フォルダの中身から manifest.json と MANIFEST.md を作る。
@@ -2633,7 +2807,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-### A-16. `tools/check_assets.py`
+### A-17. `tools/check_assets.py`
 
 ```python
 """CI 用の検査。マニフェストと実ファイルが食い違っていないか見る。
@@ -2709,7 +2883,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-### A-17. `tests/test_emotion.py`
+### A-18. `tests/test_emotion.py`
 
 ```python
 from avatar_talk.core.emotion import Emotion, TagStreamParser, extract, normalize
@@ -2759,7 +2933,7 @@ def test_long_unclosed_bracket_is_not_held_forever():
     assert body.startswith("[あ")
 ```
 
-### A-18. `tests/test_lipsync.py`
+### A-19. `tests/test_lipsync.py`
 
 ```python
 from avatar_talk.core.lipsync import LipSync, LipSyncConfig, Mouth, rms_to_level
@@ -2860,7 +3034,7 @@ def test_loud_peak_is_forgotten_over_time():
     assert ls.mouth is Mouth.OPEN
 ```
 
-### A-19. `tests/test_assets.py`
+### A-20. `tests/test_assets.py`
 
 ```python
 import json
@@ -2976,7 +3150,7 @@ def test_broken_json_is_refused(tmp_path):
         assets.load(tmp_path / "manifest.json")
 ```
 
-### A-20. `tests/test_state.py`
+### A-21. `tests/test_state.py`
 
 ```python
 import random
@@ -3061,7 +3235,7 @@ def test_blink_is_reproducible_with_a_seed():
         assert a.tick(i * 16.0) == b.tick(i * 16.0)
 ```
 
-### A-21. `tests/test_motion.py`
+### A-22. `tests/test_motion.py`
 
 ```python
 from avatar_talk.core.motion import BodyMotion, MotionConfig, Transform
@@ -3117,7 +3291,166 @@ def test_transforms_add_up():
     assert abs(c.scale - 2.2) < 1e-9
 ```
 
-### A-22. `pyproject.toml`
+### A-23. `tests/test_camera.py`
+
+```python
+from avatar_talk.core.camera import DEFAULT_POSE, CameraLimits, CameraRig
+
+
+def test_cannot_flip_upside_down():
+    """真上を越えると像が反転し、操作の向きが逆になって迷子になる。"""
+    rig = CameraRig()
+    for _ in range(200):
+        rig.orbit(0.0, 0.5)
+    assert rig.pose.pitch_deg == CameraLimits().pitch_max_deg
+    for _ in range(400):
+        rig.orbit(0.0, -0.5)
+    assert rig.pose.pitch_deg == CameraLimits().pitch_min_deg
+
+
+def test_horizontal_rotation_is_unlimited_but_stays_in_range():
+    """左右は何周してもよい。ただし数値は畳む(精度が落ちるため)。"""
+    rig = CameraRig()
+    for _ in range(500):
+        rig.orbit(0.5, 0.0)
+    assert -180.0 <= rig.pose.yaw_deg <= 180.0
+
+
+def test_pinch_is_multiplicative():
+    """2倍寄って2倍引いたら、元の距離に戻ること。"""
+    rig = CameraRig()
+    start = rig.pose.distance
+    rig.pinch(2.0)
+    rig.pinch(0.5)
+    assert abs(rig.pose.distance - start) < 1e-9
+
+
+def test_pinch_feels_the_same_at_any_zoom():
+    """同じ指の動きなら、寄っていても引いていても同じ「倍率」変わること。"""
+    near, far = CameraRig(), CameraRig()
+    near.pinch(3.0)   # 寄せておく
+    ratio_near = near.pose.distance
+    near.pinch(1.5)
+    ratio_near /= near.pose.distance
+    ratio_far = far.pose.distance
+    far.pinch(1.5)
+    ratio_far /= far.pose.distance
+    assert abs(ratio_near - ratio_far) < 1e-9
+
+
+def test_zoom_is_clamped_both_ways():
+    rig = CameraRig()
+    for _ in range(50):
+        rig.pinch(2.0)
+    assert rig.pose.distance == CameraLimits().distance_min
+    for _ in range(50):
+        rig.pinch(0.5)
+    assert rig.pose.distance == CameraLimits().distance_max
+
+
+def test_pan_moves_less_when_zoomed_in():
+    """顔に寄っているとき、少し動かしただけで画面外へ飛ばないこと。"""
+    near, far = CameraRig(), CameraRig()
+    for _ in range(10):
+        near.pinch(1.5)      # 寄る
+    for _ in range(10):
+        far.pinch(1 / 1.5)   # 引く
+    near.pan(0.1, 0.0)
+    far.pan(0.1, 0.0)
+    assert abs(near.pose.target_x) < abs(far.pose.target_x)
+
+
+def test_pan_cannot_lose_the_character():
+    rig = CameraRig()
+    for _ in range(100):
+        rig.pan(0.5, 0.5)
+    limit = CameraLimits().pan_limit
+    assert abs(rig.pose.target_x) <= limit
+    assert abs(rig.pose.target_y) <= limit
+
+
+def test_fling_is_frame_rate_independent():
+    """120Hz の端末と 60Hz の端末で、流れる量が変わらないこと。
+
+    速度に dt を掛けるだけの素朴な実装だと、ここで差が出る。
+    """
+    def run(step_ms, total_ms):
+        rig = CameraRig()
+        rig.fling(1.0, 0.0)
+        elapsed = 0.0
+        while elapsed < total_ms:
+            rig.tick(step_ms)
+            elapsed += step_ms
+        return rig.pose.yaw_deg
+
+    at_120hz = run(8.33, 1000.0)
+    at_60hz = run(16.67, 1000.0)
+    at_30hz = run(33.33, 1000.0)
+    assert abs(at_120hz - at_60hz) < 0.5
+    assert abs(at_120hz - at_30hz) < 0.5
+
+
+def test_fling_actually_stops():
+    """いつまでも微妙に動き続けないこと。電池も食う。"""
+    rig = CameraRig()
+    rig.fling(1.0, 0.5)
+    assert rig.is_settling
+    for _ in range(300):
+        rig.tick(16.7)
+    assert not rig.is_settling
+
+
+def test_touching_stops_the_drift():
+    """流れている最中に指を置いたら、その場で止まること。"""
+    rig = CameraRig()
+    rig.fling(1.0, 0.0)
+    rig.tick(16.7)
+    rig.stop()
+    before = rig.pose.yaw_deg
+    for _ in range(30):
+        rig.tick(16.7)
+    assert rig.pose.yaw_deg == before
+
+
+def test_fling_respects_the_pitch_limit():
+    """慣性で勢いよく流れても、上下の限界は越えない。"""
+    rig = CameraRig()
+    rig.fling(0.0, 10.0)
+    for _ in range(200):
+        rig.tick(16.7)
+    assert rig.pose.pitch_deg <= CameraLimits().pitch_max_deg
+
+
+def test_double_tap_returns_exactly_home():
+    rig = CameraRig()
+    rig.orbit(0.3, 0.2)
+    rig.pinch(1.8)
+    rig.pan(0.2, 0.1)
+    rig.fling(1.0, 1.0)
+    rig.reset()
+    assert rig.pose == DEFAULT_POSE
+    assert not rig.is_settling
+
+
+def test_zero_and_negative_time_are_ignored():
+    """端末が眠って復帰したときなど、dt が壊れて届くことがある。"""
+    rig = CameraRig()
+    rig.fling(1.0, 0.0)
+    before = rig.pose
+    rig.tick(0.0)
+    rig.tick(-100.0)
+    assert rig.pose == before
+
+
+def test_absurd_pinch_is_ignored_not_crashing():
+    rig = CameraRig()
+    before = rig.pose.distance
+    rig.pinch(0.0)
+    rig.pinch(-2.0)
+    assert rig.pose.distance == before
+```
+
+### A-24. `pyproject.toml`
 
 ```toml
 [project]
@@ -3159,7 +3492,7 @@ target-version = "py311"
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]
 ```
 
-### A-23. `.env.example`
+### A-25. `.env.example`
 
 ```bash
 # このファイルを .env としてコピーして使う。.env は絶対にコミットしない。
@@ -3173,7 +3506,7 @@ AVATAR_MANIFEST=assets/characters/ibuki_navi/manifest.json
 GEMINI_IMAGE_MODEL=gemini-3.1-flash-image
 ```
 
-### A-24. `.github/workflows/avatar-talk.yml`
+### A-26. `.github/workflows/avatar-talk.yml`
 
 ```yaml
 name: avatar-talk
@@ -3220,7 +3553,7 @@ jobs:
           fi
 ```
 
-### A-25. 空のファイル
+### A-27. 空のファイル
 
 次の5つは中身が空でよい(パッケージとして認識させるためだけのもの)。
 

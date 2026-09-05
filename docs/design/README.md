@@ -18,6 +18,11 @@ ChatGPT が画面設計を行い、Claude(Claude Code)が実装します。
 | `AVATAR_TALK_GEMINI_BRIEF.md` | **Geminiに渡す画像26枚の指示書**(表情18枚+全身8枚) | Claude(作成済み) |
 | `avatar_face_prompts.json` | 画像生成プロンプトの正本。**Codexが直接推敲してよい** | Claude→**Codex** |
 | `reference/character_base_v1.jpg` | キャラクターの基準画像(Gemini生成・確定済み) | Gemini |
+| `AVATAR3D_INTAKE.md` | **3Dアプリ依頼の受け皿**。役割分担・段階・置き場所 | Claude(作成済み) |
+| `avatar3d_multiview_prompts.json` | 3D参照48枚のプロンプトの正本 | Claude→**Codex** |
+| `AVATAR3D_APP_SPEC.md` | **← ChatGPTの成果物①(アプリ設計書)を置く場所** | **ChatGPT** |
+| `AVATAR3D_MODEL_SPEC.md` | **← ChatGPTの成果物②(3Dモデル仕様)を置く場所** | **ChatGPT** |
+| `reference/avatar3d/` | **← Geminiの3D参照48枚を置く場所** | **Gemini** |
 | `../mockups/v4.html` | **← ChatGPTの成果物②(HTMLモック)を置く場所** | **ChatGPT** |
 
 ## 進め方
