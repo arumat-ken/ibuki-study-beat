@@ -14,6 +14,8 @@ ChatGPT が画面設計を行い、Claude(Claude Code)が実装します。
 | `APP_CONTEXT.md` | 現行アプリ ver.3.3.0 の仕様。GPTが前提として読む | Claude(作成済み) |
 | `FEATURE_SPEC_v4.md` | 追加機能の確定設計(ポイント・ニュース・金融) | Claude(作成済み) |
 | `GUI_SPEC_v4.md` | **← ChatGPTの成果物①(設計書)を置く場所** | **ChatGPT** |
+| `AVATAR_TALK_DESIGN.md` | **AI会話アニメーションツールの設計と実装手順**(本体アプリとは独立したPythonツール) | Claude(作成済み) |
+| `avatar_face_prompts.json` | 表情パーツ生成プロンプトの正本(`AVATAR_TALK_DESIGN.md` から参照) | Claude(作成済み) |
 | `../mockups/v4.html` | **← ChatGPTの成果物②(HTMLモック)を置く場所** | **ChatGPT** |
 
 ## 進め方
