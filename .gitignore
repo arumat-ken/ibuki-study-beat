@@ -1,0 +1,12 @@
+# Python の実行時キャッシュ
+__pycache__/
+*.py[cod]
+
+# AVATAR TALK(将来 avatar_talk/ を置いたとき)
+avatar_talk/.env
+avatar_talk/raw/
+avatar_talk/.venv/
+.venv/
+
+# macOS
+.DS_Store
