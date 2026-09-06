@@ -218,7 +218,7 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
             <button class="mini" id="calibEyes">目の位置を合わせる</button>
           </div>
           <div class="bar" id="tryrow"></div>
-          <div class="slider"><span class="hint" style="min-width:64px">口の大きさ</span><input type="range" id="mwidth" min="16" max="200" value="70"></div>
+          <div class="slider"><span class="hint" style="min-width:64px">口の大きさ</span><input type="range" id="mwidth" min="16" max="260" value="70"></div>
           <div class="slider"><span class="hint" style="min-width:64px">隠す範囲</span><input type="range" id="mcover" min="12" max="240" value="56"></div>
           <input type="file" id="imgfile" accept="image/*" class="offscreen">
           <label class="check"><input type="checkbox" id="showbands"> 目と眉の帯を表示</label>
@@ -582,47 +582,78 @@ function autoCover(){
   };
   try{
     var b=baseCtx(); if(!b) return false;
-    var img=b.img;
+    var img=b.img, W=img.width;
     var mx=Math.round(mouth.x*img.width), my=Math.round(mouth.y*img.height);
-    var rx=Math.round(img.width*0.11), ry=Math.round(img.height*0.05);
+    var rx=Math.round(W*0.10), ry=Math.round(img.height*0.045);
     var x0=Math.max(0,mx-rx), y0=Math.max(0,my-ry);
-    var x1=Math.min(img.width,mx+rx), y1=Math.min(img.height,my+ry);
-    var W=x1-x0, H=y1-y0; if(W<8||H<8) return fail('範囲が取れない');
-    var d=b.g.getImageData(x0,y0,W,H).data, ring=[], x, y, i, L, minL=255;
-    for(y=0;y<H;y++) for(x=0;x<W;x++){
-      i=(y*W+x)*4; L=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
-      if(L<minL) minL=L;
-      if(x<W*0.08||x>W*0.92||y<H*0.12||y>H*0.88) ring.push(L);
-    }
+    var x1=Math.min(W,mx+rx), y1=Math.min(img.height,my+ry);
+    var w=x1-x0, h=y1-y0; if(w<12||h<12) return fail('範囲が取れない');
+    var d=b.g.getImageData(x0,y0,w,h).data;
+    var L=function(x,y){ var i=(y*w+x)*4; return 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]; };
+    var num=function(p1,p2){ return p1-p2; }, x, y;
+
+    var ring=[];
+    for(y=0;y<h;y++) for(x=0;x<w;x++)
+      if(x<w*0.08||x>w*0.92||y<h*0.12||y>h*0.88) ring.push(L(x,y));
     if(ring.length<60) return fail('範囲が狭すぎる');
-    ring.sort(function(a,b2){return a-b2;});
+    ring.sort(num);
     var skinL=ring[Math.floor(ring.length*0.6)];
-    /* Adapt to the picture's own contrast. A fixed threshold treats ordinary
-       soft shading on an illustrated cheek as if it were the lip line. */
-    if(skinL-minL<25) return fail('口らしい暗さが見当たらない');
-    var thr=skinL-(skinL-minL)*0.50;
-    var dxs=[], dys=[];
-    for(y=0;y<H;y++) for(x=0;x<W;x++){
-      i=(y*W+x)*4; L=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
-      if(L<thr){ dxs.push(Math.abs(x0+x-mx)); dys.push(Math.abs(y0+y-my)); }
-    }
-    if(dxs.length<30) return fail('暗い点が少なすぎる');
-    var num=function(a,b2){return a-b2;};
-    dxs.sort(num); dys.sort(num);
-    var px=dxs[Math.floor(dxs.length*0.90)], py=dys[Math.floor(dys.length*0.90)];
-    /* The 90th percentile of a filled shape sits inside its true half-width,
-       so 1.85 is what actually lands the real edge inside the opaque core. */
-    var want=Math.max(px, py/0.66)*1.85;
-    /* Saturating at the cap used to pass silently, which put a patch a quarter
-       of the picture wide over her face. Out of range is a failed measurement. */
-    if(want>img.width*0.17) return fail('測った口が大きすぎる。口以外を拾っている');
-    if(want<img.width*0.02) return fail('測った口が小さすぎる');
+
+    /* Anchor the threshold on the mouth itself, sampled at the tap. Anchoring
+       it on the darkest thing in the window lets her hair — which is nearly
+       black and reaches in at this height — set the scale, and then only
+       things darker than her lips qualify. */
+    var pr=Math.max(3,Math.round(W*0.02)), cen=[];
+    for(y=Math.max(0,my-y0-pr);y<=Math.min(h-1,my-y0+pr);y++)
+      for(x=Math.max(0,mx-x0-pr);x<=Math.min(w-1,mx-x0+pr);x++) cen.push(L(x,y));
+    if(cen.length<9) return fail('中心が範囲外');
+    cen.sort(num);
+    var mouthL=cen[Math.floor(cen.length*0.25)];
+    if(skinL-mouthL<12) return fail('その場所に口が見当たらない');
+    var thr=skinL-(skinL-mouthL)*0.45;
+
+    var mask=new Uint8Array(w*h);
+    for(y=0;y<h;y++) for(x=0;x<w;x++) mask[y*w+x] = L(x,y)<thr ? 1 : 0;
+
+    /* Walk out from the tap while the dark run continues. A percentile over
+       the whole window counts unconnected dark things — the nose shadow, a
+       strand of hair — as if they were part of the mouth. */
+    var cx=mx-x0, cy=my-y0, GAP=Math.max(3,Math.round(W*0.010));
+    var dcol=function(x2){ for(var y2=Math.max(0,cy-2);y2<=Math.min(h-1,cy+2);y2++) if(mask[y2*w+x2]) return 1; return 0; };
+    var drow=function(y2){ for(var x2=Math.max(0,cx-2);x2<=Math.min(w-1,cx+2);x2++) if(mask[y2*w+x2]) return 1; return 0; };
+    var lf=0, rt=0, up=0, dn=0, gp;
+    gp=0; for(x=cx;x>=0;x--){ if(dcol(x)){ lf=cx-x; gp=0; } else if(++gp>GAP) break; }
+    gp=0; for(x=cx;x<w;x++){ if(dcol(x)){ rt=x-cx; gp=0; } else if(++gp>GAP) break; }
+    gp=0; for(y=cy;y>=0;y--){ if(drow(y)){ up=cy-y; gp=0; } else if(++gp>GAP) break; }
+    gp=0; for(y=cy;y<h;y++){ if(drow(y)){ dn=y-cy; gp=0; } else if(++gp>GAP) break; }
+    var px=Math.max(lf,rt), py=Math.max(up,dn);
+    if(px<W*0.015) return fail('口が見つからない。位置がずれている');
+
+    /* the walk finds the real edge, so this only has to clear the patch's
+       opaque core at 0.74 of its radius */
+    var want=Math.max(px, py/0.66)*1.60;
+    if(want>W*0.20) return fail('測った口が大きすぎる。口以外を拾っている');
     mouth.cover=Math.round(want);
     document.getElementById('mcover').value=mouth.cover;
-    rlog('口の測定: 半幅'+px+'px → 隠す範囲'+mouth.cover+'px（画像幅の'+(mouth.cover/img.width*100).toFixed(1)+'%）');
+    /* The drawn mouth has to be her mouth's size, or hiding the original just
+       erases it. At rest the shape's half-width is 0.40 of this number. */
+    var mw=Math.round(Math.min(220,Math.max(16, px/0.40)));
+    mouth.w=mw;
+    var slider=document.getElementById('mwidth');
+    if(mw>+slider.max) slider.max=mw;
+    slider.value=mw;
+    rlog('口の測定: 半幅'+px+'px 高さ'+py+'px → 口の大きさ'+mw+'px / 隠す範囲'+mouth.cover+'px（画像幅の'+(mouth.cover/W*100).toFixed(1)+'%）');
     store();
     return true;
   }catch(e){ return fail(e.message); }
+}
+
+function fitCanvas(){
+  var r=canvas.getBoundingClientRect();
+  var dpr=Math.min(window.devicePixelRatio||1,2);
+  canvas.width=Math.max(1,Math.round(r.width*dpr));
+  canvas.height=Math.max(1,Math.round(r.height*dpr));
+  draw(true);
 }
 
 var breath=0, tsec=0, lastDraw='';
@@ -760,8 +791,8 @@ function drawMouth(cx,cy,w,cover){
     fx.strokeStyle='rgba(150,92,80,'+(0.52*shut).toFixed(3)+')';
     fx.lineWidth=Math.max(1,w*0.032); fx.lineCap='round';
     fx.beginPath();
-    fx.moveTo(cx-w*0.19,cy);
-    fx.quadraticCurveTo(cx,cy+w*0.038,cx+w*0.19,cy);
+    fx.moveTo(cx-mw,cy);
+    fx.quadraticCurveTo(cx,cy+mw*0.19,cx+mw,cy);
     fx.stroke();
   }
 
@@ -1384,6 +1415,12 @@ function loop(now){
 }
 
 /* ================= boot ================= */
+window.addEventListener('error',function(ev){
+  /* a boot-time throw used to stop the animation loop and the Claude
+     connection without leaving any trace on screen */
+  rlog('エラー: '+(ev.message||ev.error)+' @'+(ev.lineno||'?'));
+  setDiag('不具合', String(ev.message||ev.error).slice(0,48), 'bad');
+});
 setDiag('画面の枠', (window.self!==window.top)?'ビューア内':'直接');
 setDiag('音声認識', SR?'使える':'この端末では使えない', SR?'ok':'bad');
 setDiag('マイク','未確認');
