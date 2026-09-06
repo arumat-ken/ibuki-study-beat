@@ -282,7 +282,8 @@ function setState(s){ pill.dataset.s=s; pillText.textContent=STATE[s]||s; }
 var canvas=document.getElementById('face'), fx=canvas.getContext('2d');
 var portrait=null;                       /* Image once loaded */
 var mouth={x:0.5,y:0.72,w:70};           /* normalised centre + px width */
-var SKIN='#F0CBA1';
+var SKIN={r:240,g:203,b:161};
+function skinRGBA(a){ return 'rgba('+SKIN.r+','+SKIN.g+','+SKIN.b+','+a+')'; }
 var calibrating=false;
 
 var VISEME={
@@ -330,7 +331,7 @@ function sampleSkin(){
       var d=g.getImageData(px,Math.max(0,Math.min(portrait.height-1,Math.round(my))),1,1).data;
       acc[0]+=d[0]; acc[1]+=d[1]; acc[2]+=d[2]; n++;
     });
-    if(n) SKIN='rgb('+Math.round(acc[0]/n)+','+Math.round(acc[1]/n)+','+Math.round(acc[2]/n)+')';
+    if(n) SKIN={r:Math.round(acc[0]/n),g:Math.round(acc[1]/n),b:Math.round(acc[2]/n)};
   }catch(e){ /* a cross-origin image would taint the canvas; keep the default */ }
 }
 
@@ -374,19 +375,54 @@ function draw(force){
 
 function drawMouth(cx,cy,w){
   var mw=w*vis.w*0.5, mh=w*vis.h*0.34;
-  /* hide whatever mouth the picture already has */
-  fx.fillStyle=SKIN;
-  fx.beginPath(); fx.ellipse(cx,cy,w*0.62,w*0.40,0,0,Math.PI*2); fx.fill();
-  /* the animated mouth */
-  fx.fillStyle='#8E4A45';
-  fx.beginPath(); fx.ellipse(cx,cy,Math.max(mw,2),Math.max(mh,1.2),0,0,Math.PI*2); fx.fill();
-  if(mh>w*0.10){
-    fx.fillStyle='#F6EFEA';
+
+  /* Hide the mouth the picture already has. A hard-edged patch reads as a
+     flat blob on a shaded face, so it fades out at the rim instead. */
+  fx.save();
+  fx.translate(cx,cy); fx.scale(1,0.66);
+  var pr=w*0.78;
+  var patch=fx.createRadialGradient(0,0,0,0,0,pr);
+  patch.addColorStop(0,skinRGBA(1)); patch.addColorStop(0.56,skinRGBA(1));
+  patch.addColorStop(0.80,skinRGBA(0.55)); patch.addColorStop(1,skinRGBA(0));
+  fx.fillStyle=patch;
+  fx.beginPath(); fx.arc(0,0,pr,0,Math.PI*2); fx.fill();
+  fx.restore();
+
+  /* The closed mouth is one line, and it stays put. The previous build drew
+     a lower-lip line offset by the opening, so it slid down as she spoke and
+     an open mouth showed as two horizontal lines. */
+  var shut=Math.max(0,Math.min(1,1-vis.h/0.20));
+  if(shut>0.01){
+    fx.strokeStyle='rgba(150,92,80,'+(0.52*shut).toFixed(3)+')';
+    fx.lineWidth=Math.max(1,w*0.032); fx.lineCap='round';
     fx.beginPath();
-    fx.ellipse(cx,cy-mh*0.58,mw*0.78,Math.max(mh*0.26,1),0,0,Math.PI*2); fx.fill();
+    fx.moveTo(cx-w*0.19,cy);
+    fx.quadraticCurveTo(cx,cy+w*0.038,cx+w*0.19,cy);
+    fx.stroke();
   }
-  fx.strokeStyle='rgba(150,95,80,.45)'; fx.lineWidth=Math.max(1,w*0.02);
-  fx.beginPath(); fx.moveTo(cx-mw*1.05,cy+mh*1.25); fx.quadraticCurveTo(cx,cy+mh*1.7,cx+mw*1.05,cy+mh*1.25); fx.stroke();
+
+  /* The opening: darker towards the top, so depth comes from shading rather
+     than from an outline. */
+  if(mh>w*0.021){        /* 'n' stays shut: it is a closed sound */
+    fx.save();
+    fx.beginPath();
+    fx.ellipse(cx,cy,Math.max(mw,2),Math.max(mh,1),0,0,Math.PI*2);
+    fx.fillStyle='#824A48'; fx.fill();
+    fx.clip();
+    var inner=fx.createLinearGradient(0,cy-mh,0,cy+mh);
+    inner.addColorStop(0,'rgba(60,26,26,0.80)');
+    inner.addColorStop(0.55,'rgba(130,74,72,0)');
+    fx.fillStyle=inner;
+    fx.fillRect(cx-mw-2,cy-mh-2,mw*2+4,mh*2+4);
+    /* teeth only on the wide open vowels; on a small round 'u' they read
+       as a grin rather than a mouth */
+    if(mh>w*0.11 && mw>w*0.30){
+      fx.fillStyle='rgba(244,236,230,0.60)';
+      fx.beginPath();
+      fx.ellipse(cx,cy-mh*0.68,mw*0.64,mh*0.13,0,0,Math.PI*2); fx.fill();
+    }
+    fx.restore();
+  }
 }
 
 function drawStandIn(W,H){
