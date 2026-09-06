@@ -211,7 +211,11 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
         <div class="setup">
           <p class="hint" style="margin:0">「通常」だけでも会話できます。「目を閉じる」を入れるとまばたきし、感情の絵を入れるとその表情に変わります。同じ構図・同じ大きさで作ってください。</p>
           <div class="slots" id="slots"></div>
-          <div class="bar"><button class="mini" id="calib">口の位置を合わせる</button></div>
+          <div class="bar">
+            <button class="mini" id="calib">口の位置を合わせる</button>
+            <button class="mini" id="calibEyes">目の位置を合わせる</button>
+          </div>
+          <div class="bar" id="tryrow"></div>
           <div class="slider"><span class="hint" style="min-width:64px">口の大きさ</span><input type="range" id="mwidth" min="16" max="200" value="70"></div>
           <div class="slider"><span class="hint" style="min-width:64px">隠す範囲</span><input type="range" id="mcover" min="12" max="240" value="56"></div>
           <input type="file" id="imgfile" accept="image/*" hidden>
@@ -285,15 +289,31 @@ function setState(s){ pill.dataset.s=s; pillText.textContent=STATE[s]||s; }
 /* ================= face ================= */
 var canvas=document.getElementById('face'), fx=canvas.getContext('2d');
 
+/* Whole faces would multiply: 6 feelings x 3 strengths x gaze x tears is
+   hundreds of sheets that all have to stay on model. Layers add instead —
+   each sheet contributes one region, strength is the blend, and the
+   combinations are made at runtime. */
 var SLOTS=[
-  {k:'base',      label:'通常'},
-  {k:'blink',     label:'目を閉じる'},
-  {k:'happy',     label:'よろこび'},
-  {k:'relaxed',   label:'おだやか'},
-  {k:'sad',       label:'かなしみ'},
-  {k:'angry',     label:'いかり'},
-  {k:'surprised', label:'おどろき'}
+  {k:'base',      label:'通常',      use:'all'},
+  {k:'eyeClosed', label:'閉じた目',  use:'eye'},
+  {k:'eyeSmile',  label:'笑う目',    use:'eye'},
+  {k:'eyeWide',   label:'見開く目',  use:'eye'},
+  {k:'eyeTear',   label:'潤んだ目',  use:'eye'},
+  {k:'browUp',    label:'上げ眉',    use:'brow'},
+  {k:'browSad',   label:'困り眉',    use:'brow'},
+  {k:'browAngry', label:'怒り眉',    use:'brow'}
 ];
+var USE={}; SLOTS.forEach(function(x){ USE[x.k]=x.use; });
+
+/* the matrix, as a table rather than as pictures */
+var EMO={
+  neutral  :{brow:null,        eye:null,       tears:0,   k:0.0},
+  relaxed  :{brow:null,        eye:'eyeSmile', tears:0,   k:0.45},
+  happy    :{brow:'browUp',    eye:'eyeSmile', tears:0,   k:1.0},
+  sad      :{brow:'browSad',   eye:'eyeTear',  tears:0.55,k:0.9},
+  angry    :{brow:'browAngry', eye:'eyeWide',  tears:0,   k:0.9},
+  surprised:{brow:'browUp',    eye:'eyeWide',  tears:0,   k:1.0}
+};
 var images={};                              /* slot -> Image */
 var aligns={};                              /* slot -> {dx,dy,s} in image fractions */
 /* `w` sizes the drawn mouth, `cover` the patch that hides the drawn-on one.
@@ -303,13 +323,37 @@ var SKIN={r:240,g:203,b:161};
 function skinRGBA(a){ return 'rgba('+SKIN.r+','+SKIN.g+','+SKIN.b+','+a+')'; }
 var calibrating=false;
 
-/* expression cross-fade */
-var exprTarget='base', exprShown='base', exprFade=0;
+/* eyes drive both the eye band and the brow band above it */
+var eyes={lx:0.40,ly:0.42,rx:0.60,ry:0.42};
+var layerCache={};                          /* slot -> masked region canvas */
+
+/* what is showing now, and what it is easing towards */
+var showBrow=null, showEye=null;
+var wantBrow=null, wantEye=null;
+var browAmt=0, eyeAmt=0, tearWant=0, tearAmt=0, emoK=0;
+
 /* blink */
 var blinkAmt=0, blinkPhase=-1, nextBlink=2.5;
 
-function setExpression(k){
-  exprTarget = (k&&k!=='neutral'&&images[k]) ? k : 'base';
+function setExpression(k,strength,tears){
+  var e=EMO[k]||EMO.neutral;
+  emoK = (typeof strength==='number') ? Math.max(0,Math.min(1,strength)) : e.k;
+  wantBrow = (e.brow&&images[e.brow]) ? e.brow : null;
+  wantEye  = (e.eye &&images[e.eye ]) ? e.eye  : null;
+  tearWant = Math.max(0,Math.min(1, (typeof tears==='number'?tears:e.tears) )) * (0.35+0.65*emoK);
+}
+
+/* Bands sized from the eye spacing, which is the one measurement two taps
+   give us. A brow sits 0.3-0.45 spacings above the eye centre, so the brow
+   band runs 0.82 to 0.26 above and the eye band takes everything below it;
+   they must not overlap or the upper layer re-imposes the other's feature. */
+function eyeRegion(){
+  var cx=(eyes.lx+eyes.rx)/2, cy=(eyes.ly+eyes.ry)/2, sp=Math.abs(eyes.rx-eyes.lx);
+  return {x:cx-sp*0.95, y:cy-sp*0.26, w:sp*1.90, h:sp*0.58};
+}
+function browRegion(){
+  var cx=(eyes.lx+eyes.rx)/2, cy=(eyes.ly+eyes.ry)/2, sp=Math.abs(eyes.rx-eyes.lx);
+  return {x:cx-sp*0.95, y:cy-sp*0.82, w:sp*1.90, h:sp*0.56};
 }
 
 var VISEME={
@@ -353,6 +397,11 @@ function loadStored(){
     if(legacy && !localStorage.getItem('mio.img.base')){
       try{ localStorage.setItem('mio.img.base',legacy); localStorage.removeItem('mio.portrait'); }catch(e){}
     }
+    var oldBlink=localStorage.getItem('mio.img.blink');   /* the slot was renamed */
+    if(oldBlink && !localStorage.getItem('mio.img.eyeClosed')){
+      try{ localStorage.setItem('mio.img.eyeClosed',oldBlink); localStorage.removeItem('mio.img.blink'); }catch(e){}
+    }
+    try{ var ey=localStorage.getItem('mio.eyes'); if(ey) eyes=JSON.parse(ey); }catch(e){}
     SLOTS.forEach(function(sl){
       try{
         var a=localStorage.getItem('mio.align.'+sl.k);
@@ -375,8 +424,10 @@ function setSlotImage(k,dataUrl,persist){
     if(k==='base'){
       sampleSkin(); setDiag('顔','読み込み済み '+img.width+'×'+img.height,'ok');
       Object.keys(images).forEach(function(o){ if(o!=='base') alignSheet(o); });
+      rebuildLayers();
     }else{
       var fit=alignSheet(k);
+      buildLayer(k);
       /* a large residual means it is a different picture, not a different face */
       if(fit>26){
         markSlot(k,'別の絵に見えます',true);
@@ -510,11 +561,12 @@ function fitCanvas(){
   draw(true);
 }
 
-var breath=0, lastDraw='';
+var breath=0, tsec=0, lastDraw='';
 function draw(force){
   var W=canvas.width, H=canvas.height;
   var key=[Math.round(vis.w*100),Math.round(vis.h*100),Math.round(breath*400),
-           calibrating?1:0,exprShown,Math.round(exprFade*60),Math.round(blinkAmt*40)].join(',');
+           calibrating,showBrow,showEye,Math.round(browAmt*50),Math.round(eyeAmt*50),
+           Math.round(blinkAmt*40),Math.round(tearAmt*50),tearAmt>0.01?Math.round(tsec*20):0].join(',');
   if(!force && key===lastDraw) return;
   lastDraw=key;
 
@@ -528,30 +580,83 @@ function draw(force){
     fx.translate(W/2,H/2); fx.scale(1+breath*0.004,1+breath*0.004); fx.translate(-W/2,-H/2);
     fx.drawImage(base,ox,oy,iw,ih);
     /* the expression sheets share this framing, so they lay straight over it */
-    if(exprFade>0.01 && images[exprShown] && exprShown!=='base'){
-      fx.globalAlpha=exprFade; drawSheet(exprShown,ox,oy,iw,ih); fx.globalAlpha=1;
-    }
-    if(blinkAmt>0.01 && images.blink){
-      fx.globalAlpha=blinkAmt; drawSheet('blink',ox,oy,iw,ih); fx.globalAlpha=1;
-    }
+    if(showBrow) drawLayer(showBrow,browAmt,ox,oy,iw,ih);
+    if(showEye)  drawLayer(showEye, eyeAmt, ox,oy,iw,ih);
+    if(blinkAmt>0.01) drawLayer('eyeClosed',blinkAmt,ox,oy,iw,ih);
+    drawTears(ox,oy,iw,ih,tearAmt,tsec);
     drawMouth(ox+mouth.x*iw, oy+mouth.y*ih, mouth.w*scale, mouth.cover*scale);
     fx.restore();
   }else{
     drawStandIn(W,H);
   }
   if(calibrating){
-    fx.fillStyle='rgba(0,0,0,.45)'; fx.fillRect(0,0,W,26*(window.devicePixelRatio||1));
+    var dp=(window.devicePixelRatio||1);
+    fx.fillStyle='rgba(0,0,0,.5)'; fx.fillRect(0,0,W,26*dp);
     fx.fillStyle='#EFE7D6';
-    fx.font=(13*(window.devicePixelRatio||1))+'px "IBM Plex Sans JP", sans-serif';
-    fx.textBaseline='middle';
-    fx.fillText('口の中心をタップしてください', 10*(window.devicePixelRatio||1), 13*(window.devicePixelRatio||1));
+    fx.font=(13*dp)+'px "IBM Plex Sans JP", sans-serif';
+    fx.textBaseline='middle'; fx.textAlign='left';
+    fx.fillText(calibrating==='eyes'
+      ? (eyeStep===0?'左目の中心をタップ':'右目の中心をタップ')
+      : '口の中心をタップ', 10*dp, 13*dp);
   }
 }
 
-function drawSheet(k,ox,oy,iw,ih){
-  var im=images[k], a=aligns[k]||{dx:0,dy:0,s:1};
-  var w=iw*a.s, h=ih*a.s;
-  fx.drawImage(im, ox+a.dx*iw+(iw-w)/2, oy+a.dy*ih+(ih-h)/2, w, h);
+/* Cut the sheet's own region out once, with a soft edge, so each frame is a
+   single drawImage instead of a clip and a gradient. */
+function buildLayer(k){
+  var im=images[k], base=images.base;
+  if(!im||!base||k==='base') return;
+  var reg = USE[k]==='brow' ? browRegion() : eyeRegion();
+  var bw=base.width, bh=base.height;
+  var px=Math.round(reg.x*bw), py=Math.round(reg.y*bh);
+  var pw=Math.max(8,Math.round(reg.w*bw)), ph=Math.max(8,Math.round(reg.h*bh));
+  var c=document.createElement('canvas'); c.width=pw; c.height=ph;
+  var g=c.getContext('2d');
+  var a=aligns[k]||{dx:0,dy:0,s:1};
+  var sw=bw*a.s, sh=bh*a.s;
+  g.drawImage(im, a.dx*bw+(bw-sw)/2-px, a.dy*bh+(bh-sh)/2-py, sw, sh);
+  g.globalCompositeOperation='destination-in';
+  g.save(); g.translate(pw/2,ph/2); g.scale(1,ph/pw);
+  var m=g.createRadialGradient(0,0,0,0,0,pw/2);
+  m.addColorStop(0,'rgba(0,0,0,1)'); m.addColorStop(0.68,'rgba(0,0,0,1)');
+  m.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=m; g.beginPath(); g.arc(0,0,pw/2,0,Math.PI*2); g.fill();
+  g.restore();
+  layerCache[k]={canvas:c,reg:reg};
+}
+function rebuildLayers(){
+  layerCache={};
+  Object.keys(images).forEach(function(k){ if(k!=='base') buildLayer(k); });
+  draw(true);
+}
+function drawLayer(k,alpha,ox,oy,iw,ih){
+  var L=layerCache[k]; if(!L||alpha<0.01) return;
+  fx.globalAlpha=alpha;
+  fx.drawImage(L.canvas, ox+L.reg.x*iw, oy+L.reg.y*ih, L.reg.w*iw, L.reg.h*ih);
+  fx.globalAlpha=1;
+}
+
+/* Tears are drawn, not photographed: a wet trail with a bead running down it
+   animates, where a still sheet would only ever look damp. */
+function drawTears(ox,oy,iw,ih,amt,t){
+  if(amt<0.01) return;
+  var sp=Math.abs(eyes.rx-eyes.lx)*iw;
+  [[eyes.lx,eyes.ly,-1],[eyes.rx,eyes.ry,1]].forEach(function(e,i){
+    var x=ox+e[0]*iw+e[2]*sp*0.22, y=oy+e[1]*ih+sp*0.20;
+    var len=sp*1.5*amt;
+    var trail=fx.createLinearGradient(x,y,x+e[2]*sp*0.10,y+len);
+    trail.addColorStop(0,'rgba(255,255,255,'+(0.30*amt).toFixed(3)+')');
+    trail.addColorStop(1,'rgba(255,255,255,0)');
+    fx.strokeStyle=trail; fx.lineWidth=Math.max(1,sp*0.055); fx.lineCap='round';
+    fx.beginPath(); fx.moveTo(x,y); fx.quadraticCurveTo(x+e[2]*sp*0.04,y+len*0.55,x+e[2]*sp*0.10,y+len); fx.stroke();
+    var ph=((t*0.30)+i*0.47)%1;
+    var by=y+len*ph, bx=x+e[2]*sp*0.10*ph*ph, r=sp*0.055*(1-0.25*ph);
+    var fade=Math.min(1,ph*6)*(1-ph*0.35)*amt;
+    fx.fillStyle='rgba(255,255,255,'+(0.62*fade).toFixed(3)+')';
+    fx.beginPath(); fx.ellipse(bx,by,r*0.72,r,0,0,Math.PI*2); fx.fill();
+    fx.fillStyle='rgba(150,175,200,'+(0.30*fade).toFixed(3)+')';
+    fx.beginPath(); fx.ellipse(bx,by+r*0.25,r*0.5,r*0.55,0,0,Math.PI*2); fx.fill();
+  });
 }
 
 function drawMouth(cx,cy,w,cover){
@@ -945,7 +1050,7 @@ var RULES=[
  '・相手は「ケンさん」。',
  '',
  '必ず次の形のJSONだけを返してください。前後に説明を付けないこと。',
- '{"reply":"話す文","kana":"replyの読みを全てひらがなで。漢字・数字・英字を残さない","emotion":"neutral|happy|sad|angry|surprised|relaxed"}'
+ '{"reply":"話す文","kana":"replyの読みを全てひらがなで。漢字・数字・英字を残さない","emotion":"neutral|happy|sad|angry|surprised|relaxed","strength":0.0〜1.0でその感情の強さ,"tears":涙ぐむなら true そうでなければ false}'
 ].join('\n');
 
 var ERR={
@@ -977,11 +1082,14 @@ function ask(said){
   sampleFn.json([{role:'user',content:RULES}].concat(turns),{cache:false,modelTier:'quick'})
   .then(function(d){
     var reply=(d&&d.reply)||'', kana=(d&&d.kana)||reply, emo=(d&&d.emotion)||'neutral';
+    if(!EMO[emo]) emo='neutral';
+    var strength=(d&&typeof d.strength==='number')?d.strength:undefined;
+    var tears=(d&&d.tears)?1:0;
     if(!reply){ throw {code:'empty_completion'}; }
     turns.push({role:'assistant',content:reply});
     addTurn('澪 · '+emo,reply,'mio');
-    setDiag('最後の感情',emo+(images[emo]?'（絵あり）':'（絵なし）'));
-    setExpression(emo);
+    setDiag('最後の感情',emo+(strength!==undefined?(' '+Math.round(strength*100)+'%'):'')+(tears?' / 涙':''));
+    setExpression(emo,strength,tears?0.85:undefined);
     busy=false;
     speak(reply,kana,function(){
       if(micBlocked){ typed.focus(); return; }
@@ -1089,12 +1197,43 @@ document.getElementById('imgfile').addEventListener('change',function(e){
   fr.readAsDataURL(f);
 });
 document.getElementById('calib').addEventListener('click',function(){
-  calibrating=!calibrating; draw(true);
+  calibrating = calibrating==='mouth' ? false : 'mouth'; draw(true);
   if(calibrating) sysLine('画面の中の、澪の口の中心をタップしてください。');
+});
+var eyeStep=0;
+document.getElementById('calibEyes').addEventListener('click',function(){
+  calibrating = calibrating==='eyes' ? false : 'eyes'; eyeStep=0; draw(true);
+  if(calibrating) sysLine('左目の中心、続けて右目の中心をタップしてください。眉の範囲はそこから決めます。');
+});
+
+/* try each feeling without having to talk her into one */
+var tryrow=document.getElementById('tryrow');
+Object.keys(EMO).forEach(function(k){
+  var names={neutral:'ふつう',relaxed:'おだやか',happy:'よろこび',sad:'かなしみ',angry:'いかり',surprised:'おどろき'};
+  var b=document.createElement('button');
+  b.className='mini'; b.type='button'; b.textContent=names[k]||k;
+  b.addEventListener('click',function(){ setExpression(k); setDiag('いま試している表情',names[k]||k); });
+  tryrow.appendChild(b);
 });
 canvas.addEventListener('click',function(e){
   var base=images.base;
   if(!calibrating||!base) return;
+  if(calibrating==='eyes'){
+    var r2=canvas.getBoundingClientRect(), W2=canvas.width, H2=canvas.height;
+    var sc2=Math.min(W2/base.width,H2/base.height);
+    var iw2=base.width*sc2, ih2=base.height*sc2;
+    var nx2=((e.clientX-r2.left)/r2.width*W2-(W2-iw2)/2)/iw2;
+    var ny2=((e.clientY-r2.top)/r2.height*H2-(H2-ih2)/2)/ih2;
+    if(nx2<0||nx2>1||ny2<0||ny2>1) return;
+    if(eyeStep===0){ eyes.lx=nx2; eyes.ly=ny2; eyeStep=1; sysLine('次に右目の中心をタップしてください。'); }
+    else{
+      eyes.rx=nx2; eyes.ry=ny2; eyeStep=0; calibrating=false;
+      try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes)); }catch(e2){}
+      rebuildLayers();
+      sysLine('目と眉の範囲を覚えました。');
+    }
+    draw(true); return;
+  }
   var r=canvas.getBoundingClientRect();
   var W=canvas.width,H=canvas.height;
   var scale=Math.min(W/base.width,H/base.height);
@@ -1132,18 +1271,22 @@ function loop(now){
   var k=1-Math.exp(-dt/tau);
   vis.w+=(t[0]-vis.w)*k; vis.h+=(t[1]-vis.h)*k;
 
-  /* expression: fade the old sheet out before the new one in, so any two
-     expressions cross through the neutral face rather than ghosting */
-  var ek=1-Math.exp(-dt/0.09);
-  if(exprShown!==exprTarget){
-    exprFade+=(0-exprFade)*ek;
-    if(exprFade<0.02){ exprFade=0; exprShown=exprTarget; }
-  }else{
-    exprFade+=((exprTarget==='base'?0:1)-exprFade)*ek;
-  }
+  /* Each band eases on its own: brows can settle into a new shape while the
+     eyes are still arriving. A band swapping sheets fades out first, so two
+     eye shapes are never on screen together. */
+  var ek=1-Math.exp(-dt/0.10);
+  if(showBrow!==wantBrow){
+    browAmt+=(0-browAmt)*ek;
+    if(browAmt<0.02){ browAmt=0; showBrow=wantBrow; }
+  }else browAmt+=((showBrow?emoK:0)-browAmt)*ek;
+  if(showEye!==wantEye){
+    eyeAmt+=(0-eyeAmt)*ek;
+    if(eyeAmt<0.02){ eyeAmt=0; showEye=wantEye; }
+  }else eyeAmt+=((showEye?emoK:0)-eyeAmt)*ek;
+  tearAmt+=(tearWant-tearAmt)*(1-Math.exp(-dt/(tearWant>tearAmt?0.9:2.2)));
 
   /* blink: only when there is a closed-eye sheet to fade to */
-  if(images.blink){
+  if(images.eyeClosed){
     if(blinkPhase<0){
       nextBlink-=dt;
       if(nextBlink<=0){ blinkPhase=0; nextBlink=2.6+Math.random()*3.6; }
@@ -1156,6 +1299,7 @@ function loop(now){
       else { blinkAmt=0; blinkPhase=-1; }
     }
   }else{ blinkAmt=0; blinkPhase=-1; }
+  tsec+=dt;
 
   draw(false);
 }
