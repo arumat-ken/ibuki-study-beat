@@ -147,6 +147,15 @@ dl.rows{display:flex;flex-direction:column;margin:0}
 .s-ok{color:var(--ok);font-weight:600}
 .s-bad{color:var(--live);font-weight:600}
 
+.level{height:8px;border-radius:5px;background:var(--panel-2);overflow:hidden;border:1px solid var(--line)}
+.level i{display:block;height:100%;width:0%;background:var(--accent);transition:width .05s linear}
+.reclog{
+  font-family:"IBM Plex Mono",monospace;font-size:11px;line-height:1.7;margin:0;
+  background:var(--panel-2);border:1px solid var(--line);border-radius:8px;
+  padding:8px 10px;max-height:132px;overflow-y:auto;white-space:pre-wrap;
+  word-break:break-word;color:var(--ink-2);
+}
+.check{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2)}
 .setup{display:flex;flex-direction:column;gap:9px}
 .slider{display:flex;align-items:center;gap:10px}
 .slider input{flex:1}
@@ -205,8 +214,14 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
       </section>
 
       <section class="panel">
-        <h2>この端末の状態</h2>
+        <h2>声の状態</h2>
         <dl class="rows" id="diag"></dl>
+        <div class="bar">
+          <button class="mini" id="miccheck">マイクを確認</button>
+          <label class="check"><input type="checkbox" id="autolisten" checked> 話し終わったら自動で聞く</label>
+        </div>
+        <div class="level"><i id="levelbar"></i></div>
+        <pre class="reclog" id="reclog"></pre>
       </section>
     </div>
   </div>
@@ -462,18 +477,30 @@ if(window.speechSynthesis){
   setDiag('読み上げ','この端末では使えない','bad');
 }
 
-var visSeq=['x'], visStart=0, visIdx=0;
+var visSeq=['x'], visStart=0, utterSeq=0;
+
+/* cancel() makes the current utterance fire onend, which would look like a
+   normal finish and start listening again. Bumping the sequence marks that
+   result stale so only the utterance still current can hand control on. */
+function stopSpeaking(){
+  utterSeq++;
+  try{ if(window.speechSynthesis) speechSynthesis.cancel(); }catch(e){}
+  speaking=false; visTarget='x';
+}
+
 function speak(text,kana,done){
   if(!window.speechSynthesis){ done&&done(); return; }
+  var myId=++utterSeq, settled=false, t0=0;
   var u=new SpeechSynthesisUtterance(text);
   u.lang='ja-JP'; if(jaVoice) u.voice=jaVoice;
   u.rate=1.0; u.pitch=1.06;
-  visSeq=toVisemes(kana||text); visIdx=0;
-  var t0=0;
+  visSeq=toVisemes(kana||text);
   u.onstart=function(){
     speaking=true; t0=performance.now(); visStart=t0; setState('speak');
   };
-  u.onend=u.onerror=function(){
+  function settle(){
+    if(settled) return; settled=true;          /* onerror then onend both fire */
+    if(myId!==utterSeq) return;                /* superseded: stay silent */
     speaking=false; visTarget='x'; setState('idle');
     if(t0){
       var secs=(performance.now()-t0)/1000;
@@ -485,57 +512,164 @@ function speak(text,kana,done){
       }
     }
     done&&done();
-  };
+  }
+  u.onend=settle; u.onerror=settle;
   speechSynthesis.speak(u);
 }
 
 /* ================= speech in ================= */
 var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-var rec=null, listening=false;
+var rec=null, listening=false, noSpeechRetries=0, everHeard=false;
 var selftile=document.getElementById('selftile');
+var recLogEl=document.getElementById('reclog'), recLines=[];
+function rlog(m){
+  recLines.push(new Date().toTimeString().slice(0,8)+'  '+m);
+  if(recLines.length>40) recLines.shift();
+  recLogEl.textContent=recLines.join('\n');
+  recLogEl.scrollTop=recLogEl.scrollHeight;
+}
 function selfText(t,dim){
   selftile.innerHTML='';
   var el=document.createElement(dim?'span':'div');
   el.textContent=t; selftile.appendChild(el);
 }
+
+/* Why the mic gets checked separately: this page runs inside the viewer's
+   frame, and a frame without microphone permission fails the same way a
+   user's refusal does. Measuring the input level tells the two apart —
+   a moving bar means the mic reaches us and only recognition is at fault. */
+var levelBar=document.getElementById('levelbar');
+document.getElementById('miccheck').addEventListener('click',function(){
+  var btn=this;
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    setDiag('マイク','この端末では開けない','bad'); rlog('getUserMedia が無い'); return;
+  }
+  btn.disabled=true; btn.textContent='声を出してください…';
+  setDiag('マイク','許可を待っています');
+  navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+    setDiag('マイク','許可された','ok'); rlog('マイク許可 OK');
+    var AC=window.AudioContext||window.webkitAudioContext;
+    var ctx=new AC();
+    if(ctx.state==='suspended'&&ctx.resume) ctx.resume();
+    var an=ctx.createAnalyser(); an.fftSize=1024;
+    ctx.createMediaStreamSource(stream).connect(an);
+    var buf=new Float32Array(an.fftSize), peak=-90, t0=performance.now();
+    (function tick(){
+      an.getFloatTimeDomainData(buf);
+      var sum=0; for(var i=0;i<buf.length;i++) sum+=buf[i]*buf[i];
+      var db=20*Math.log10(Math.max(Math.sqrt(sum/buf.length),1e-7));
+      if(db>peak) peak=db;
+      levelBar.style.width=Math.round(Math.min(100,Math.max(0,(db+60)/60*100)))+'%';
+      if(performance.now()-t0<3000){ requestAnimationFrame(tick); return; }
+      levelBar.style.width='0%';
+      stream.getTracks().forEach(function(t){ t.stop(); });
+      if(ctx.close) ctx.close();
+      btn.disabled=false; btn.textContent='マイクを確認';
+      var heard=peak>-45;
+      setDiag('マイク入力', peak.toFixed(0)+' dBFS '+(heard?'（声が届いています）':'（ほぼ無音）'), heard?'ok':'bad');
+      rlog('入力レベル最大 '+peak.toFixed(1)+' dBFS');
+      sysLine(heard
+        ? 'マイクは届いています。聞き取れないなら原因は音声認識のほうです。'
+        : 'マイクからほとんど音が入っていません。本体の消音や、他のアプリがマイクを使っていないか確認してください。');
+    })();
+  }).catch(function(err){
+    btn.disabled=false; btn.textContent='マイクを確認';
+    setDiag('マイク', err.name, 'bad');
+    rlog('getUserMedia 失敗: '+err.name+' / '+(err.message||''));
+    sysLine(err.name==='NotAllowedError'
+      ? 'マイクが許可されませんでした。Safari の設定でこのサイトのマイクを「許可」にするか、確認ダイアログで許可を選んでください。'
+      : (err.name==='NotFoundError' ? 'マイクが見つかりません。' : 'マイクを開けませんでした（'+err.name+'）。'));
+  });
+});
+
+var pendingListen=false;
+function beginListen(){
+  if(listening||pendingListen) return;   /* two rec.start() calls throw */
+  if(!SR){
+    rlog('SpeechRecognition が無い');
+    sysLine('この端末では音声認識が使えません。下の入力欄から文字で送ってください。');
+    return;
+  }
+  /* iOS keeps the audio session in playback while it is speaking; starting
+     recognition on top of that fails silently, so stop and let it settle. */
+  var wasSpeaking=false;
+  try{ wasSpeaking=!!(window.speechSynthesis&&speechSynthesis.speaking); }catch(e){}
+  stopSpeaking();
+  pendingListen=true;
+  setTimeout(function(){ pendingListen=false; startListening(); }, wasSpeaking?350:0);
+}
+
+var REC_ERR={
+  'not-allowed':'マイクが許可されていません。「マイクを確認」を押して許可してください。',
+  'service-not-allowed':'この画面では音声認識が許可されていません。「マイクを確認」の結果を教えてください。',
+  'audio-capture':'マイクを開けませんでした。他のアプリが使っていないか確認してください。',
+  'network':'音声認識の通信に失敗しました。回線を確認してもう一度どうぞ。',
+  'language-not-supported':'この端末の音声認識が日本語に対応していません。',
+  'no-speech':'',
+  'aborted':''
+};
+
 function startListening(){
-  if(!SR){ setDiag('音声認識','この端末では使えない','bad'); return false; }
   try{
     rec=new SR();
     rec.lang='ja-JP'; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=1;
-    var finalText='';
-    rec.onstart=function(){ listening=true; setState('listen'); selfText('…',true); };
+    var finalText='', gotAny=false, errCode='';
+    rec.onstart=function(){
+      listening=true; setState('listen'); selfText('…',true);
+      talkBtn.dataset.live='1'; talkBtn.textContent='聞いています（押すと終了）';
+      rlog('聞き取り開始');
+    };
+    rec.onaudiostart=function(){ rlog('音声の取り込み開始'); };
+    rec.onspeechstart=function(){ gotAny=true; rlog('声を検出'); };
     rec.onresult=function(e){
+      gotAny=true;
       var interim='';
       for(var i=e.resultIndex;i<e.results.length;i++){
         var r=e.results[i];
         if(r.isFinal) finalText+=r[0].transcript; else interim+=r[0].transcript;
       }
-      selfText(finalText+interim || '…', !(finalText+interim));
+      var shown=finalText+interim;
+      selfText(shown||'…', !shown);
+      if(shown) rlog('認識: '+shown.slice(0,40));
     };
     rec.onerror=function(e){
-      listening=false;
-      if(e.error==='not-allowed'||e.error==='service-not-allowed'){
-        setDiag('音声認識','マイクが許可されていない','bad');
-        sysLine('マイクが許可されていません。下の入力欄から文字で送れます。');
-      }else if(e.error!=='no-speech'&&e.error!=='aborted'){
-        setDiag('音声認識','エラー: '+e.error,'bad');
-      }
-      setState('idle'); talkBtn.dataset.live='0'; talkBtn.textContent='話す';
+      errCode=e.error||'unknown';
+      rlog('エラー: '+errCode);
+      if(errCode!=='no-speech'&&errCode!=='aborted') setDiag('音声認識','エラー: '+errCode,'bad');
     };
     rec.onend=function(){
-      listening=false; talkBtn.dataset.live='0'; talkBtn.textContent='話す';
+      listening=false;
+      talkBtn.dataset.live='0'; talkBtn.textContent='話す';
       var said=finalText.trim();
-      if(said){ selfText(said); ask(said); }
-      else{ setState('idle'); selfText('聞き取れませんでした。もう一度どうぞ',true); }
+      rlog('終了 / 結果='+(said?('「'+said.slice(0,30)+'」'):'なし')+(errCode?(' / '+errCode):''));
+      if(said){
+        everHeard=true; noSpeechRetries=0;
+        setDiag('音声認識','聞き取れています','ok');
+        selfText(said); ask(said); return;
+      }
+      setState('idle');
+      var msg=REC_ERR[errCode];
+      if(msg){ sysLine(msg); return; }
+      /* nothing said: try once more, then stop rather than loop */
+      if(started && autoListen() && noSpeechRetries<1){
+        noSpeechRetries++; rlog('無音のため1回だけ聞き直す');
+        selfText('もう一度どうぞ',true);
+        setTimeout(beginListen,250); return;
+      }
+      noSpeechRetries=0;
+      selfText(gotAny?'うまく聞き取れませんでした':'声が届きませんでした。「マイクを確認」を試してください',true);
+      if(!gotAny && !everHeard) sysLine('声が届いていません。「マイクを確認」を押して、バーが動くか見てください。');
     };
     rec.start();
-    return true;
   }catch(err){
-    setDiag('音声認識','起動できない: '+err.message,'bad');
-    return false;
+    listening=false;
+    talkBtn.dataset.live='0'; talkBtn.textContent='話す';
+    rlog('起動できない: '+err.name+' / '+(err.message||''));
+    setDiag('音声認識','起動できない: '+err.name,'bad');
+    sysLine('音声認識を起動できませんでした（'+err.name+'）。下の入力欄から文字で送れます。');
   }
 }
+function autoListen(){ return document.getElementById('autolisten').checked; }
 
 /* ================= the brain ================= */
 var sampleFn=null, turns=[], busy=false;
@@ -584,7 +718,9 @@ function ask(said){
     addTurn('澪 · '+emo,reply,'mio');
     setDiag('最後の感情',emo);
     busy=false;
-    speak(reply,kana,null);
+    speak(reply,kana,function(){
+      if(started && autoListen() && !listening) beginListen();
+    });
   })
   .catch(function(e){
     busy=false; setState('idle');
@@ -601,27 +737,27 @@ var talkBtn=document.getElementById('talk'), hangBtn=document.getElementById('ha
 var started=false;
 talkBtn.addEventListener('click',function(){
   if(!started){
-    started=true;
-    /* iOS will not speak later unless synthesis is first touched inside a gesture */
-    try{ if(window.speechSynthesis) speechSynthesis.speak(new SpeechSynthesisUtterance(' ')); }catch(e){}
-    hangBtn.disabled=false;
-    talkBtn.textContent='話す';
-    sysLine('通話を始めました。「話す」を押してから話しかけてください。');
+    started=true; hangBtn.disabled=false; talkBtn.textContent='話す';
     setState('idle');
+    /* iOS only speaks later if synthesis is first used inside a gesture. A real
+       greeting does that AND opens the call, where an empty utterance could
+       leave the queue wedged. */
+    var hello='はい、澪です。ケンさん、聞こえますか。';
+    addTurn('澪',hello,'mio');
+    speak(hello,'はい、みおです。けんさん、きこえますか。',function(){
+      if(autoListen()) beginListen();
+      else sysLine('「話す」を押してから話しかけてください。');
+    });
     return;
   }
   if(listening){ try{ rec&&rec.stop(); }catch(e){} return; }
-  if(speaking){ try{ speechSynthesis.cancel(); }catch(e){} speaking=false; }
-  talkBtn.dataset.live='1'; talkBtn.textContent='聞いています（押すと終了）';
-  if(!startListening()){
-    talkBtn.dataset.live='0'; talkBtn.textContent='話す';
-    sysLine('この端末では音声認識が使えません。下の入力欄から文字で送ってください。');
-  }
+  noSpeechRetries=0;
+  beginListen();
 });
 hangBtn.addEventListener('click',function(){
   try{ rec&&rec.stop(); }catch(e){}
-  try{ speechSynthesis.cancel(); }catch(e){}
-  listening=false; speaking=false; started=false; visTarget='x';
+  stopSpeaking(); pendingListen=false;
+  listening=false; speaking=false; started=false; visTarget='x'; noSpeechRetries=0;
   talkBtn.dataset.live='0'; talkBtn.textContent='通話を始める';
   hangBtn.disabled=true; setState('idle'); selfText('あなたの声がここに出ます',true);
   sysLine('通話を終了しました。');
@@ -702,9 +838,13 @@ function loop(now){
 }
 
 /* ================= boot ================= */
+setDiag('画面の枠', (window.self!==window.top)?'ビューア内':'直接');
 setDiag('音声認識', SR?'使える':'この端末では使えない', SR?'ok':'bad');
+setDiag('マイク','未確認');
 setDiag('頭脳','確認中…');
 setDiag('顔','仮の顔');
+rlog('起動 / SpeechRecognition '+(SR?'あり':'なし')+' / '+((window.self!==window.top)?'ビューア内':'直接'));
+if(!SR) sysLine('この端末の Safari は音声認識に対応していません。下の入力欄から文字で送ってください。');
 loadStored();
 fitCanvas();
 window.addEventListener('resize',fitCanvas);
@@ -713,8 +853,8 @@ requestAnimationFrame(loop);
 document.addEventListener('visibilitychange',function(){
   if(document.visibilityState==='hidden'){
     try{ rec&&rec.stop(); }catch(e){}
-    try{ speechSynthesis.cancel(); }catch(e){}
-    listening=false; speaking=false; visTarget='x';
+    stopSpeaking(); pendingListen=false; listening=false;
+    rlog('画面が隠れたので停止');
   }
 });
 
