@@ -147,6 +147,11 @@ dl.rows{display:flex;flex-direction:column;margin:0}
 .s-ok{color:var(--ok);font-weight:600}
 .s-bad{color:var(--live);font-weight:600}
 
+.slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(98px,1fr));gap:6px}
+.slot{border:1px solid var(--line-strong);background:var(--panel);color:var(--ink);
+  border-radius:8px;padding:7px 9px;font-size:12.5px;text-align:left;line-height:1.3}
+.slot[data-has="1"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+.slot small{display:block;font-size:10px;opacity:.75;font-weight:400}
 .level{height:8px;border-radius:5px;background:var(--panel-2);overflow:hidden;border:1px solid var(--line)}
 .level i{display:block;height:100%;width:0%;background:var(--accent);transition:width .05s linear}
 .reclog{
@@ -204,13 +209,12 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
       <section class="panel">
         <h2>澪の顔</h2>
         <div class="setup">
-          <p class="hint" style="margin:0">バストアップ正面の画像を読み込むと、その顔が話します。読み込まないあいだは仮の顔です。</p>
-          <div class="bar">
-            <button class="mini" id="pickimg">画像を選ぶ</button>
-            <button class="mini" id="calib">口の位置を合わせる</button>
-            <input type="file" id="imgfile" accept="image/*" hidden>
-          </div>
-          <div class="slider"><span class="hint">口の大きさ</span><input type="range" id="mwidth" min="20" max="180" value="70"></div>
+          <p class="hint" style="margin:0">「通常」だけでも会話できます。「目を閉じる」を入れるとまばたきし、感情の絵を入れるとその表情に変わります。同じ構図・同じ大きさで作ってください。</p>
+          <div class="slots" id="slots"></div>
+          <div class="bar"><button class="mini" id="calib">口の位置を合わせる</button></div>
+          <div class="slider"><span class="hint" style="min-width:64px">口の大きさ</span><input type="range" id="mwidth" min="16" max="200" value="70"></div>
+          <div class="slider"><span class="hint" style="min-width:64px">隠す範囲</span><input type="range" id="mcover" min="12" max="240" value="56"></div>
+          <input type="file" id="imgfile" accept="image/*" hidden>
         </div>
       </section>
 
@@ -280,11 +284,32 @@ function setState(s){ pill.dataset.s=s; pillText.textContent=STATE[s]||s; }
 
 /* ================= face ================= */
 var canvas=document.getElementById('face'), fx=canvas.getContext('2d');
-var portrait=null;                       /* Image once loaded */
-var mouth={x:0.5,y:0.72,w:70};           /* normalised centre + px width */
+
+var SLOTS=[
+  {k:'base',      label:'通常'},
+  {k:'blink',     label:'目を閉じる'},
+  {k:'happy',     label:'よろこび'},
+  {k:'relaxed',   label:'おだやか'},
+  {k:'sad',       label:'かなしみ'},
+  {k:'angry',     label:'いかり'},
+  {k:'surprised', label:'おどろき'}
+];
+var images={};                              /* slot -> Image */
+/* `w` sizes the drawn mouth, `cover` the patch that hides the drawn-on one.
+   They were the same number, so shrinking the mouth uncovered the original. */
+var mouth={x:0.5,y:0.72,w:70,cover:56};
 var SKIN={r:240,g:203,b:161};
 function skinRGBA(a){ return 'rgba('+SKIN.r+','+SKIN.g+','+SKIN.b+','+a+')'; }
 var calibrating=false;
+
+/* expression cross-fade */
+var exprTarget='base', exprShown='base', exprFade=0;
+/* blink */
+var blinkAmt=0, blinkPhase=-1, nextBlink=2.5;
+
+function setExpression(k){
+  exprTarget = (k&&k!=='neutral'&&images[k]) ? k : 'base';
+}
 
 var VISEME={
   a:[1.00,1.00], i:[1.12,0.30], u:[0.56,0.62],
@@ -292,47 +317,127 @@ var VISEME={
 };
 var vis={w:VISEME.x[0],h:VISEME.x[1]}, visTarget='x';
 
+var slotsEl=document.getElementById('slots'), slotBtns={}, pickingSlot='base';
+SLOTS.forEach(function(sl){
+  var b=document.createElement('button');
+  b.className='slot'; b.type='button'; b.dataset.has='0';
+  b.innerHTML=''; b.appendChild(document.createTextNode(sl.label));
+  var sm=document.createElement('small'); sm.textContent='未設定'; b.appendChild(sm);
+  b.addEventListener('click',function(){
+    pickingSlot=sl.k;
+    document.getElementById('imgfile').click();
+  });
+  slotsEl.appendChild(b); slotBtns[sl.k]={btn:b,sub:sm};
+});
+function markSlot(k,txt,has){
+  var e=slotBtns[k]; if(!e) return;
+  e.btn.dataset.has=has?'1':'0'; e.sub.textContent=txt;
+}
+
 function loadStored(){
   try{
-    var p=localStorage.getItem('mio.portrait');
     var m=localStorage.getItem('mio.mouth');
-    if(m){ var o=JSON.parse(m); if(o&&typeof o.x==='number') mouth=o; }
+    if(m){
+      var o=JSON.parse(m);
+      if(o&&typeof o.x==='number'){
+        mouth.x=o.x; mouth.y=o.y;
+        if(o.w) mouth.w=o.w;
+        mouth.cover = o.cover || Math.round(o.w*0.78);   /* older saves had no cover */
+      }
+    }
     document.getElementById('mwidth').value=mouth.w;
-    if(p) setPortrait(p,false);
+    document.getElementById('mcover').value=mouth.cover;
+    /* the single-portrait build stored one image; it is the "通常" slot now */
+    var legacy=localStorage.getItem('mio.portrait');
+    if(legacy && !localStorage.getItem('mio.img.base')){
+      try{ localStorage.setItem('mio.img.base',legacy); localStorage.removeItem('mio.portrait'); }catch(e){}
+    }
+    SLOTS.forEach(function(sl){
+      var d=localStorage.getItem('mio.img.'+sl.k);
+      if(d) setSlotImage(sl.k,d,false);
+    });
   }catch(e){}
 }
 function store(){
   try{ localStorage.setItem('mio.mouth',JSON.stringify(mouth)); }catch(e){}
 }
 
-function setPortrait(dataUrl,persist){
+function setSlotImage(k,dataUrl,persist){
   var img=new Image();
   img.onload=function(){
-    portrait=img; sampleSkin();
-    setDiag('顔','読み込み済み '+img.width+'×'+img.height,'ok');
-    if(persist){ try{ localStorage.setItem('mio.portrait',dataUrl); }catch(e){
-      setDiag('顔','表示中（保存できず。次回また選んでください）'); } }
+    images[k]=img;
+    markSlot(k,img.width+'×'+img.height,true);
+    if(k==='base'){ sampleSkin(); setDiag('顔','読み込み済み '+img.width+'×'+img.height,'ok'); }
+    setDiag('表情の絵', Object.keys(images).length+' / '+SLOTS.length+' 枚');
+    if(persist){
+      try{ localStorage.setItem('mio.img.'+k,dataUrl); }
+      catch(e){ markSlot(k,'表示中（保存できず）',true); }
+    }
     draw(true);
   };
-  img.onerror=function(){ setDiag('顔','画像を読めなかった','bad'); };
+  img.onerror=function(){ markSlot(k,'読めなかった',false); };
   img.src=dataUrl;
 }
 
 /* average the two cheek pixels either side of the mouth, so the patch that
    hides her drawn mouth matches her actual skin instead of a guess */
+function baseCtx(){
+  var img=images.base; if(!img) return null;
+  var c=document.createElement('canvas'); c.width=img.width; c.height=img.height;
+  var g=c.getContext('2d'); g.drawImage(img,0,0);
+  return {g:g,img:img};
+}
 function sampleSkin(){
   try{
-    var c=document.createElement('canvas'); c.width=portrait.width; c.height=portrait.height;
-    var g=c.getContext('2d'); g.drawImage(portrait,0,0);
-    var mx=mouth.x*portrait.width, my=mouth.y*portrait.height, off=mouth.w*0.9;
+    var b=baseCtx(); if(!b) return;
+    var mx=mouth.x*b.img.width, my=mouth.y*b.img.height, off=mouth.cover*1.25;
     var acc=[0,0,0], n=0;
     [-1,1].forEach(function(s){
-      var px=Math.max(0,Math.min(portrait.width-1,Math.round(mx+s*off)));
-      var d=g.getImageData(px,Math.max(0,Math.min(portrait.height-1,Math.round(my))),1,1).data;
+      var px=Math.max(0,Math.min(b.img.width-1,Math.round(mx+s*off)));
+      var d=b.g.getImageData(px,Math.max(0,Math.min(b.img.height-1,Math.round(my))),1,1).data;
       acc[0]+=d[0]; acc[1]+=d[1]; acc[2]+=d[2]; n++;
     });
     if(n) SKIN={r:Math.round(acc[0]/n),g:Math.round(acc[1]/n),b:Math.round(acc[2]/n)};
   }catch(e){ /* a cross-origin image would taint the canvas; keep the default */ }
+}
+
+/* Measure how far the drawn-on mouth actually extends, so the patch is sized
+   to the picture rather than to the animated mouth. Pixels notably darker
+   than the surrounding skin are the lip line; the 94th percentile of their
+   distance from the centre ignores stray specks. */
+function autoCover(){
+  try{
+    var b=baseCtx(); if(!b) return;
+    var img=b.img;
+    var mx=Math.round(mouth.x*img.width), my=Math.round(mouth.y*img.height);
+    var rx=Math.round(img.width*0.15), ry=Math.round(img.height*0.07);
+    var x0=Math.max(0,mx-rx), y0=Math.max(0,my-ry);
+    var x1=Math.min(img.width,mx+rx), y1=Math.min(img.height,my+ry);
+    var W=x1-x0, H=y1-y0; if(W<8||H<8) return;
+    var d=b.g.getImageData(x0,y0,W,H).data, ring=[], x, y, i, L;
+    for(y=0;y<H;y++) for(x=0;x<W;x++){
+      if(x<W*0.08||x>W*0.92||y<H*0.10||y>H*0.90){
+        i=(y*W+x)*4; ring.push(0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]);
+      }
+    }
+    if(ring.length<60) return;
+    ring.sort(function(a,b2){return a-b2;});
+    var skinL=ring[Math.floor(ring.length*0.6)];
+    var dxs=[], dys=[];
+    for(y=0;y<H;y++) for(x=0;x<W;x++){
+      i=(y*W+x)*4; L=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      if(skinL-L>26){ dxs.push(Math.abs(x0+x-mx)); dys.push(Math.abs(y0+y-my)); }
+    }
+    if(dxs.length<40) return;
+    var num=function(a,b2){return a-b2;};
+    dxs.sort(num); dys.sort(num);
+    var px=dxs[Math.floor(dxs.length*0.94)], py=dys[Math.floor(dys.length*0.94)];
+    /* 1.65 puts the measured extent inside the patch's opaque core (0.74) */
+    var want=Math.max(px, py/0.66)*1.65;
+    mouth.cover=Math.round(Math.min(img.width*0.24, Math.max(16, want)));
+    document.getElementById('mcover').value=mouth.cover;
+    store();
+  }catch(e){}
 }
 
 function fitCanvas(){
@@ -346,20 +451,28 @@ function fitCanvas(){
 var breath=0, lastDraw='';
 function draw(force){
   var W=canvas.width, H=canvas.height;
-  var key=[Math.round(vis.w*100),Math.round(vis.h*100),Math.round(breath*400),calibrating?1:0].join(',');
+  var key=[Math.round(vis.w*100),Math.round(vis.h*100),Math.round(breath*400),
+           calibrating?1:0,exprShown,Math.round(exprFade*60),Math.round(blinkAmt*40)].join(',');
   if(!force && key===lastDraw) return;
   lastDraw=key;
 
   fx.clearRect(0,0,W,H);
-  var iw,ih,ox,oy,scale;
-  if(portrait){
-    scale=Math.min(W/portrait.width,H/portrait.height);
-    iw=portrait.width*scale; ih=portrait.height*scale;
-    ox=(W-iw)/2; oy=(H-ih)/2;
+  var base=images.base;
+  if(base){
+    var scale=Math.min(W/base.width,H/base.height);
+    var iw=base.width*scale, ih=base.height*scale;
+    var ox=(W-iw)/2, oy=(H-ih)/2;
     fx.save();
     fx.translate(W/2,H/2); fx.scale(1+breath*0.004,1+breath*0.004); fx.translate(-W/2,-H/2);
-    fx.drawImage(portrait,ox,oy,iw,ih);
-    drawMouth(ox+mouth.x*iw, oy+mouth.y*ih, mouth.w*scale);
+    fx.drawImage(base,ox,oy,iw,ih);
+    /* the expression sheets share this framing, so they lay straight over it */
+    if(exprFade>0.01 && images[exprShown] && exprShown!=='base'){
+      fx.globalAlpha=exprFade; fx.drawImage(images[exprShown],ox,oy,iw,ih); fx.globalAlpha=1;
+    }
+    if(blinkAmt>0.01 && images.blink){
+      fx.globalAlpha=blinkAmt; fx.drawImage(images.blink,ox,oy,iw,ih); fx.globalAlpha=1;
+    }
+    drawMouth(ox+mouth.x*iw, oy+mouth.y*ih, mouth.w*scale, mouth.cover*scale);
     fx.restore();
   }else{
     drawStandIn(W,H);
@@ -373,17 +486,19 @@ function draw(force){
   }
 }
 
-function drawMouth(cx,cy,w){
+function drawMouth(cx,cy,w,cover){
   var mw=w*vis.w*0.5, mh=w*vis.h*0.34;
+  var pr=(cover||w*0.78);
 
   /* Hide the mouth the picture already has. A hard-edged patch reads as a
      flat blob on a shaded face, so it fades out at the rim instead. */
   fx.save();
   fx.translate(cx,cy); fx.scale(1,0.66);
-  var pr=w*0.78;
   var patch=fx.createRadialGradient(0,0,0,0,0,pr);
-  patch.addColorStop(0,skinRGBA(1)); patch.addColorStop(0.56,skinRGBA(1));
-  patch.addColorStop(0.80,skinRGBA(0.55)); patch.addColorStop(1,skinRGBA(0));
+  /* opaque well past the measured lip line, then a short feather: a patch
+     that starts fading too early lets the original mouth edge show through */
+  patch.addColorStop(0,skinRGBA(1)); patch.addColorStop(0.74,skinRGBA(1));
+  patch.addColorStop(0.88,skinRGBA(0.5)); patch.addColorStop(1,skinRGBA(0));
   fx.fillStyle=patch;
   fx.beginPath(); fx.arc(0,0,pr,0,Math.PI*2); fx.fill();
   fx.restore();
@@ -445,7 +560,7 @@ function drawStandIn(W,H){
     fx.quadraticCurveTo(sd*u*6.4,-u*21.6,sd*u*6.4+u*3.4,-u*20.2); fx.stroke();
   });
   fx.restore();
-  drawMouth(W/2,H*0.62-u*8,Math.min(W,H)*0.10);
+  drawMouth(W/2,H*0.62-u*8,Math.min(W,H)*0.10,Math.min(W,H)*0.078);
   /* a corner tag, opposite the status pill, so the self tile never sits on it */
   var label='仮の顔';
   fx.font='600 '+(11*dpr)+'px "IBM Plex Sans JP", sans-serif';
@@ -797,7 +912,8 @@ function ask(said){
     if(!reply){ throw {code:'empty_completion'}; }
     turns.push({role:'assistant',content:reply});
     addTurn('澪 · '+emo,reply,'mio');
-    setDiag('最後の感情',emo);
+    setDiag('最後の感情',emo+(images[emo]?'（絵あり）':'（絵なし）'));
+    setExpression(emo);
     busy=false;
     speak(reply,kana,function(){
       if(micBlocked){ typed.focus(); return; }
@@ -877,24 +993,29 @@ typed.addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefa
 typed.addEventListener('input',armAutoSend);
 
 /* ---- portrait + mouth calibration ---- */
-document.getElementById('pickimg').addEventListener('click',function(){
-  document.getElementById('imgfile').click();
-});
 document.getElementById('imgfile').addEventListener('change',function(e){
-  var f=e.target.files&&e.target.files[0]; if(!f) return;
+  var f=e.target.files&&e.target.files[0], slot=pickingSlot;
+  e.target.value='';                       /* so the same file can be re-picked */
+  if(!f) return;
   var fr=new FileReader();
   fr.onload=function(){
-    /* downscale before storing: a full-size photo will not fit in localStorage */
+    /* downscale before storing: seven full-size photos will not fit in
+       localStorage, and the tile never shows more than ~700px anyway */
     var img=new Image();
     img.onload=function(){
-      var maxW=720, s=Math.min(1,maxW/img.width);
+      var maxW=640, sc=Math.min(1,maxW/img.width);
       var c=document.createElement('canvas');
-      c.width=Math.round(img.width*s); c.height=Math.round(img.height*s);
+      c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
       c.getContext('2d').drawImage(img,0,0,c.width,c.height);
-      setPortrait(c.toDataURL('image/jpeg',0.86),true);
-      sysLine('画像を読み込みました。「口の位置を合わせる」で口の場所を教えてください。');
+      setSlotImage(slot,c.toDataURL('image/jpeg',0.85),true);
+      if(slot==='base'){
+        sysLine('通常の絵を読み込みました。「口の位置を合わせる」で口の中心をタップしてください。隠す範囲は自動で合わせます。');
+      }else{
+        var lab=''; SLOTS.forEach(function(x){ if(x.k===slot) lab=x.label; });
+        sysLine(lab+'の絵を読み込みました。');
+      }
     };
-    img.onerror=function(){ setDiag('顔','画像を読めなかった','bad'); };
+    img.onerror=function(){ markSlot(slot,'読めなかった',false); };
     img.src=fr.result;
   };
   fr.readAsDataURL(f);
@@ -904,21 +1025,26 @@ document.getElementById('calib').addEventListener('click',function(){
   if(calibrating) sysLine('画面の中の、澪の口の中心をタップしてください。');
 });
 canvas.addEventListener('click',function(e){
-  if(!calibrating||!portrait) return;
+  var base=images.base;
+  if(!calibrating||!base) return;
   var r=canvas.getBoundingClientRect();
   var W=canvas.width,H=canvas.height;
-  var scale=Math.min(W/portrait.width,H/portrait.height);
-  var iw=portrait.width*scale, ih=portrait.height*scale;
+  var scale=Math.min(W/base.width,H/base.height);
+  var iw=base.width*scale, ih=base.height*scale;
   var ox=(W-iw)/2, oy=(H-ih)/2;
   var px=(e.clientX-r.left)/r.width*W, py=(e.clientY-r.top)/r.height*H;
   var nx=(px-ox)/iw, ny=(py-oy)/ih;
   if(nx<0||nx>1||ny<0||ny>1) return;
-  mouth.x=nx; mouth.y=ny; store(); sampleSkin();
+  mouth.x=nx; mouth.y=ny;
+  autoCover(); store(); sampleSkin();
   calibrating=false; draw(true);
-  sysLine('口の位置を覚えました。大きさはスライダーで調整できます。');
+  sysLine('口の位置を覚えました。元の口を隠す範囲も測って合わせています。はみ出すときは「隠す範囲」で調整してください。');
 });
 document.getElementById('mwidth').addEventListener('input',function(e){
-  mouth.w=+e.target.value; store(); sampleSkin(); draw(true);
+  mouth.w=+e.target.value; store(); draw(true);
+});
+document.getElementById('mcover').addEventListener('input',function(e){
+  mouth.cover=+e.target.value; store(); sampleSkin(); draw(true);
 });
 
 /* ================= loop ================= */
@@ -937,6 +1063,32 @@ function loop(now){
   var tau = (t[1]>vis.h) ? 0.045 : 0.085;
   var k=1-Math.exp(-dt/tau);
   vis.w+=(t[0]-vis.w)*k; vis.h+=(t[1]-vis.h)*k;
+
+  /* expression: fade the old sheet out before the new one in, so any two
+     expressions cross through the neutral face rather than ghosting */
+  var ek=1-Math.exp(-dt/0.09);
+  if(exprShown!==exprTarget){
+    exprFade+=(0-exprFade)*ek;
+    if(exprFade<0.02){ exprFade=0; exprShown=exprTarget; }
+  }else{
+    exprFade+=((exprTarget==='base'?0:1)-exprFade)*ek;
+  }
+
+  /* blink: only when there is a closed-eye sheet to fade to */
+  if(images.blink){
+    if(blinkPhase<0){
+      nextBlink-=dt;
+      if(nextBlink<=0){ blinkPhase=0; nextBlink=2.6+Math.random()*3.6; }
+    }else{
+      blinkPhase+=dt;
+      var CLOSE=0.07, HOLD=0.05, OPEN=0.10;
+      if(blinkPhase<CLOSE) blinkAmt=blinkPhase/CLOSE;
+      else if(blinkPhase<CLOSE+HOLD) blinkAmt=1;
+      else if(blinkPhase<CLOSE+HOLD+OPEN) blinkAmt=1-(blinkPhase-CLOSE-HOLD)/OPEN;
+      else { blinkAmt=0; blinkPhase=-1; }
+    }
+  }else{ blinkAmt=0; blinkPhase=-1; }
+
   draw(false);
 }
 
@@ -946,6 +1098,7 @@ setDiag('音声認識', SR?'使える':'この端末では使えない', SR?'ok'
 setDiag('マイク','未確認');
 setDiag('頭脳','確認中…');
 setDiag('顔','仮の顔');
+setDiag('表情の絵','0 / '+SLOTS.length+' 枚');
 rlog('起動 / SpeechRecognition '+(SR?'あり':'なし')+' / '+((window.self!==window.top)?'ビューア内':'直接'));
 probePermission();
 if(!SR) sysLine('この端末の Safari は音声認識に対応していません。下の入力欄から文字で送ってください。');
