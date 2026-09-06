@@ -1,0 +1,734 @@
+<title>Mio Call</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#F1EDE4;
+  --panel:#FBF9F4;
+  --panel-2:#E8E1D3;
+  --line:#D8D0C0;
+  --line-strong:#BCB09A;
+  --ink:#221F19;
+  --ink-2:#68614F;
+  --ink-3:#8F8776;
+  --accent:#96702E;
+  --accent-soft:#EADFC6;
+  --live:#9C3F35;
+  --ok:#456E4E;
+  --tile:#2A2620;
+  --tile-2:#3A342B;
+  --tile-ink:#EFE7D6;
+  --radius:12px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#15130E;
+    --panel:#1E1B15;
+    --panel-2:#2A251B;
+    --line:#35301F;
+    --line-strong:#524931;
+    --ink:#F0E9DA;
+    --ink-2:#A69B84;
+    --ink-3:#7C735F;
+    --accent:#D8B676;
+    --accent-soft:#332B1A;
+    --live:#D07D6F;
+    --ok:#83AC8B;
+    --tile:#0F0D0A;
+    --tile-2:#221E17;
+    --tile-ink:#EFE7D6;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#15130E;
+  --panel:#1E1B15;
+  --panel-2:#2A251B;
+  --line:#35301F;
+  --line-strong:#524931;
+  --ink:#F0E9DA;
+  --ink-2:#A69B84;
+  --ink-3:#7C735F;
+  --accent:#D8B676;
+  --accent-soft:#332B1A;
+  --live:#D07D6F;
+  --ok:#83AC8B;
+  --tile:#0F0D0A;
+  --tile-2:#221E17;
+  --tile-ink:#EFE7D6;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans JP",-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+  font-size:15px; line-height:1.65; -webkit-text-size-adjust:100%;
+}
+button,input,select{font:inherit;color:inherit;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+button{cursor:pointer}
+.nosel{-webkit-user-select:none;user-select:none}
+.wrap{max-width:1080px;margin:0 auto;padding:20px 16px 60px;display:flex;flex-direction:column;gap:18px}
+
+header{display:flex;flex-direction:column;gap:5px}
+.eyebrow{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--accent);font-weight:600}
+h1{margin:0;font-size:25px;font-weight:600;letter-spacing:-.01em}
+.lede{margin:0;color:var(--ink-2);font-size:13.5px;max-width:62ch}
+
+.call{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
+@media (min-width:880px){.call{grid-template-columns:minmax(300px,440px) minmax(0,1fr);align-items:start}}
+
+/* ---- the call tile: her "video" ---- */
+.tile{
+  position:relative;background:var(--tile);border-radius:var(--radius);
+  overflow:hidden;aspect-ratio:3/4;max-height:60vh;
+  border:1px solid var(--line-strong);
+}
+@media (min-width:880px){.tile{max-height:none}}
+.tile canvas{display:block;width:100%;height:100%;object-fit:contain}
+.pill{
+  position:absolute;left:10px;top:10px;display:flex;align-items:center;gap:7px;
+  background:rgba(0,0,0,.42);color:var(--tile-ink);border-radius:999px;
+  padding:5px 12px 5px 10px;font-size:12px;letter-spacing:.02em;
+  backdrop-filter:blur(6px);pointer-events:none;
+}
+.dot{width:7px;height:7px;border-radius:50%;background:#9A9384;flex:0 0 auto}
+.pill[data-s="listen"] .dot{background:#7FB08A;animation:pulse 1.1s ease-in-out infinite}
+.pill[data-s="think"]  .dot{background:#D8B676;animation:pulse .8s ease-in-out infinite}
+.pill[data-s="speak"]  .dot{background:#E0857A;animation:pulse .55s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.28}}
+@media (prefers-reduced-motion:reduce){.pill .dot{animation:none!important}}
+.selftile{
+  position:absolute;right:10px;bottom:10px;width:min(62%,240px);
+  background:rgba(0,0,0,.46);color:var(--tile-ink);border-radius:9px;
+  padding:8px 11px;font-size:12.5px;line-height:1.5;backdrop-filter:blur(6px);
+  min-height:44px;display:flex;align-items:center;
+}
+.selftile span{opacity:.55}
+.tilehint{
+  position:absolute;inset:auto 10px 10px 10px;color:var(--tile-ink);
+  font-size:12.5px;background:rgba(0,0,0,.46);border-radius:9px;padding:9px 12px;
+  backdrop-filter:blur(6px);
+}
+
+/* ---- call bar ---- */
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{
+  border:1px solid var(--line-strong);background:var(--panel);
+  padding:11px 18px;border-radius:var(--radius);font-size:14px;
+}
+.btn:hover{border-color:var(--accent)}
+.btn:disabled{opacity:.42;cursor:not-allowed}
+.btn.talk{background:var(--ink);color:var(--ground);border-color:var(--ink);flex:1 1 190px;font-weight:600}
+.btn.talk[data-live="1"]{background:var(--live);border-color:var(--live);color:#fff}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.row{display:flex;gap:8px;align-items:stretch}
+.row input[type=text]{
+  flex:1 1 auto;min-width:0;border:1px solid var(--line-strong);background:var(--panel);
+  border-radius:var(--radius);padding:11px 13px;font-size:14px;
+}
+.hint{margin:0;font-size:12.5px;color:var(--ink-3)}
+
+/* ---- side panels ---- */
+.side{display:flex;flex-direction:column;gap:16px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 15px;display:flex;flex-direction:column;gap:11px}
+.panel h2{margin:0;font-size:12.5px;font-weight:600;letter-spacing:.03em}
+
+.log{display:flex;flex-direction:column;gap:9px;max-height:300px;overflow-y:auto;margin:0;padding:0;list-style:none}
+.turn{display:flex;flex-direction:column;gap:2px}
+.who{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3)}
+.said{margin:0;font-size:13.5px}
+.turn.mio .said{border-left:2px solid var(--accent);padding-left:9px}
+.turn.sys .said{color:var(--ink-3);font-size:12.5px}
+
+dl.rows{display:flex;flex-direction:column;margin:0}
+.r{display:flex;justify-content:space-between;gap:12px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--line)}
+.r:last-child{border-bottom:0}
+.r dt{font-size:12.5px;color:var(--ink-2)}
+.r dd{margin:0;font-family:"IBM Plex Mono",monospace;font-size:11.5px;text-align:right}
+.s-ok{color:var(--ok);font-weight:600}
+.s-bad{color:var(--live);font-weight:600}
+
+.setup{display:flex;flex-direction:column;gap:9px}
+.slider{display:flex;align-items:center;gap:10px}
+.slider input{flex:1}
+.mini{border:1px solid var(--line-strong);background:transparent;padding:7px 13px;border-radius:9px;font-size:12.5px}
+
+footer{border-top:1px solid var(--line);padding-top:13px;color:var(--ink-3);font-size:12.5px;display:flex;flex-direction:column;gap:4px}
+footer p{margin:0}
+code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--panel-2);padding:1px 5px;border-radius:4px}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Mio / 第1段 ズーム対談</div>
+    <h1>Mio Call</h1>
+    <p class="lede">澪と声で話す。耳と口は iPhone に入っている音声機能、頭脳はこの画面から呼ぶ Claude。OpenAI のキーも月額も要りません。</p>
+  </header>
+
+  <div class="call">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="tile">
+        <canvas id="face"></canvas>
+        <div class="pill nosel" id="pill" data-s="idle"><i class="dot"></i><span id="pilltext">待機中</span></div>
+        <div class="selftile nosel" id="selftile"><span>あなたの声がここに出ます</span></div>
+      </div>
+
+      <div class="bar">
+        <button class="btn talk" id="talk">通話を始める</button>
+        <button class="btn" id="hangup" disabled>終了</button>
+      </div>
+      <div class="row">
+        <input type="text" id="typed" placeholder="声が使えないときは、ここに書いて送る" autocomplete="off">
+        <button class="btn" id="send">送る</button>
+      </div>
+      <p class="hint">マイクの音声は端末の中だけで文字にします。録音はどこにも保存されません。</p>
+    </div>
+
+    <div class="side">
+      <section class="panel">
+        <h2>会話</h2>
+        <ul class="log" id="log">
+          <li class="turn sys"><p class="said">通話を始めると、ここにやり取りが残ります。</p></li>
+        </ul>
+      </section>
+
+      <section class="panel">
+        <h2>澪の顔</h2>
+        <div class="setup">
+          <p class="hint" style="margin:0">バストアップ正面の画像を読み込むと、その顔が話します。読み込まないあいだは仮の顔です。</p>
+          <div class="bar">
+            <button class="mini" id="pickimg">画像を選ぶ</button>
+            <button class="mini" id="calib">口の位置を合わせる</button>
+            <input type="file" id="imgfile" accept="image/*" hidden>
+          </div>
+          <div class="slider"><span class="hint">口の大きさ</span><input type="range" id="mwidth" min="20" max="180" value="70"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>この端末の状態</h2>
+        <dl class="rows" id="diag"></dl>
+      </section>
+    </div>
+  </div>
+
+  <footer>
+    <p>耳は端末の音声認識、声は端末の読み上げ。どちらも iPhone に最初から入っている機能で、追加料金はかかりません。</p>
+    <p>頭脳はこの画面から Claude を呼びます。Ken さんの Claude の使用量を消費しますが、別途の API 契約は不要です。</p>
+    <p>口は、返事の読みがなを5つの母音（あいうえお）の形に変えて動かしています。音量ではなく読みで動かすので、日本語では形が合います。</p>
+  </footer>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ================= diagnostics ================= */
+var diagEl=document.getElementById('diag'), rows={};
+function setDiag(k,v,st){
+  var r=rows[k];
+  if(!r){
+    var d=document.createElement('div'); d.className='r';
+    var dt=document.createElement('dt'); dt.textContent=k;
+    var dd=document.createElement('dd'); d.appendChild(dt); d.appendChild(dd);
+    diagEl.appendChild(d); rows[k]=r={dd:dd};
+  }
+  r.dd.textContent=v; r.dd.className = st?('s-'+st):'';
+}
+
+/* ================= transcript ================= */
+var logEl=document.getElementById('log'), seeded=true;
+function addTurn(who,text,cls){
+  if(seeded){ logEl.innerHTML=''; seeded=false; }
+  var li=document.createElement('li'); li.className='turn '+(cls||'');
+  var w=document.createElement('div'); w.className='who'; w.textContent=who;
+  var p=document.createElement('p'); p.className='said'; p.textContent=text;
+  li.appendChild(w); li.appendChild(p); logEl.appendChild(li);
+  logEl.scrollTop=logEl.scrollHeight;
+  return p;
+}
+function sysLine(text){
+  if(seeded){ logEl.innerHTML=''; seeded=false; }
+  var li=document.createElement('li'); li.className='turn sys';
+  var p=document.createElement('p'); p.className='said'; p.textContent=text;
+  li.appendChild(p); logEl.appendChild(li); logEl.scrollTop=logEl.scrollHeight;
+}
+
+/* ================= status pill ================= */
+var pill=document.getElementById('pill'), pillText=document.getElementById('pilltext');
+var STATE={idle:'待機中',listen:'聞いています',think:'考えています',speak:'話しています',off:'使えません'};
+function setState(s){ pill.dataset.s=s; pillText.textContent=STATE[s]||s; }
+
+/* ================= face ================= */
+var canvas=document.getElementById('face'), fx=canvas.getContext('2d');
+var portrait=null;                       /* Image once loaded */
+var mouth={x:0.5,y:0.72,w:70};           /* normalised centre + px width */
+var SKIN='#F0CBA1';
+var calibrating=false;
+
+var VISEME={
+  a:[1.00,1.00], i:[1.12,0.30], u:[0.56,0.62],
+  e:[0.96,0.56], o:[0.66,0.98], n:[0.86,0.05], x:[0.80,0.03]
+};
+var vis={w:VISEME.x[0],h:VISEME.x[1]}, visTarget='x';
+
+function loadStored(){
+  try{
+    var p=localStorage.getItem('mio.portrait');
+    var m=localStorage.getItem('mio.mouth');
+    if(m){ var o=JSON.parse(m); if(o&&typeof o.x==='number') mouth=o; }
+    document.getElementById('mwidth').value=mouth.w;
+    if(p) setPortrait(p,false);
+  }catch(e){}
+}
+function store(){
+  try{ localStorage.setItem('mio.mouth',JSON.stringify(mouth)); }catch(e){}
+}
+
+function setPortrait(dataUrl,persist){
+  var img=new Image();
+  img.onload=function(){
+    portrait=img; sampleSkin();
+    setDiag('顔','読み込み済み '+img.width+'×'+img.height,'ok');
+    if(persist){ try{ localStorage.setItem('mio.portrait',dataUrl); }catch(e){
+      setDiag('顔','表示中（保存できず。次回また選んでください）'); } }
+    draw(true);
+  };
+  img.onerror=function(){ setDiag('顔','画像を読めなかった','bad'); };
+  img.src=dataUrl;
+}
+
+/* average the two cheek pixels either side of the mouth, so the patch that
+   hides her drawn mouth matches her actual skin instead of a guess */
+function sampleSkin(){
+  try{
+    var c=document.createElement('canvas'); c.width=portrait.width; c.height=portrait.height;
+    var g=c.getContext('2d'); g.drawImage(portrait,0,0);
+    var mx=mouth.x*portrait.width, my=mouth.y*portrait.height, off=mouth.w*0.9;
+    var acc=[0,0,0], n=0;
+    [-1,1].forEach(function(s){
+      var px=Math.max(0,Math.min(portrait.width-1,Math.round(mx+s*off)));
+      var d=g.getImageData(px,Math.max(0,Math.min(portrait.height-1,Math.round(my))),1,1).data;
+      acc[0]+=d[0]; acc[1]+=d[1]; acc[2]+=d[2]; n++;
+    });
+    if(n) SKIN='rgb('+Math.round(acc[0]/n)+','+Math.round(acc[1]/n)+','+Math.round(acc[2]/n)+')';
+  }catch(e){ /* a cross-origin image would taint the canvas; keep the default */ }
+}
+
+function fitCanvas(){
+  var r=canvas.getBoundingClientRect();
+  var dpr=Math.min(window.devicePixelRatio||1,2);
+  canvas.width=Math.max(1,Math.round(r.width*dpr));
+  canvas.height=Math.max(1,Math.round(r.height*dpr));
+  draw(true);
+}
+
+var breath=0, lastDraw='';
+function draw(force){
+  var W=canvas.width, H=canvas.height;
+  var key=[Math.round(vis.w*100),Math.round(vis.h*100),Math.round(breath*400),calibrating?1:0].join(',');
+  if(!force && key===lastDraw) return;
+  lastDraw=key;
+
+  fx.clearRect(0,0,W,H);
+  var iw,ih,ox,oy,scale;
+  if(portrait){
+    scale=Math.min(W/portrait.width,H/portrait.height);
+    iw=portrait.width*scale; ih=portrait.height*scale;
+    ox=(W-iw)/2; oy=(H-ih)/2;
+    fx.save();
+    fx.translate(W/2,H/2); fx.scale(1+breath*0.004,1+breath*0.004); fx.translate(-W/2,-H/2);
+    fx.drawImage(portrait,ox,oy,iw,ih);
+    drawMouth(ox+mouth.x*iw, oy+mouth.y*ih, mouth.w*scale);
+    fx.restore();
+  }else{
+    drawStandIn(W,H);
+  }
+  if(calibrating){
+    fx.fillStyle='rgba(0,0,0,.45)'; fx.fillRect(0,0,W,26*(window.devicePixelRatio||1));
+    fx.fillStyle='#EFE7D6';
+    fx.font=(13*(window.devicePixelRatio||1))+'px "IBM Plex Sans JP", sans-serif';
+    fx.textBaseline='middle';
+    fx.fillText('口の中心をタップしてください', 10*(window.devicePixelRatio||1), 13*(window.devicePixelRatio||1));
+  }
+}
+
+function drawMouth(cx,cy,w){
+  var mw=w*vis.w*0.5, mh=w*vis.h*0.34;
+  /* hide whatever mouth the picture already has */
+  fx.fillStyle=SKIN;
+  fx.beginPath(); fx.ellipse(cx,cy,w*0.62,w*0.40,0,0,Math.PI*2); fx.fill();
+  /* the animated mouth */
+  fx.fillStyle='#8E4A45';
+  fx.beginPath(); fx.ellipse(cx,cy,Math.max(mw,2),Math.max(mh,1.2),0,0,Math.PI*2); fx.fill();
+  if(mh>w*0.10){
+    fx.fillStyle='#F6EFEA';
+    fx.beginPath();
+    fx.ellipse(cx,cy-mh*0.58,mw*0.78,Math.max(mh*0.26,1),0,0,Math.PI*2); fx.fill();
+  }
+  fx.strokeStyle='rgba(150,95,80,.45)'; fx.lineWidth=Math.max(1,w*0.02);
+  fx.beginPath(); fx.moveTo(cx-mw*1.05,cy+mh*1.25); fx.quadraticCurveTo(cx,cy+mh*1.7,cx+mw*1.05,cy+mh*1.25); fx.stroke();
+}
+
+function drawStandIn(W,H){
+  var u=Math.min(W,H)/100, dpr=(window.devicePixelRatio||1);
+  fx.fillStyle='#3A342B'; fx.fillRect(0,0,W,H);
+  fx.save(); fx.translate(W/2,H*0.62+breath*u*0.3);
+  fx.fillStyle='#C7A882';
+  fx.beginPath(); fx.ellipse(0,u*22,u*30,u*30,0,Math.PI,0); fx.fill();   /* shoulders */
+  fx.fillStyle='#EEC49C';
+  fx.beginPath(); fx.ellipse(0,-u*14,u*17,u*20,0,0,Math.PI*2); fx.fill(); /* head */
+  fx.fillStyle='#35211A';
+  fx.beginPath(); fx.ellipse(0,-u*22,u*18.5,u*15,0,Math.PI,0); fx.fill(); /* hair */
+  [-1,1].forEach(function(sd){
+    fx.fillStyle='#F7F3EE';
+    fx.beginPath(); fx.ellipse(sd*u*6.4,-u*15,u*3.0,u*3.2,0,0,Math.PI*2); fx.fill();
+    fx.fillStyle='#3E4C59';
+    fx.beginPath(); fx.ellipse(sd*u*6.4,-u*15,u*1.8,u*2.2,0,0,Math.PI*2); fx.fill();
+    fx.strokeStyle='#4A3227'; fx.lineWidth=u*0.85; fx.lineCap='round';
+    fx.beginPath(); fx.moveTo(sd*u*6.4-u*3.4,-u*20.2);
+    fx.quadraticCurveTo(sd*u*6.4,-u*21.6,sd*u*6.4+u*3.4,-u*20.2); fx.stroke();
+  });
+  fx.restore();
+  drawMouth(W/2,H*0.62-u*8,Math.min(W,H)*0.10);
+  /* a corner tag, opposite the status pill, so the self tile never sits on it */
+  var label='仮の顔';
+  fx.font='600 '+(11*dpr)+'px "IBM Plex Sans JP", sans-serif';
+  var tw=fx.measureText(label).width;
+  fx.fillStyle='rgba(0,0,0,.42)';
+  fx.beginPath();
+  if(fx.roundRect) fx.roundRect(W-tw-30*dpr,10*dpr,tw+20*dpr,24*dpr,12*dpr);
+  else fx.rect(W-tw-30*dpr,10*dpr,tw+20*dpr,24*dpr);   /* roundRect predates Safari 16.4 */
+  fx.fill();
+  fx.fillStyle='rgba(239,231,214,.8)'; fx.textBaseline='middle';
+  fx.fillText(label,W-tw-20*dpr,22*dpr);
+}
+
+/* ================= kana to visemes ================= */
+var VOWEL={};
+(function(){
+  var map={
+    a:'あかさたなはまやらわがざだばぱぁゃゎ', i:'いきしちにひみりぎじぢびぴぃ',
+    u:'うくすつぬふむゆるぐずづぶぷぅゅ', e:'えけせてねへめれげぜでべぺぇ',
+    o:'おこそとのほもよろをごぞどぼぽぉょ'
+  };
+  Object.keys(map).forEach(function(v){
+    for(var i=0;i<map[v].length;i++) VOWEL[map[v][i]]=v;
+  });
+  /* katakana share the vowel of their hiragana counterpart */
+  Object.keys(map).forEach(function(v){
+    for(var i=0;i<map[v].length;i++){
+      var code=map[v].charCodeAt(i);
+      if(code>=0x3041&&code<=0x3096) VOWEL[String.fromCharCode(code+0x60)]=v;
+    }
+  });
+  VOWEL['ん']='n'; VOWEL['ン']='n'; VOWEL['っ']='x'; VOWEL['ッ']='x';
+})();
+
+var SMALL='ゃゅょャュョぁぃぅぇぉァィゥェォ';
+function toVisemes(kana){
+  var out=[], last='x';
+  for(var i=0;i<kana.length;i++){
+    var ch=kana[i];
+    if(ch==='ー'||ch==='ｰ'){ out.push(last); continue; }
+    var v=VOWEL[ch];
+    if(!v){ if(/[、。！？\s,.!?]/.test(ch)) out.push('x'); continue; }
+    /* small ya/yu/yo and small vowels ride on the preceding sound: きょ is one
+       beat, not two, so replace the last shape instead of adding a beat */
+    if(SMALL.indexOf(ch)>=0 && out.length && out[out.length-1]!=='x' && out[out.length-1]!=='n'){
+      out[out.length-1]=v;
+    }else{
+      out.push(v);
+    }
+    if(v!=='n'&&v!=='x') last=v;
+  }
+  return out.length?out:['x'];
+}
+
+/* ================= speech out ================= */
+var jaVoice=null, moraPerSec=7.4, speaking=false;
+function pickVoice(){
+  var vs=window.speechSynthesis?speechSynthesis.getVoices():[];
+  var ja=vs.filter(function(v){ return /^ja/i.test(v.lang); });
+  jaVoice = ja[0]||null;
+  /* the voice list arrives late on iOS, so an empty list is not yet a failure */
+  if(jaVoice) setDiag('読み上げ', jaVoice.name, 'ok');
+  else if(vs.length) setDiag('読み上げ','日本語の声が見つからない','bad');
+  else setDiag('読み上げ','声を読み込み中');
+}
+if(window.speechSynthesis){
+  pickVoice();
+  speechSynthesis.onvoiceschanged=pickVoice;
+}else{
+  setDiag('読み上げ','この端末では使えない','bad');
+}
+
+var visSeq=['x'], visStart=0, visIdx=0;
+function speak(text,kana,done){
+  if(!window.speechSynthesis){ done&&done(); return; }
+  var u=new SpeechSynthesisUtterance(text);
+  u.lang='ja-JP'; if(jaVoice) u.voice=jaVoice;
+  u.rate=1.0; u.pitch=1.06;
+  visSeq=toVisemes(kana||text); visIdx=0;
+  var t0=0;
+  u.onstart=function(){
+    speaking=true; t0=performance.now(); visStart=t0; setState('speak');
+  };
+  u.onend=u.onerror=function(){
+    speaking=false; visTarget='x'; setState('idle');
+    if(t0){
+      var secs=(performance.now()-t0)/1000;
+      /* adapt to this device's actual speaking rate for the next utterance */
+      if(secs>0.4&&visSeq.length>3){
+        var measured=visSeq.length/secs;
+        moraPerSec=moraPerSec*0.7+Math.min(12,Math.max(4,measured))*0.3;
+        setDiag('話す速さ',moraPerSec.toFixed(1)+' 拍/秒');
+      }
+    }
+    done&&done();
+  };
+  speechSynthesis.speak(u);
+}
+
+/* ================= speech in ================= */
+var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+var rec=null, listening=false;
+var selftile=document.getElementById('selftile');
+function selfText(t,dim){
+  selftile.innerHTML='';
+  var el=document.createElement(dim?'span':'div');
+  el.textContent=t; selftile.appendChild(el);
+}
+function startListening(){
+  if(!SR){ setDiag('音声認識','この端末では使えない','bad'); return false; }
+  try{
+    rec=new SR();
+    rec.lang='ja-JP'; rec.interimResults=true; rec.continuous=false; rec.maxAlternatives=1;
+    var finalText='';
+    rec.onstart=function(){ listening=true; setState('listen'); selfText('…',true); };
+    rec.onresult=function(e){
+      var interim='';
+      for(var i=e.resultIndex;i<e.results.length;i++){
+        var r=e.results[i];
+        if(r.isFinal) finalText+=r[0].transcript; else interim+=r[0].transcript;
+      }
+      selfText(finalText+interim || '…', !(finalText+interim));
+    };
+    rec.onerror=function(e){
+      listening=false;
+      if(e.error==='not-allowed'||e.error==='service-not-allowed'){
+        setDiag('音声認識','マイクが許可されていない','bad');
+        sysLine('マイクが許可されていません。下の入力欄から文字で送れます。');
+      }else if(e.error!=='no-speech'&&e.error!=='aborted'){
+        setDiag('音声認識','エラー: '+e.error,'bad');
+      }
+      setState('idle'); talkBtn.dataset.live='0'; talkBtn.textContent='話す';
+    };
+    rec.onend=function(){
+      listening=false; talkBtn.dataset.live='0'; talkBtn.textContent='話す';
+      var said=finalText.trim();
+      if(said){ selfText(said); ask(said); }
+      else{ setState('idle'); selfText('聞き取れませんでした。もう一度どうぞ',true); }
+    };
+    rec.start();
+    return true;
+  }catch(err){
+    setDiag('音声認識','起動できない: '+err.message,'bad');
+    return false;
+  }
+}
+
+/* ================= the brain ================= */
+var sampleFn=null, turns=[], busy=false;
+var RULES=[
+ 'あなたは「澪（みお）」という名前の音声アシスタントです。日本語で話します。',
+ '・親しみやすく落ち着いた口調。硬い敬語は使いすぎない。',
+ '・声で読み上げられるので、1〜3文、120文字以内で答える。',
+ '・箇条書き、記号、絵文字、URLは使わない。',
+ '・相手は「ケンさん」。',
+ '',
+ '必ず次の形のJSONだけを返してください。前後に説明を付けないこと。',
+ '{"reply":"話す文","kana":"replyの読みを全てひらがなで。漢字・数字・英字を残さない","emotion":"neutral|happy|sad|angry|surprised|relaxed"}'
+].join('\n');
+
+var ERR={
+  not_granted:'この画面から Claude を呼ぶ許可が下りませんでした。画面を開き直して、確認に「許可」を選んでください。',
+  rate_limited:'呼び出しが混み合っています。少し待ってからもう一度どうぞ。',
+  session_expired:'ログインの有効期限が切れました。画面を開き直してください。',
+  sampling_disabled:'この環境では Claude を呼べません。',
+  not_declared:'この画面に Claude を呼ぶ設定がありません。',
+  capability_disabled:'この環境では Claude を呼べません。',
+  capability_removed:'この環境では Claude を呼べません。',
+  invalid_json:'返事の形が崩れました。もう一度話しかけてください。',
+  empty_completion:'返事が空でした。もう一度話しかけてください。',
+  prompt_too_large:'会話が長くなりすぎました。画面を開き直してください。',
+  refused:'その話題には答えられないそうです。',
+  upstream_error:'通信に失敗しました。もう一度どうぞ。',
+  cancelled:'中断しました。'
+};
+
+function ask(said){
+  if(busy) return;
+  addTurn('ケン',said);
+  if(!sampleFn){
+    sysLine('いま Claude を呼べないので、返事ができません。');
+    setState('idle'); return;
+  }
+  busy=true; setState('think');
+  turns.push({role:'user',content:said});
+  if(turns.length>12) turns=turns.slice(-12);
+  sampleFn.json([{role:'user',content:RULES}].concat(turns),{cache:false,modelTier:'quick'})
+  .then(function(d){
+    var reply=(d&&d.reply)||'', kana=(d&&d.kana)||reply, emo=(d&&d.emotion)||'neutral';
+    if(!reply){ throw {code:'empty_completion'}; }
+    turns.push({role:'assistant',content:reply});
+    addTurn('澪 · '+emo,reply,'mio');
+    setDiag('最後の感情',emo);
+    busy=false;
+    speak(reply,kana,null);
+  })
+  .catch(function(e){
+    busy=false; setState('idle');
+    var code=(e&&e.code)||'upstream_error';
+    sysLine(ERR[code]||('うまくいきませんでした（'+code+'）'));
+    if(code==='not_granted'||code==='sampling_disabled'||code==='capability_disabled'){
+      sampleFn=null; setDiag('頭脳','使えない','bad');
+    }
+  });
+}
+
+/* ================= controls ================= */
+var talkBtn=document.getElementById('talk'), hangBtn=document.getElementById('hangup');
+var started=false;
+talkBtn.addEventListener('click',function(){
+  if(!started){
+    started=true;
+    /* iOS will not speak later unless synthesis is first touched inside a gesture */
+    try{ if(window.speechSynthesis) speechSynthesis.speak(new SpeechSynthesisUtterance(' ')); }catch(e){}
+    hangBtn.disabled=false;
+    talkBtn.textContent='話す';
+    sysLine('通話を始めました。「話す」を押してから話しかけてください。');
+    setState('idle');
+    return;
+  }
+  if(listening){ try{ rec&&rec.stop(); }catch(e){} return; }
+  if(speaking){ try{ speechSynthesis.cancel(); }catch(e){} speaking=false; }
+  talkBtn.dataset.live='1'; talkBtn.textContent='聞いています（押すと終了）';
+  if(!startListening()){
+    talkBtn.dataset.live='0'; talkBtn.textContent='話す';
+    sysLine('この端末では音声認識が使えません。下の入力欄から文字で送ってください。');
+  }
+});
+hangBtn.addEventListener('click',function(){
+  try{ rec&&rec.stop(); }catch(e){}
+  try{ speechSynthesis.cancel(); }catch(e){}
+  listening=false; speaking=false; started=false; visTarget='x';
+  talkBtn.dataset.live='0'; talkBtn.textContent='通話を始める';
+  hangBtn.disabled=true; setState('idle'); selfText('あなたの声がここに出ます',true);
+  sysLine('通話を終了しました。');
+});
+
+var typed=document.getElementById('typed');
+function sendTyped(){
+  var t=typed.value.trim(); if(!t) return;
+  typed.value='';
+  if(!started){ started=true; hangBtn.disabled=false; talkBtn.textContent='話す'; }
+  ask(t);
+}
+document.getElementById('send').addEventListener('click',sendTyped);
+typed.addEventListener('keydown',function(e){ if(e.key==='Enter') sendTyped(); });
+
+/* ---- portrait + mouth calibration ---- */
+document.getElementById('pickimg').addEventListener('click',function(){
+  document.getElementById('imgfile').click();
+});
+document.getElementById('imgfile').addEventListener('change',function(e){
+  var f=e.target.files&&e.target.files[0]; if(!f) return;
+  var fr=new FileReader();
+  fr.onload=function(){
+    /* downscale before storing: a full-size photo will not fit in localStorage */
+    var img=new Image();
+    img.onload=function(){
+      var maxW=720, s=Math.min(1,maxW/img.width);
+      var c=document.createElement('canvas');
+      c.width=Math.round(img.width*s); c.height=Math.round(img.height*s);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      setPortrait(c.toDataURL('image/jpeg',0.86),true);
+      sysLine('画像を読み込みました。「口の位置を合わせる」で口の場所を教えてください。');
+    };
+    img.onerror=function(){ setDiag('顔','画像を読めなかった','bad'); };
+    img.src=fr.result;
+  };
+  fr.readAsDataURL(f);
+});
+document.getElementById('calib').addEventListener('click',function(){
+  calibrating=!calibrating; draw(true);
+  if(calibrating) sysLine('画面の中の、澪の口の中心をタップしてください。');
+});
+canvas.addEventListener('click',function(e){
+  if(!calibrating||!portrait) return;
+  var r=canvas.getBoundingClientRect();
+  var W=canvas.width,H=canvas.height;
+  var scale=Math.min(W/portrait.width,H/portrait.height);
+  var iw=portrait.width*scale, ih=portrait.height*scale;
+  var ox=(W-iw)/2, oy=(H-ih)/2;
+  var px=(e.clientX-r.left)/r.width*W, py=(e.clientY-r.top)/r.height*H;
+  var nx=(px-ox)/iw, ny=(py-oy)/ih;
+  if(nx<0||nx>1||ny<0||ny>1) return;
+  mouth.x=nx; mouth.y=ny; store(); sampleSkin();
+  calibrating=false; draw(true);
+  sysLine('口の位置を覚えました。大きさはスライダーで調整できます。');
+});
+document.getElementById('mwidth').addEventListener('input',function(e){
+  mouth.w=+e.target.value; store(); sampleSkin(); draw(true);
+});
+
+/* ================= loop ================= */
+var last=performance.now();
+function loop(now){
+  requestAnimationFrame(loop);
+  var dt=Math.min(0.05,(now-last)/1000); last=now;
+  breath=Math.sin(now/1000*1.15);
+
+  if(speaking){
+    var i=Math.floor((now-visStart)/1000*moraPerSec);
+    visTarget = i<visSeq.length ? visSeq[i] : 'x';
+  }
+  var t=VISEME[visTarget]||VISEME.x;
+  /* open fast, close slower — the same asymmetry the lip-sync design uses */
+  var tau = (t[1]>vis.h) ? 0.045 : 0.085;
+  var k=1-Math.exp(-dt/tau);
+  vis.w+=(t[0]-vis.w)*k; vis.h+=(t[1]-vis.h)*k;
+  draw(false);
+}
+
+/* ================= boot ================= */
+setDiag('音声認識', SR?'使える':'この端末では使えない', SR?'ok':'bad');
+setDiag('頭脳','確認中…');
+setDiag('顔','仮の顔');
+loadStored();
+fitCanvas();
+window.addEventListener('resize',fitCanvas);
+requestAnimationFrame(loop);
+
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState==='hidden'){
+    try{ rec&&rec.stop(); }catch(e){}
+    try{ speechSynthesis.cancel(); }catch(e){}
+    listening=false; speaking=false; visTarget='x';
+  }
+});
+
+if(window.claude&&claude.use){
+  claude.use('sample').then(function(s){
+    sampleFn=s;
+    setDiag('頭脳', s?'Claude を呼べる':'この画面では呼べない', s?'ok':'bad');
+    if(!s) sysLine('この画面からは Claude を呼べません。claude.ai で開いた画面でお試しください。');
+  }).catch(function(){
+    setDiag('頭脳','確認できなかった','bad');
+  });
+}else{
+  setDiag('頭脳','この画面では呼べない','bad');
+  sysLine('この画面からは Claude を呼べません。claude.ai で開いた画面でお試しください。');
+}
+})();
+</script>
