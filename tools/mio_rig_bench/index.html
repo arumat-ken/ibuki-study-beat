@@ -100,7 +100,8 @@ h1{margin:0;font-size:27px;font-weight:600;letter-spacing:-.01em;text-wrap:balan
   text-transform:uppercase;color:var(--ink-3);font-weight:600;
 }
 .chips{display:flex;flex-wrap:wrap;gap:7px}
-button{font:inherit;color:inherit;cursor:pointer}
+button{font:inherit;color:inherit;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.chips,.grouplabel,.chip,.act,.mini,.stage-tag,.hud{-webkit-user-select:none;user-select:none}
 .chip{
   border:1px solid var(--line-strong);background:var(--panel);color:var(--ink);
   padding:7px 13px;border-radius:999px;font-size:13.5px;line-height:1.2;
@@ -281,9 +282,8 @@ if(!window.THREE){
 }
 
 var PALETTE={
-  skin:0xF3DCC8, skinShade:0xE2BFA6,
-  hair:0x40291F, top:0xEFE9DC, waist:0xB79B72,
-  skirt:0xC7AC88, shoe:0xC9B49A, gold:0xC9A961
+  skin:0xEEC49C, hair:0x35211A, top:0xE4DCC6, waist:0x9E8154,
+  skirt:0xBE9C6E, shoe:0xB59C7C, gold:0xC9A961, outline:0x241A12
 };
 
 function toon(color){ return new THREE.MeshToonMaterial({color:color}); }
@@ -386,6 +386,26 @@ function drawFace(){
   if(faceTex) faceTex.needsUpdate=true;
 }
 
+/* Cel outline: duplicate each mesh back-faced and grown by a fixed world
+   width, so a thin waistband gets the same line weight as the torso. */
+function addOutlines(g){
+  var mat=new THREE.MeshBasicMaterial({color:PALETTE.outline,side:THREE.BackSide});
+  var W=0.0065, queue=[];
+  g.traverse(function(o){ if(o.isMesh && !o.userData.noOutline) queue.push(o); });
+  queue.forEach(function(o){
+    o.geometry.computeBoundingBox();
+    var sz=new THREE.Vector3(); o.geometry.boundingBox.getSize(sz);
+    var m=new THREE.Mesh(o.geometry,mat);
+    m.position.copy(o.position); m.rotation.copy(o.rotation);
+    ['x','y','z'].forEach(function(ax){
+      var world=Math.max(sz[ax]*Math.abs(o.scale[ax]),1e-4);
+      m.scale[ax]=o.scale[ax]*(world+2*W)/world;
+    });
+    m.renderOrder=-1;
+    o.parent.add(m);
+  });
+}
+
 function buildMio(){
   var g=new THREE.Group();
   var mSkin=toon(PALETTE.skin), mTop=toon(PALETTE.top), mSkirt=toon(PALETTE.skirt);
@@ -393,14 +413,16 @@ function buildMio(){
 
   /* head: face texture wrapped on a sphere; u=0.25 faces +Z */
   var head=new THREE.Mesh(new THREE.SphereGeometry(0.112,40,28), new THREE.MeshToonMaterial({map:faceTex}));
-  head.scale.set(1,1.07,0.94); head.position.y=1.566; head.rotation.y=Math.PI/2; g.add(head);
+  head.scale.set(1,1.07,0.94); head.position.y=1.566; g.add(head);
 
   /* long wavy hair down to the lower chest */
-  var back=new THREE.Mesh(new THREE.SphereGeometry(0.118,26,20), mHair);
-  back.scale.set(1.02,1.9,0.86); back.position.set(0,1.44,-0.036); g.add(back);
+  var crown=new THREE.Mesh(new THREE.SphereGeometry(0.121,26,20), mHair);
+  crown.scale.set(1.04,1.05,0.98); crown.position.set(0,1.578,-0.012); g.add(crown);
+  var back=new THREE.Mesh(new THREE.SphereGeometry(0.112,26,20), mHair);
+  back.scale.set(1.05,2.55,0.80); back.position.set(0,1.36,-0.048); g.add(back);
   [-1,1].forEach(function(s){
-    var side=new THREE.Mesh(new THREE.SphereGeometry(0.046,16,14), mHair);
-    side.scale.set(0.72,3.5,0.86); side.position.set(s*0.098,1.435,0.012); g.add(side);
+    var side=new THREE.Mesh(new THREE.SphereGeometry(0.044,16,14), mHair);
+    side.scale.set(0.80,4.6,0.98); side.position.set(s*0.102,1.375,0.010); g.add(side);
   });
 
   var neck=cyl(0.035,0.041,0.08,mSkin,16); neck.position.y=1.44; g.add(neck);
@@ -410,10 +432,10 @@ function buildMio(){
   var shoulder=new THREE.Mesh(new THREE.SphereGeometry(0.132,24,16),mTop);
   shoulder.scale.set(1,0.48,0.80); shoulder.position.y=1.398; g.add(shoulder);
 
-  var band=cyl(0.108,0.113,0.045,toon(PALETTE.waist),28); band.position.y=1.0;
-  band.scale.z=0.82; g.add(band);
-  var skirt=cyl(0.113,0.176,0.30,mSkirt,30); skirt.position.y=0.855;
-  skirt.scale.z=0.84; g.add(skirt);
+  var band=cyl(0.112,0.117,0.052,toon(PALETTE.waist),28); band.position.y=1.002;
+  band.scale.z=0.84; g.add(band);
+  var skirt=cyl(0.117,0.203,0.32,mSkirt,30); skirt.position.y=0.845;
+  skirt.scale.z=0.86; g.add(skirt);
 
   var arms=[];
   [-1,1].forEach(function(s){
@@ -437,9 +459,12 @@ function buildMio(){
   var watch=new THREE.Mesh(new THREE.TorusGeometry(0.031,0.008,8,18),toon(PALETTE.gold));
   watch.rotation.x=Math.PI/2; watch.position.set(0,-0.475,0); arms[0].add(watch);
 
-  var shadow=new THREE.Mesh(new THREE.CircleGeometry(0.20,32),
-    new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.12}));
-  shadow.rotation.x=-Math.PI/2; shadow.position.y=0.004; g.add(shadow);
+  var shadow=new THREE.Mesh(new THREE.CircleGeometry(0.21,32),
+    new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.15}));
+  shadow.rotation.x=-Math.PI/2; shadow.position.y=0.004;
+  shadow.userData.noOutline=true; g.add(shadow);
+
+  addOutlines(g);
 
   g.userData.arms=arms; g.userData.head=head; g.userData.torso=torso;
   return g;
@@ -710,9 +735,9 @@ function boot(){
   scene=new THREE.Scene();
   camera=new THREE.PerspectiveCamera(26,1,0.05,100);
 
-  scene.add(new THREE.HemisphereLight(0xffffff,0x8a8a8a,0.85));
-  var key=new THREE.DirectionalLight(0xffffff,0.55); key.position.set(0.6,1.2,1.4); scene.add(key);
-  var fill=new THREE.DirectionalLight(0xffffff,0.28); fill.position.set(-1.0,0.4,-0.8); scene.add(fill);
+  scene.add(new THREE.HemisphereLight(0xfff6e8,0x8d8378,0.44));
+  var key=new THREE.DirectionalLight(0xffffff,0.40); key.position.set(0.5,1.0,1.3); scene.add(key);
+  var fill=new THREE.DirectionalLight(0xffffff,0.13); fill.position.set(-1.0,0.35,-0.9); scene.add(fill);
 
   faceTex=new THREE.CanvasTexture(faceCv); faceTex.anisotropy=1;
   drawFace();
