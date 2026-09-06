@@ -2,7 +2,7 @@
   "_note": "3Dモデル制作のための参照画像プロンプトの正本。**絵柄寄りへ方針変更(2026-09-06)**。",
   "_base_image": "reference/character_base_v2_stylized.jpg",
   "_base_sha256_head": "6dcb589cbafd5d0c",
-  "schemaVersion": 6,
+  "schemaVersion": 7,
   "updatedAt": "2026-09-06",
   "purpose": "3Dモデラー(人またはツール)が、この人物を立体に起こすための資料を作る。完成品ではなく資料である。",
   "_style_decision": {
@@ -199,8 +199,26 @@
         "view": "body_back_apose",
         "status": "approved",
         "check": "顔が見えない / 両手が見える / 脇に隙間"
+      },
+      {
+        "view": "body_right_side",
+        "status": "未生成",
+        "note": "マルチビュー4枚目。左側面と同じ判定基準（見える手が1つだけ）を左右反転して使う。"
       }
     ],
-    "remaining": "45度の斜め4方向、顔の追加アングル、表情7、ビセーム6、素体8、衣装02/03。ただし3D化パイプラインの検証を先に行う方針（残り全部を作ってから『この絵柄では3Dにならない』と判明するのが最悪のため）。"
+    "remaining": "4方向のうち右側面のみ未生成。それが揃えば画像→3Dの検証に進める。斜め45度・表情7・ビセーム6・素体8・衣装02/03は、3D化が成立することを確認してから作る。"
+  },
+  "_pipeline": {
+    "decision": "画像から3Dを起こす工程は、1枚ではなく4方向の正射投影図（正面・左側面・背面・右側面）を入力する『マルチビュー』で行う。Tripo と Meshy がどちらも front/back/left/right の4枚入力に対応しており、1枚入力では側面と背面が推測になるのに対し、4枚なら全方向が実測に基づく。",
+    "verified_on": "2026-09-06",
+    "sources": [
+      "https://www.meshy.ai/tutorials/multi-view-image-to-3d",
+      "https://help.meshy.ai/en/articles/16102789-meshy-multi-view-best-practices-angles-and-images",
+      "https://www.scenario.com/blog/tripo-image-to-3d-model-ai-2026"
+    ],
+    "input_requirements": "4枚とも同じポーズ・同じ照明・同じ画風であること。撮影時刻や影の違いが混ざると破綻する。参照シートを同一の Gemini 会話で連続生成しているのは、この条件を満たすため。",
+    "priority_change": "48枚のうち、3D化に直接必要なのは正面・左側面・背面・右側面の4枚。表情7・ビセーム6は3Dモデルが出来てからブレンドシェイプとして作るもので、参照画像としては後回しでよい。",
+    "output": "GLB。VRM ではないので、VRM 化には Blender の工程が別途必要（AVATAR3D_INTAKE.md 参照）。",
+    "acceptance": "出力した GLB は tools/mio_rig_bench/ に読み込ませて3項目を自動判定する。特に『上下の服が別々のメッシュか』が通らなければ着せ替えができず、モデリングからやり直しになる。"
   }
 }
