@@ -1,0 +1,829 @@
+<title>Mio Rig Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#F2EEE6;
+  --panel:#FCFAF6;
+  --panel-2:#EAE4D8;
+  --line:#DAD2C3;
+  --line-strong:#BFB4A0;
+  --ink:#221F1A;
+  --ink-2:#6A6357;
+  --ink-3:#928A7B;
+  --accent:#9A7638;
+  --accent-soft:#EBE0CA;
+  --ok:#46704F;
+  --warn:#8F6720;
+  --bad:#9C3F35;
+  --sheet:#808080;
+  --radius:10px;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#17150F;
+    --panel:#201D16;
+    --panel-2:#2A261D;
+    --line:#38321F;
+    --line-strong:#544B33;
+    --ink:#F0EADC;
+    --ink-2:#A69C88;
+    --ink-3:#7E7563;
+    --accent:#D9B978;
+    --accent-soft:#332C1C;
+    --ok:#84AE8C;
+    --warn:#D2A85E;
+    --bad:#D07D6F;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#17150F;
+  --panel:#201D16;
+  --panel-2:#2A261D;
+  --line:#38321F;
+  --line-strong:#544B33;
+  --ink:#F0EADC;
+  --ink-2:#A69C88;
+  --ink-3:#7E7563;
+  --accent:#D9B978;
+  --accent-soft:#332C1C;
+  --ok:#84AE8C;
+  --warn:#D2A85E;
+  --bad:#D07D6F;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:"IBM Plex Sans JP",-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;
+  font-size:15px; line-height:1.65;
+  -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:1120px;margin:0 auto;padding:22px 18px 56px;display:flex;flex-direction:column;gap:22px}
+
+header{display:flex;flex-direction:column;gap:6px;border-bottom:1px solid var(--line);padding-bottom:16px}
+.eyebrow{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:600}
+h1{margin:0;font-size:27px;font-weight:600;letter-spacing:-.01em;text-wrap:balance}
+.lede{margin:0;color:var(--ink-2);max-width:62ch;font-size:14px}
+
+.bench{display:grid;gap:20px;grid-template-columns:minmax(0,1fr)}
+@media (min-width:900px){.bench{grid-template-columns:minmax(320px,460px) minmax(0,1fr);align-items:start}}
+
+.stage{
+  position:relative;background:var(--sheet);
+  border:1px solid var(--line-strong);border-radius:var(--radius);
+  overflow:hidden;aspect-ratio:3/4;max-height:66vh;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16);
+}
+@media (min-width:900px){.stage{aspect-ratio:3/4;max-height:72vh}}
+.stage canvas{display:block;width:100%;height:100%;touch-action:none}
+.stage-tag{
+  position:absolute;left:10px;top:9px;font-family:"IBM Plex Mono",monospace;
+  font-size:10px;letter-spacing:.1em;color:rgba(255,255,255,.72);
+  background:rgba(0,0,0,.22);padding:3px 7px;border-radius:4px;pointer-events:none;
+}
+.hud{
+  position:absolute;right:10px;top:9px;font-family:"IBM Plex Mono",monospace;
+  font-size:10px;color:rgba(255,255,255,.8);background:rgba(0,0,0,.22);
+  padding:3px 7px;border-radius:4px;pointer-events:none;font-variant-numeric:tabular-nums;
+}
+.meter{
+  position:absolute;left:10px;right:10px;bottom:10px;height:5px;
+  background:rgba(0,0,0,.24);border-radius:3px;overflow:hidden;pointer-events:none;
+}
+.meter i{display:block;height:100%;width:0%;background:#EBD9AE;transition:width .04s linear}
+
+.controls{display:flex;flex-direction:column;gap:14px}
+.grouplabel{
+  font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--ink-3);font-weight:600;
+}
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+button{font:inherit;color:inherit;cursor:pointer}
+.chip{
+  border:1px solid var(--line-strong);background:var(--panel);color:var(--ink);
+  padding:7px 13px;border-radius:999px;font-size:13.5px;line-height:1.2;
+  transition:background .13s,border-color .13s,color .13s;
+}
+.chip:hover{border-color:var(--accent)}
+.chip[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
+.chip:focus-visible,.act:focus-visible,.mini:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.actions{display:flex;flex-wrap:wrap;gap:8px}
+.act{
+  border:1px solid var(--line-strong);background:var(--panel);
+  padding:9px 15px;border-radius:var(--radius);font-size:13.5px;
+}
+.act.primary{background:var(--ink);color:var(--ground);border-color:var(--ink)}
+.act.primary[data-live="1"]{background:var(--bad);border-color:var(--bad);color:#fff}
+.act:hover{border-color:var(--accent)}
+.hint{font-size:12.5px;color:var(--ink-3);margin:0}
+
+.panel{
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:15px 16px;display:flex;flex-direction:column;gap:13px;
+}
+.panel h2{margin:0;font-size:13px;font-weight:600;letter-spacing:.02em}
+.rows{display:flex;flex-direction:column;gap:0;margin:0}
+.row{
+  display:flex;justify-content:space-between;gap:12px;align-items:baseline;
+  padding:6px 0;border-bottom:1px solid var(--line);
+}
+.row:last-child{border-bottom:0}
+.row dt{color:var(--ink-2);font-size:12.5px;flex:0 0 auto}
+.row dd{
+  margin:0;font-family:"IBM Plex Mono",monospace;font-size:12px;
+  text-align:right;word-break:break-word;font-variant-numeric:tabular-nums;
+}
+.s-ok{color:var(--ok);font-weight:600}
+.s-warn{color:var(--warn);font-weight:600}
+.s-bad{color:var(--bad);font-weight:600}
+
+.log{
+  font-family:"IBM Plex Mono",monospace;font-size:11.5px;line-height:1.75;
+  background:var(--panel-2);border:1px solid var(--line);border-radius:8px;
+  padding:9px 11px;max-height:172px;overflow-y:auto;margin:0;
+  white-space:pre-wrap;word-break:break-word;color:var(--ink-2);
+}
+.mini{
+  border:1px solid var(--line-strong);background:transparent;
+  padding:6px 12px;border-radius:8px;font-size:12.5px;align-self:flex-start;
+}
+
+.checks{display:flex;flex-direction:column;gap:9px}
+.check{display:flex;gap:10px;align-items:flex-start}
+.mark{
+  flex:0 0 auto;width:19px;height:19px;border-radius:5px;border:1px solid var(--line-strong);
+  display:grid;place-items:center;font-family:"IBM Plex Mono",monospace;font-size:11px;
+  font-weight:600;color:var(--ink-3);margin-top:2px;
+}
+.mark[data-state="ok"]{background:var(--ok);border-color:var(--ok);color:#fff}
+.mark[data-state="bad"]{background:var(--bad);border-color:var(--bad);color:#fff}
+.check p{margin:0;font-size:13px}
+.check p span{display:block;color:var(--ink-3);font-size:12px}
+
+footer{border-top:1px solid var(--line);padding-top:14px;color:var(--ink-3);font-size:12.5px}
+footer p{margin:0 0 5px}
+code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--panel-2);padding:1px 5px;border-radius:4px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Mio / 実機検証ベンチ</div>
+    <h1>Mio Rig Bench</h1>
+    <p class="lede">iPhone Safari で、3Dモデルが出せるか・指で回せるか・声で口が動くか・画面ロックで音が止まるかを、APIキーなしで確かめる台。いま出ているのは仮の素体で、本物の GLB を読み込むと差し替わる。</p>
+  </header>
+
+  <div class="bench">
+    <div class="controls">
+      <div class="stage">
+        <canvas id="view"></canvas>
+        <div class="stage-tag">背景 #808080 ／ 参照シートと同じグレー</div>
+        <div class="hud" id="hud">-- fps</div>
+        <div class="meter"><i id="meterbar"></i></div>
+      </div>
+
+      <div>
+        <div class="grouplabel">表情</div>
+        <div class="chips" id="exprs"></div>
+      </div>
+
+      <div>
+        <div class="grouplabel">操作</div>
+        <div class="actions">
+          <button class="act primary" id="micbtn">マイクを入れて口を動かす</button>
+          <button class="act" id="resetbtn">視点を戻す</button>
+          <button class="act" id="glbbtn">GLBを読み込む</button>
+          <input type="file" id="glbinput" accept=".glb,.gltf,model/gltf-binary" hidden>
+        </div>
+        <p class="hint">1本指＝回転／2本指＝拡大縮小・平行移動。マイクは端末内だけで処理し、どこにも送りません。</p>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:20px">
+      <section class="panel">
+        <h2>この端末で起きたこと</h2>
+        <dl class="rows" id="diag"></dl>
+        <button class="mini" id="copybtn">結果をコピー</button>
+      </section>
+
+      <section class="panel">
+        <h2>イベント記録</h2>
+        <p class="hint" style="margin:-4px 0 0">画面ロック・アプリ切替でここに行が増えれば、音が止まる問題を実測できたことになる。</p>
+        <pre class="log" id="log"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>GLB 受け入れ判定</h2>
+        <p class="hint" style="margin:-4px 0 0">画像から3Dを起こしたら、そのファイルをここに読ませる。3項目が自動で埋まる。</p>
+        <div class="checks" id="checks"></div>
+      </section>
+    </div>
+  </div>
+
+  <footer>
+    <p>口の動きは録音した音量を dBFS に直し、開くとき 25ms・閉じるとき 110ms の非対称平滑とヒステリシスを通している。設計書 <code>AVATAR_TALK_DESIGN.md</code> の <code>lipsync.py</code> と同じ計算。</p>
+    <p>視点の慣性は指数減衰の積分で出しているので、60fps でも 30fps でも同じ角度だけ回る。</p>
+  </footer>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ---------- diagnostics plumbing ---------- */
+var diagEl=document.getElementById('diag'), logEl=document.getElementById('log');
+var diagRows={};
+function setDiag(k,v,state){
+  var r=diagRows[k];
+  if(!r){
+    r=document.createElement('div'); r.className='row';
+    var dt=document.createElement('dt'); dt.textContent=k;
+    var dd=document.createElement('dd');
+    r.appendChild(dt); r.appendChild(dd); diagEl.appendChild(r);
+    diagRows[k]={row:r,dd:dd};
+    r=diagRows[k];
+  }
+  r.dd.textContent=v;
+  r.dd.className = state ? ('s-'+state) : '';
+}
+var logLines=[];
+function log(msg){
+  var t=new Date().toTimeString().slice(0,8);
+  logLines.push(t+'  '+msg);
+  if(logLines.length>200) logLines.shift();
+  logEl.textContent=logLines.join('\n');
+  logEl.scrollTop=logEl.scrollHeight;
+}
+
+log('ページ読み込み');
+
+/* ---------- renderer ---------- */
+var canvas=document.getElementById('view');
+var renderer, scene, camera, mio=null, loadedModel=null;
+var SHEET=0x808080;
+var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+if(!window.THREE){
+  setDiag('WebGL','three.js を取得できず 3D は出せない','bad');
+  log('three.js を読み込めなかった。通信が遮られている可能性がある。回線を変えて開き直す');
+}else{
+  try{
+    renderer=new THREE.WebGLRenderer({canvas:canvas,antialias:true});
+  }catch(e){
+    setDiag('WebGL','この端末で WebGL が使えない: '+e.message,'bad');
+  }
+}
+
+var PALETTE={
+  skin:0xF3DCC8, skinShade:0xE2BFA6,
+  hair:0x40291F, top:0xEFE9DC, waist:0xB79B72,
+  skirt:0xC7AC88, shoe:0xC9B49A, gold:0xC9A961
+};
+
+function toon(color){ return new THREE.MeshToonMaterial({color:color}); }
+
+function cyl(rt,rb,h,mat,seg){
+  return new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg||24,1,false),mat);
+}
+
+/* --- face texture --- */
+var FW=768, FH=384;
+var faceCv=document.createElement('canvas'); faceCv.width=FW; faceCv.height=FH;
+var fx=faceCv.getContext('2d');
+var faceTex=null;   /* built in boot(); the page must still work without three.js */
+
+var EXPR={
+  neutral :{browY:0,   browTilt:0.00, eye:1.00, arc:0.00, mCurve:0.14, mW:1.00, mBase:0.03},
+  happy   :{browY:-6,  browTilt:0.05, eye:0.60, arc:1.00, mCurve:0.85, mW:1.18, mBase:0.10},
+  relaxed :{browY:-2,  browTilt:0.06, eye:0.72, arc:0.45, mCurve:0.40, mW:1.02, mBase:0.04},
+  sad     :{browY:6,   browTilt:0.34, eye:0.72, arc:-0.2, mCurve:-0.55,mW:0.90, mBase:0.03},
+  angry   :{browY:9,   browTilt:-0.38,eye:0.92, arc:0.00, mCurve:-0.48,mW:0.86, mBase:0.03},
+  surprised:{browY:-14,browTilt:0.00, eye:1.32, arc:0.00, mCurve:0.00, mW:0.80, mBase:0.50}
+};
+var EXPR_JA={neutral:'ふつう',happy:'よろこび',relaxed:'おだやか',sad:'かなしみ',angry:'いかり',surprised:'おどろき'};
+var curExpr='neutral', tgt=Object.assign({},EXPR.neutral), cur=Object.assign({},EXPR.neutral);
+var blink=1, blinkT=1.6, blinkPhase=0, BLINK_DUR=0.16, mouthOpen=0, drawnKey='';
+
+function drawFace(){
+  fx.clearRect(0,0,FW,FH);
+  fx.fillStyle='#F3DCC8'; fx.fillRect(0,0,FW,FH);
+  /* scalp: back of head */
+  fx.fillStyle='#40291F';
+  fx.fillRect(0,0,FW,96);
+  fx.fillRect(392,0,FW-392,330);
+  fx.fillRect(0,0,60,330);
+  /* bangs over the forehead, wavy lower edge */
+  fx.beginPath(); fx.moveTo(60,0); fx.lineTo(392,0); fx.lineTo(392,150);
+  fx.bezierCurveTo(330,196, 300,150, 250,182);
+  fx.bezierCurveTo(206,206, 170,152, 128,178);
+  fx.bezierCurveTo(96,196, 84,158, 60,150);
+  fx.closePath(); fx.fill();
+
+  var cx=192, eyeY=228, sep=36;
+  var openF=Math.max(0.06, cur.eye*blink);
+
+  /* blush */
+  fx.fillStyle='rgba(230,150,138,0.20)';
+  [cx-sep-16, cx+sep+16].forEach(function(bx){
+    fx.beginPath(); fx.ellipse(bx,eyeY+40,22,11,0,0,Math.PI*2); fx.fill();
+  });
+
+  [-1,1].forEach(function(s){
+    var ex=cx+s*sep;
+    /* eye */
+    var rw=17, rh=20*openF;
+    fx.fillStyle='#F7F3EE';
+    fx.beginPath(); fx.ellipse(ex,eyeY,rw,rh,0,0,Math.PI*2); fx.fill();
+    if(cur.arc>0.35){
+      /* smiling eye: draw an upward arc instead of an iris */
+      fx.strokeStyle='#3A2A22'; fx.lineWidth=5; fx.lineCap='round';
+      fx.beginPath(); fx.arc(ex,eyeY+7,rw*0.95,Math.PI*1.12,Math.PI*1.88); fx.stroke();
+    }else{
+      fx.fillStyle='#4A5B6B';
+      fx.beginPath(); fx.ellipse(ex,eyeY,rw*0.62,Math.min(rh,13.5),0,0,Math.PI*2); fx.fill();
+      fx.fillStyle='#20262E';
+      fx.beginPath(); fx.ellipse(ex,eyeY,rw*0.30,Math.min(rh,8),0,0,Math.PI*2); fx.fill();
+      fx.fillStyle='rgba(255,255,255,0.9)';
+      fx.beginPath(); fx.ellipse(ex-5,eyeY-5,4,3.4,0,0,Math.PI*2); fx.fill();
+      /* upper lash */
+      fx.strokeStyle='#33231C'; fx.lineWidth=4; fx.lineCap='round';
+      fx.beginPath(); fx.arc(ex,eyeY,rw,Math.PI*1.06,Math.PI*1.94); fx.stroke();
+    }
+    /* brow */
+    fx.strokeStyle='#4A3227'; fx.lineWidth=4.5;
+    fx.save(); fx.translate(ex,eyeY-30+cur.browY); fx.rotate(s*cur.browTilt);
+    fx.beginPath(); fx.moveTo(-16,2); fx.quadraticCurveTo(0,-5,16,1); fx.stroke();
+    fx.restore();
+  });
+
+  /* nose */
+  fx.strokeStyle='rgba(190,140,116,0.75)'; fx.lineWidth=3; fx.lineCap='round';
+  fx.beginPath(); fx.moveTo(cx+3,eyeY+26); fx.lineTo(cx+7,eyeY+34); fx.stroke();
+
+  /* mouth: width from expression, height from lip sync */
+  var my=eyeY+66, mw=26*cur.mW, open=Math.max(cur.mBase, mouthOpen);
+  var mh=3+open*23;
+  fx.fillStyle='#8E4A45';
+  fx.beginPath();
+  fx.moveTo(cx-mw,my);
+  fx.quadraticCurveTo(cx, my - cur.mCurve*9 - mh*0.30, cx+mw, my);
+  fx.quadraticCurveTo(cx, my + mh + cur.mCurve*3, cx-mw, my);
+  fx.closePath(); fx.fill();
+  if(open>0.22){
+    fx.fillStyle='#F6EFEA';
+    fx.beginPath();
+    fx.moveTo(cx-mw*0.78,my+0.5);
+    fx.quadraticCurveTo(cx,my+2.5,cx+mw*0.78,my+0.5);
+    fx.lineTo(cx+mw*0.6,my+4.5); fx.lineTo(cx-mw*0.6,my+4.5);
+    fx.closePath(); fx.fill();
+  }
+  if(faceTex) faceTex.needsUpdate=true;
+}
+
+function buildMio(){
+  var g=new THREE.Group();
+  var mSkin=toon(PALETTE.skin), mTop=toon(PALETTE.top), mSkirt=toon(PALETTE.skirt);
+  var mHair=toon(PALETTE.hair), mShoe=toon(PALETTE.shoe);
+
+  /* head: face texture wrapped on a sphere; u=0.25 faces +Z */
+  var head=new THREE.Mesh(new THREE.SphereGeometry(0.112,40,28), new THREE.MeshToonMaterial({map:faceTex}));
+  head.scale.set(1,1.07,0.94); head.position.y=1.566; head.rotation.y=Math.PI/2; g.add(head);
+
+  /* long wavy hair down to the lower chest */
+  var back=new THREE.Mesh(new THREE.SphereGeometry(0.118,26,20), mHair);
+  back.scale.set(1.02,1.9,0.86); back.position.set(0,1.44,-0.036); g.add(back);
+  [-1,1].forEach(function(s){
+    var side=new THREE.Mesh(new THREE.SphereGeometry(0.046,16,14), mHair);
+    side.scale.set(0.72,3.5,0.86); side.position.set(s*0.098,1.435,0.012); g.add(side);
+  });
+
+  var neck=cyl(0.035,0.041,0.08,mSkin,16); neck.position.y=1.44; g.add(neck);
+
+  var torso=cyl(0.132,0.106,0.40,mTop,30); torso.position.y=1.205;
+  torso.scale.z=0.80; g.add(torso);
+  var shoulder=new THREE.Mesh(new THREE.SphereGeometry(0.132,24,16),mTop);
+  shoulder.scale.set(1,0.48,0.80); shoulder.position.y=1.398; g.add(shoulder);
+
+  var band=cyl(0.108,0.113,0.045,toon(PALETTE.waist),28); band.position.y=1.0;
+  band.scale.z=0.82; g.add(band);
+  var skirt=cyl(0.113,0.176,0.30,mSkirt,30); skirt.position.y=0.855;
+  skirt.scale.z=0.84; g.add(skirt);
+
+  var arms=[];
+  [-1,1].forEach(function(s){
+    var arm=new THREE.Group();
+    var upper=cyl(0.037,0.030,0.52,mSkin,16); upper.position.y=-0.26; arm.add(upper);
+    var hand=new THREE.Mesh(new THREE.SphereGeometry(0.036,14,12),mSkin);
+    hand.scale.set(0.72,1.25,0.5); hand.position.y=-0.545; arm.add(hand);
+    arm.position.set(s*0.145,1.375,0);
+    arm.rotation.z=s*0.245;              /* A-pose: clear gap under the arm */
+    g.add(arm); arms.push(arm);
+  });
+
+  [-1,1].forEach(function(s){
+    var leg=cyl(0.062,0.038,0.72,mSkin,18); leg.position.set(s*0.052,0.40,0); g.add(leg);
+    var foot=new THREE.Mesh(new THREE.BoxGeometry(0.062,0.028,0.155),mShoe);
+    foot.position.set(s*0.052,0.030,0.026); g.add(foot);
+    var heel=new THREE.Mesh(new THREE.BoxGeometry(0.020,0.062,0.020),mShoe);
+    heel.position.set(s*0.052,0.031,-0.040); g.add(heel);
+  });
+
+  var watch=new THREE.Mesh(new THREE.TorusGeometry(0.031,0.008,8,18),toon(PALETTE.gold));
+  watch.rotation.x=Math.PI/2; watch.position.set(0,-0.475,0); arms[0].add(watch);
+
+  var shadow=new THREE.Mesh(new THREE.CircleGeometry(0.20,32),
+    new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.12}));
+  shadow.rotation.x=-Math.PI/2; shadow.position.y=0.004; g.add(shadow);
+
+  g.userData.arms=arms; g.userData.head=head; g.userData.torso=torso;
+  return g;
+}
+
+/* ---------- camera rig: exponential-decay inertia ---------- */
+var rig={theta:0,phi:1.42,r:3.5,tx:0,ty:0.95,tz:0,vT:0,vP:0,vR:0};
+var HOME={theta:0,phi:1.42,r:3.5,ty:0.95};
+var TAU=0.16;
+function resetView(){
+  rig.theta=HOME.theta; rig.phi=HOME.phi; rig.r=HOME.r;
+  rig.tx=0; rig.ty=HOME.ty; rig.tz=0; rig.vT=rig.vP=rig.vR=0;
+}
+function applyCamera(){
+  var sp=Math.sin(rig.phi);
+  camera.position.set(
+    rig.tx + rig.r*sp*Math.sin(rig.theta),
+    rig.ty + rig.r*Math.cos(rig.phi),
+    rig.tz + rig.r*sp*Math.cos(rig.theta)
+  );
+  camera.lookAt(rig.tx,rig.ty,rig.tz);
+}
+
+var ptrs=new Map(), lastPinch=0, lastMid=null, dragged=false;
+function mid(){
+  var a=[...ptrs.values()];
+  return {x:(a[0].x+a[1].x)/2, y:(a[0].y+a[1].y)/2};
+}
+function dist(){
+  var a=[...ptrs.values()];
+  return Math.hypot(a[0].x-a[1].x, a[0].y-a[1].y);
+}
+canvas.addEventListener('pointerdown',function(e){
+  canvas.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(ptrs.size===2){ lastPinch=dist(); lastMid=mid(); }
+  dragged=false;
+});
+canvas.addEventListener('pointermove',function(e){
+  var p=ptrs.get(e.pointerId); if(!p) return;
+  var dx=e.clientX-p.x, dy=e.clientY-p.y;
+  p.x=e.clientX; p.y=e.clientY;
+  if(Math.abs(dx)+Math.abs(dy)>2) dragged=true;
+  if(ptrs.size===1){
+    rig.theta-=dx*0.0075; rig.vT=-dx*0.030;
+    rig.phi=Math.min(2.60,Math.max(0.40,rig.phi-dy*0.0060)); rig.vP=-dy*0.024;
+  }else if(ptrs.size===2){
+    var d=dist(), m=mid();
+    if(lastPinch>0){
+      var scale=lastPinch/d;
+      rig.r=Math.min(9,Math.max(0.7,rig.r*scale));
+    }
+    if(lastMid){
+      rig.tx-=(m.x-lastMid.x)*0.0022*rig.r*Math.cos(rig.theta);
+      rig.tz+=(m.x-lastMid.x)*0.0022*rig.r*Math.sin(rig.theta);
+      rig.ty+=(m.y-lastMid.y)*0.0022*rig.r;
+    }
+    lastPinch=d; lastMid=m;
+  }
+});
+function endPtr(e){
+  ptrs.delete(e.pointerId);
+  if(ptrs.size<2){ lastPinch=0; lastMid=null; }
+}
+canvas.addEventListener('pointerup',endPtr);
+canvas.addEventListener('pointercancel',endPtr);
+canvas.addEventListener('wheel',function(e){
+  e.preventDefault();
+  rig.r=Math.min(9,Math.max(0.7,rig.r*(1+e.deltaY*0.0011)));
+},{passive:false});
+
+/* ---------- lip sync (port of lipsync.py) ---------- */
+var LS={
+  ctx:null, analyser:null, buf:null, stream:null, on:false,
+  db:-90, env:0, gate:false, peak:-35, PEAK_FLOOR:-35, FLOOR:-58,
+  ATTACK:0.025, RELEASE:0.110, OPEN:0.20, CLOSE:0.11, level:0
+};
+function lsStep(dt){
+  if(!LS.on||!LS.analyser){
+    LS.level += (0-LS.level)*(1-Math.exp(-dt/0.12));
+    return LS.level;
+  }
+  LS.analyser.getFloatTimeDomainData(LS.buf);
+  var sum=0;
+  for(var i=0;i<LS.buf.length;i++) sum+=LS.buf[i]*LS.buf[i];
+  var rms=Math.sqrt(sum/LS.buf.length);
+  var db=20*Math.log10(Math.max(rms,1e-7));
+  LS.db=db;
+  /* adaptive ceiling, guarded so silence cannot inflate the gain */
+  LS.peak=Math.max(db, LS.peak - dt*6);
+  var ceil=Math.max(LS.peak, LS.PEAK_FLOOR);
+  var raw=(db-LS.FLOOR)/Math.max(6,(ceil-LS.FLOOR));
+  raw=Math.min(1,Math.max(0,raw));
+  /* asymmetric smoothing: fast to open, slow to close */
+  var tau = raw>LS.env ? LS.ATTACK : LS.RELEASE;
+  LS.env += (raw-LS.env)*(1-Math.exp(-dt/tau));
+  /* hysteresis so a steady near-threshold hiss cannot chatter the jaw */
+  if(!LS.gate && LS.env>LS.OPEN) LS.gate=true;
+  else if(LS.gate && LS.env<LS.CLOSE) LS.gate=false;
+  LS.level = LS.gate ? LS.env : LS.env*0.12;
+  return LS.level;
+}
+
+var micbtn=document.getElementById('micbtn');
+micbtn.addEventListener('click',function(){
+  if(LS.on){ stopMic(); return; }
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+    setDiag('マイク','この端末では使えない','bad'); log('getUserMedia がない'); return;
+  }
+  micbtn.disabled=true; micbtn.textContent='マイクを準備中…';
+  navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}})
+  .then(function(stream){
+    LS.stream=stream;
+    var AC=window.AudioContext||window.webkitAudioContext;
+    LS.ctx=new AC();
+    LS.ctx.onstatechange=function(){
+      setDiag('AudioContext',LS.ctx.state, LS.ctx.state==='running'?'ok':'warn');
+      log('AudioContext → '+LS.ctx.state);
+    };
+    var src=LS.ctx.createMediaStreamSource(stream);
+    LS.analyser=LS.ctx.createAnalyser();
+    LS.analyser.fftSize=1024; LS.analyser.smoothingTimeConstant=0;
+    LS.buf=new Float32Array(LS.analyser.fftSize);
+    src.connect(LS.analyser);
+    LS.on=true; LS.peak=LS.PEAK_FLOOR;
+    micbtn.disabled=false; micbtn.textContent='マイクを切る'; micbtn.dataset.live='1';
+    setDiag('マイク','入力中','ok');
+    setDiag('サンプルレート',LS.ctx.sampleRate+' Hz');
+    setDiag('AudioContext',LS.ctx.state, LS.ctx.state==='running'?'ok':'warn');
+    var tr=stream.getAudioTracks()[0];
+    if(tr) setDiag('入力デバイス', tr.label || '(名前が取れない)');
+    log('マイク開始 / '+LS.ctx.sampleRate+'Hz / state='+LS.ctx.state);
+  })
+  .catch(function(err){
+    micbtn.disabled=false; micbtn.textContent='マイクを入れて口を動かす';
+    setDiag('マイク','拒否または失敗: '+err.name,'bad');
+    log('マイク失敗: '+err.name+' '+(err.message||''));
+  });
+});
+function stopMic(){
+  LS.on=false;
+  if(LS.stream) LS.stream.getTracks().forEach(function(t){t.stop();});
+  if(LS.ctx && LS.ctx.close) LS.ctx.close();
+  LS.analyser=null; LS.ctx=null;
+  micbtn.textContent='マイクを入れて口を動かす'; micbtn.dataset.live='0';
+  setDiag('マイク','停止中');
+  log('マイク停止');
+}
+
+/* ---------- expressions ---------- */
+var exprWrap=document.getElementById('exprs');
+Object.keys(EXPR).forEach(function(k){
+  var b=document.createElement('button');
+  b.className='chip'; b.type='button';
+  b.textContent=EXPR_JA[k]; b.dataset.k=k;
+  b.setAttribute('aria-pressed', k===curExpr ? 'true':'false');
+  b.addEventListener('click',function(){
+    curExpr=k; tgt=EXPR[k];
+    [].forEach.call(exprWrap.children,function(c){
+      c.setAttribute('aria-pressed', c.dataset.k===k ? 'true':'false');
+    });
+    setDiag('いまの表情', EXPR_JA[k]+' ('+k+')');
+  });
+  exprWrap.appendChild(b);
+});
+document.getElementById('resetbtn').addEventListener('click',function(){ resetView(); log('視点リセット'); });
+
+/* ---------- GLB acceptance ---------- */
+var CHECKS=[
+  {id:'face', label:'顔が崩れていない', sub:'メッシュが読めて、頂点が飛んでいないか'},
+  {id:'split',label:'上下の服が別々のメッシュ', sub:'着せ替えの前提。1つの塊なら設計が変わる'},
+  {id:'arms', label:'腕と体がくっついていない', sub:'体の幅に対して全体の幅が十分あるか'}
+];
+var checkEls={};
+var checksWrap=document.getElementById('checks');
+CHECKS.forEach(function(c){
+  var d=document.createElement('div'); d.className='check';
+  var m=document.createElement('div'); m.className='mark'; m.textContent='–'; m.dataset.state='';
+  var p=document.createElement('p'); p.innerHTML='';
+  p.appendChild(document.createTextNode(c.label));
+  var s=document.createElement('span'); s.textContent=c.sub; p.appendChild(s);
+  d.appendChild(m); d.appendChild(p); checksWrap.appendChild(d);
+  checkEls[c.id]={mark:m,sub:s,base:c.sub};
+});
+function setCheck(id,ok,note){
+  var e=checkEls[id];
+  e.mark.dataset.state = ok===null ? '' : (ok?'ok':'bad');
+  e.mark.textContent  = ok===null ? '–' : (ok?'✓':'×');
+  e.sub.textContent = note || e.base;
+}
+
+document.getElementById('glbbtn').addEventListener('click',function(){
+  if(!window.THREE || !THREE.GLTFLoader){
+    setCheck('face',false,'GLBの読み込み部品を取得できていない。通信を確認して再読み込みする');
+    log('GLTFLoader が無いので GLB を読めない'); return;
+  }
+  document.getElementById('glbinput').click();
+});
+document.getElementById('glbinput').addEventListener('change',function(e){
+  var file=e.target.files && e.target.files[0]; if(!file) return;
+  log('GLB読み込み: '+file.name+' ('+(file.size/1048576).toFixed(2)+' MB)');
+  var fr=new FileReader();
+  fr.onload=function(){
+    var loader=new THREE.GLTFLoader();
+    try{
+      /* parse from memory: no network fetch, so the sandbox cannot block it */
+      loader.parse(fr.result,'',function(gltf){ adoptModel(gltf,file); },
+        function(err){ log('GLB解析エラー: '+err); setCheck('face',false,'ファイルを読めなかった'); });
+    }catch(err){
+      log('GLB例外: '+err.message);
+      setCheck('face',false,'ファイルを読めなかった: '+err.message);
+    }
+  };
+  fr.onerror=function(){ log('ファイル読み込み失敗'); };
+  fr.readAsArrayBuffer(file);
+});
+
+function adoptModel(gltf,file){
+  if(mio) scene.remove(mio);
+  if(loadedModel) scene.remove(loadedModel);
+  loadedModel=gltf.scene;
+
+  var meshes=[], mats=new Set(), tris=0;
+  loadedModel.traverse(function(o){
+    if(o.isMesh){
+      meshes.push(o);
+      if(o.material) [].concat(o.material).forEach(function(m){ mats.add(m.name||m.uuid); });
+      var g=o.geometry;
+      if(g && g.index) tris+=g.index.count/3;
+      else if(g && g.attributes && g.attributes.position) tris+=g.attributes.position.count/3;
+    }
+  });
+
+  var box=new THREE.Box3().setFromObject(loadedModel);
+  var size=new THREE.Vector3(); box.getSize(size);
+  var ctr=new THREE.Vector3(); box.getCenter(ctr);
+  var s=1.68/Math.max(size.y,1e-4);
+  loadedModel.scale.setScalar(s);
+  loadedModel.position.set(-ctr.x*s, -box.min.y*s, -ctr.z*s);
+  scene.add(loadedModel);
+  resetView();
+
+  setDiag('モデル', file.name);
+  setDiag('メッシュ数', meshes.length+' / 三角形 '+Math.round(tris).toLocaleString());
+  setDiag('マテリアル数', mats.size);
+  setDiag('元の高さ', size.y.toFixed(3)+' → 1.68 に正規化');
+
+  setCheck('face', meshes.length>0 && tris>200,
+    meshes.length>0 ? ('メッシュ '+meshes.length+' 個 / 三角形 '+Math.round(tris).toLocaleString()) : 'メッシュが1つも無い');
+  setCheck('split', meshes.length>=3 || mats.size>=3,
+    'メッシュ '+meshes.length+' 個・マテリアル '+mats.size+' 種。3以上なら分割の見込みあり（回して目でも確認する）');
+  var ratio=size.x/Math.max(size.y,1e-4);
+  setCheck('arms', ratio>0.30,
+    '横幅/身長 = '+ratio.toFixed(2)+(ratio>0.30?'（腕が開いている）':'（細すぎる。腕が体に埋まっている疑い）'));
+  log('モデル採用: メッシュ'+meshes.length+' マテリアル'+mats.size+' 三角形'+Math.round(tris));
+}
+
+/* ---------- boot ---------- */
+function boot(){
+  if(!renderer){
+    log('WebGL を初期化できなかった。3D表示なしで診断だけ続ける');
+    setDiag('画面', window.innerWidth+'×'+window.innerHeight+' / DPR '+(window.devicePixelRatio||1));
+    setDiag('端末', (navigator.platform||'?')+' / '+(navigator.userAgent.match(/(iPhone|iPad|Android|Macintosh|Windows)[^);]*/)||['不明'])[0]);
+    return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2));
+  renderer.setClearColor(SHEET,1);
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(26,1,0.05,100);
+
+  scene.add(new THREE.HemisphereLight(0xffffff,0x8a8a8a,0.85));
+  var key=new THREE.DirectionalLight(0xffffff,0.55); key.position.set(0.6,1.2,1.4); scene.add(key);
+  var fill=new THREE.DirectionalLight(0xffffff,0.28); fill.position.set(-1.0,0.4,-0.8); scene.add(fill);
+
+  faceTex=new THREE.CanvasTexture(faceCv); faceTex.anisotropy=1;
+  drawFace();
+  mio=buildMio(); scene.add(mio);
+  resetView(); resize();
+
+  var gl=renderer.getContext();
+  var info='不明';
+  try{
+    var dbg=gl.getExtension('WEBGL_debug_renderer_info');
+    info = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : (gl.getParameter(gl.RENDERER)||'不明');
+  }catch(e){}
+  setDiag('WebGL','動いている','ok');
+  setDiag('GPU', String(info).slice(0,46));
+  setDiag('three.js', THREE.REVISION);
+  setDiag('画面', window.innerWidth+'×'+window.innerHeight+' / DPR '+(window.devicePixelRatio||1));
+  setDiag('端末', (navigator.platform||'?')+' / '+(navigator.userAgent.match(/(iPhone|iPad|Android|Macintosh|Windows)[^);]*/)||['不明'])[0]);
+  setDiag('いまの表情','ふつう (neutral)');
+  setDiag('マイク','停止中');
+  setDiag('モデル','仮の素体（GLB未読込）');
+  log('起動 / three.js r'+THREE.REVISION);
+  requestAnimationFrame(loop);
+}
+
+function resize(){
+  var r=canvas.getBoundingClientRect();
+  var w=Math.max(1,Math.round(r.width)), h=Math.max(1,Math.round(r.height));
+  renderer.setSize(w,h,false);
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+}
+window.addEventListener('resize',function(){ resize(); setDiag('画面', window.innerWidth+'×'+window.innerHeight+' / DPR '+(window.devicePixelRatio||1)); });
+
+document.addEventListener('visibilitychange',function(){
+  log('visibilitychange → '+document.visibilityState+(LS.ctx?(' / audio='+LS.ctx.state):''));
+});
+window.addEventListener('pagehide',function(){ log('pagehide（画面ロック・タブ離脱）'); });
+window.addEventListener('pageshow',function(){ log('pageshow（復帰）'+(LS.ctx?(' / audio='+LS.ctx.state):'')); });
+window.addEventListener('blur',function(){ log('blur'); });
+window.addEventListener('focus',function(){ log('focus'); });
+
+var last=performance.now(), frames=0, acc=0, fps=0, t=0;
+var hud=document.getElementById('hud'), bar=document.getElementById('meterbar');
+function loop(now){
+  requestAnimationFrame(loop);
+  var dt=Math.min(0.05,(now-last)/1000); last=now; t+=dt;
+
+  /* frame-rate-independent inertia: integral of an exponential decay */
+  var k=Math.exp(-dt/TAU);
+  if(ptrs.size===0){
+    rig.theta+=rig.vT*TAU*(1-k);
+    rig.phi=Math.min(2.60,Math.max(0.40,rig.phi+rig.vP*TAU*(1-k)));
+  }
+  rig.vT*=k; rig.vP*=k;
+  applyCamera();
+
+  /* expression easing */
+  var e=1-Math.exp(-dt/0.09);
+  ['browY','browTilt','eye','arc','mCurve','mW','mBase'].forEach(function(p){
+    cur[p]+=(tgt[p]-cur[p])*e;
+  });
+
+  /* blink */
+  blinkT-=dt;
+  if(blinkT<=0){ blinkT=2.4+Math.random()*3.2; blinkPhase=BLINK_DUR; }
+  if(blinkPhase>0){
+    blinkPhase-=dt;
+    blink=Math.abs(Math.cos((1-Math.max(0,blinkPhase)/BLINK_DUR)*Math.PI));
+  }else blink=1;
+
+  mouthOpen=lsStep(dt);
+  var key=[Math.round(cur.browY),cur.browTilt.toFixed(2),cur.eye.toFixed(2),cur.arc.toFixed(2),
+           cur.mCurve.toFixed(2),cur.mW.toFixed(2),blink.toFixed(2),mouthOpen.toFixed(2)].join('|');
+  if(key!==drawnKey){ drawnKey=key; drawFace(); }
+  bar.style.width=(mouthOpen*100).toFixed(0)+'%';
+
+  if(mio && !reduced){
+    var br=Math.sin(t*1.05)*0.006;
+    mio.userData.torso.scale.y=1+br;
+    mio.userData.head.position.y=1.566+br*0.05;
+    mio.userData.arms.forEach(function(a,i){ a.rotation.z=(i?1:-1)*(0.245+Math.sin(t*0.9+i)*0.012); });
+  }
+
+  renderer.render(scene,camera);
+
+  frames++; acc+=dt;
+  if(acc>=0.5){
+    fps=frames/acc; frames=0; acc=0;
+    hud.textContent=fps.toFixed(0)+' fps'+(LS.on?('  '+LS.db.toFixed(0)+' dBFS'):'');
+    setDiag('描画速度', fps.toFixed(0)+' fps', fps>=45?'ok':(fps>=25?'warn':'bad'));
+  }
+}
+
+document.getElementById('copybtn').addEventListener('click',function(){
+  var lines=['Mio Rig Bench / '+new Date().toString(),''];
+  Object.keys(diagRows).forEach(function(k){ lines.push(k+': '+diagRows[k].dd.textContent); });
+  lines.push('','--- イベント記録 ---'); lines.push(logLines.join('\n'));
+  var txt=lines.join('\n');
+  var done=function(){ var b=document.getElementById('copybtn'); b.textContent='コピーした'; setTimeout(function(){b.textContent='結果をコピー';},1600); };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(done,function(){ fallback(txt,done); });
+  }else fallback(txt,done);
+});
+function fallback(txt,done){
+  var ta=document.createElement('textarea');
+  ta.value=txt; ta.style.position='fixed'; ta.style.opacity='0';
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); done(); }catch(e){ log('コピーできなかった。手で選んでください'); }
+  document.body.removeChild(ta);
+}
+
+boot();
+if(window.THREE && !THREE.GLTFLoader) log('GLTFLoader を読み込めなかった。GLB読み込みは使えない');
+})();
+</script>
