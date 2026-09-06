@@ -473,9 +473,14 @@ function cost(A,B,N,dx,dy,sc){
 function alignSheet(k){
   var base=images.base, img=images[k];
   if(!base||!img||k==='base'){ aligns[k]={dx:0,dy:0,s:1}; return; }
+  var t0=performance.now();
   var best={dx:0,dy:0,s:1,c:1e9}, N, A, B, dx, dy, si, sc, c;
   var scales, range, step;
-  [[40,6,2,[0.94,1.00,1.06]],[72,4,1,[-0.03,0,0.03]]].forEach(function(stage,pass){
+  /* The search has to span a crop difference, not just a wobble: a face
+     close-up and a chest-up portrait of the same character differ by around
+     1.4x and a quarter of the frame vertically. */
+  [[40,10,2,[0.68,0.80,0.94,1.06,1.20,1.40]],
+   [72,4,1,[-0.06,-0.03,0,0.03,0.06]]].forEach(function(stage,pass){
     N=stage[0]; range=stage[1]; step=stage[2];
     scales = pass===0 ? stage[3] : stage[3].map(function(d){ return best.s+d; });
     A=greyOf(base,N); B=greyOf(img,N);
@@ -491,6 +496,7 @@ function alignSheet(k){
   });
   aligns[k]={dx:best.dx,dy:best.dy,s:best.s};
   try{ localStorage.setItem('mio.align.'+k,JSON.stringify(aligns[k])); }catch(e){}
+  rlog('位置合わせ '+k+' '+(performance.now()-t0).toFixed(0)+'ms / 倍率'+best.s.toFixed(2)+' 残差'+best.c.toFixed(1));
   return best.c;
 }
 
