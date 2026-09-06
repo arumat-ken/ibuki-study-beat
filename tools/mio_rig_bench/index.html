@@ -314,18 +314,18 @@ function drawFace(){
   fx.clearRect(0,0,FW,FH);
   fx.fillStyle='#F3DCC8'; fx.fillRect(0,0,FW,FH);
   /* scalp: back of head */
-  fx.fillStyle='#40291F';
-  fx.fillRect(0,0,FW,96);
-  fx.fillRect(392,0,FW-392,330);
-  fx.fillRect(0,0,60,330);
-  /* bangs over the forehead, wavy lower edge */
-  fx.beginPath(); fx.moveTo(56,0); fx.lineTo(400,0); fx.lineTo(400,140);
-  fx.bezierCurveTo(338,186, 306,140, 254,172);
-  fx.bezierCurveTo(208,196, 172,142, 128,168);
-  fx.bezierCurveTo(94,186, 82,148, 56,140);
+  fx.fillStyle='#35211A';
+  fx.fillRect(0,0,FW,102);          /* crown band, all the way round */
+  fx.fillRect(274,102,FW-274,244);  /* hair beside the face, one side */
+  fx.fillRect(0,102,110,244);       /* and the other */
+  /* bangs across the opening, wavy lower edge */
+  fx.beginPath(); fx.moveTo(110,102); fx.lineTo(274,102); fx.lineTo(274,150);
+  fx.bezierCurveTo(252,186, 236,146, 214,174);
+  fx.bezierCurveTo(192,200, 172,148, 150,170);
+  fx.bezierCurveTo(132,186, 124,142, 110,152);
   fx.closePath(); fx.fill();
 
-  var cx=192, eyeY=232, sep=37;
+  var cx=192, eyeY=236, sep=34;
   var openF=Math.max(0.06, cur.eye*blink);
 
   /* blush */
@@ -337,7 +337,7 @@ function drawFace(){
   [-1,1].forEach(function(s){
     var ex=cx+s*sep;
     /* eye */
-    var rw=23, rh=26*openF;
+    var rw=22, rh=25*openF;
     fx.fillStyle='#F7F3EE';
     fx.beginPath(); fx.ellipse(ex,eyeY,rw,rh,0,0,Math.PI*2); fx.fill();
     if(cur.arc>0.35){
@@ -357,8 +357,8 @@ function drawFace(){
     }
     /* brow */
     fx.strokeStyle='#4A3227'; fx.lineWidth=5;
-    fx.save(); fx.translate(ex,eyeY-38+cur.browY); fx.rotate(s*cur.browTilt);
-    fx.beginPath(); fx.moveTo(-20,2); fx.quadraticCurveTo(0,-6,20,1); fx.stroke();
+    fx.save(); fx.translate(ex,eyeY-36+cur.browY); fx.rotate(s*cur.browTilt);
+    fx.beginPath(); fx.moveTo(-18,2); fx.quadraticCurveTo(0,-6,18,1); fx.stroke();
     fx.restore();
   });
 
@@ -412,25 +412,31 @@ function buildMio(){
   var mHair=toon(PALETTE.hair), mShoe=toon(PALETTE.shoe);
 
   /* head: face texture wrapped on a sphere; u=0.25 faces +Z */
+  var HEAD_Y=1.572;
   var head=new THREE.Mesh(new THREE.SphereGeometry(0.126,40,28), new THREE.MeshToonMaterial({map:faceTex}));
-  head.scale.set(1,1.06,0.95); head.position.y=1.548; g.add(head);
+  head.scale.set(1,1.06,0.95); head.position.y=HEAD_Y; g.add(head);
 
-  /* long wavy hair down to the lower chest */
-  var crown=new THREE.Mesh(new THREE.SphereGeometry(0.132,26,20), mHair);
-  crown.scale.set(1.00,1.02,0.99); crown.position.set(0,1.560,-0.016); g.add(crown);
-  var back=new THREE.Mesh(new THREE.SphereGeometry(0.118,26,20), mHair);
-  back.scale.set(1.00,2.45,0.74); back.position.set(0,1.345,-0.062); g.add(back);
+  /* Hair. The crown must be a CAP, not a sphere: a full sphere large enough
+     to sit over the skull also covers the face. thetaLength stops it above
+     the brows and the painted bangs carry the forehead. */
+  var crown=new THREE.Mesh(
+    new THREE.SphereGeometry(0.137,28,18,0,Math.PI*2,0,1.25), mHair);
+  crown.scale.set(1,1.04,1); crown.position.set(0,HEAD_Y,-0.008); g.add(crown);
+  var back=new THREE.Mesh(new THREE.SphereGeometry(0.116,26,20), mHair);
+  back.scale.set(1.02,2.40,0.76); back.position.set(0,1.372,-0.064); g.add(back);
   [-1,1].forEach(function(s){
     var side=new THREE.Mesh(new THREE.SphereGeometry(0.040,16,14), mHair);
-    side.scale.set(0.62,5.0,0.90); side.position.set(s*0.122,1.355,-0.022); g.add(side);
+    side.scale.set(0.60,4.9,0.92); side.position.set(s*0.121,1.386,-0.020); g.add(side);
   });
 
-  var neck=cyl(0.035,0.041,0.08,mSkin,16); neck.position.y=1.44; g.add(neck);
+  var neck=cyl(0.038,0.045,0.09,mSkin,16); neck.position.y=1.432; g.add(neck);
 
-  var torso=cyl(0.132,0.106,0.40,mTop,30); torso.position.y=1.205;
-  torso.scale.z=0.80; g.add(torso);
-  var shoulder=new THREE.Mesh(new THREE.SphereGeometry(0.152,24,16),mTop);
-  shoulder.scale.set(1,0.40,0.74); shoulder.position.y=1.383; g.add(shoulder);
+  /* Shoulders are the top of the torso taper, not a disc stuck on it:
+     a separate wider sphere read as a collar. */
+  var torso=cyl(0.140,0.101,0.42,mTop,30); torso.position.y=1.195;
+  torso.scale.z=0.78; g.add(torso);
+  var shoulder=new THREE.Mesh(new THREE.SphereGeometry(0.140,24,16),mTop);
+  shoulder.scale.set(1,0.34,0.78); shoulder.position.y=1.405; g.add(shoulder);
 
   var band=cyl(0.112,0.117,0.052,toon(PALETTE.waist),28); band.position.y=1.002;
   band.scale.z=0.84; g.add(band);
@@ -443,7 +449,7 @@ function buildMio(){
     var upper=cyl(0.040,0.027,0.50,mSkin,16); upper.position.y=-0.25; arm.add(upper);
     var hand=new THREE.Mesh(new THREE.SphereGeometry(0.032,14,12),mSkin);
     hand.scale.set(0.78,1.30,0.55); hand.position.y=-0.525; arm.add(hand);
-    arm.position.set(s*0.152,1.368,0);
+    arm.position.set(s*0.149,1.386,0);
     arm.rotation.z=s*0.245;              /* A-pose: clear gap under the arm */
     g.add(arm); arms.push(arm);
   });
