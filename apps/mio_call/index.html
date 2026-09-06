@@ -311,13 +311,23 @@ var SLOTS=[
 var USE={}; SLOTS.forEach(function(x){ USE[x.k]=x.use; });
 
 /* the matrix, as a table rather than as pictures */
+/* Beyond the sheets, each feeling carries things the code can do to the
+   picture it already has, with no warping: how far the eyes close (a partial
+   blend to the closed-eye sheet), how she holds her head, warmth in the
+   cheeks, how fast she breathes, and a one-off movement when it arrives. */
 var EMO={
-  neutral  :{brow:null,        eye:null,       tears:0,   k:0.0},
-  relaxed  :{brow:null,        eye:'eyeSmile', tears:0,   k:0.45},
-  happy    :{brow:'browUp',    eye:'eyeSmile', tears:0,   k:1.0},
-  sad      :{brow:'browSad',   eye:'eyeTear',  tears:0.55,k:0.9},
-  angry    :{brow:'browAngry', eye:'eyeWide',  tears:0,   k:0.9},
-  surprised:{brow:'browUp',    eye:'eyeWide',  tears:0,   k:1.0}
+  neutral  :{brow:null,        eye:null,       tears:0,    k:0.0,
+             squint:0.00, tilt: 0.0, dy: 0.000, sc:1.000, blush:0.00, breath:1.00, kick:0.0},
+  relaxed  :{brow:null,        eye:'eyeSmile', tears:0,    k:0.45,
+             squint:0.30, tilt: 1.0, dy: 0.004, sc:1.000, blush:0.14, breath:0.82, kick:0.3},
+  happy    :{brow:'browUp',    eye:'eyeSmile', tears:0,    k:1.0,
+             squint:0.44, tilt:-0.8, dy:-0.006, sc:1.012, blush:0.32, breath:1.18, kick:1.0},
+  sad      :{brow:'browSad',   eye:'eyeTear',  tears:0.55, k:0.9,
+             squint:0.24, tilt: 1.6, dy: 0.014, sc:0.994, blush:0.06, breath:0.76, kick:-0.7},
+  angry    :{brow:'browAngry', eye:'eyeWide',  tears:0,    k:0.9,
+             squint:0.06, tilt:-0.5, dy:-0.002, sc:1.020, blush:0.20, breath:1.34, kick:0.8},
+  surprised:{brow:'browUp',    eye:'eyeWide',  tears:0,    k:1.0,
+             squint:0.00, tilt: 0.0, dy:-0.012, sc:1.034, blush:0.10, breath:1.45, kick:-1.6}
 };
 /* Her face ships with the page. Nothing to load, nothing to calibrate, and
    nothing that a cleared browser store can take away. */
@@ -333,6 +343,7 @@ var aligns={};                              /* slot -> {dx,dy,s} in image fracti
    They were the same number, so shrinking the mouth uncovered the original. */
 var mouth={x:0.5,y:0.72,w:70,cover:56};
 var SKIN={r:240,g:203,b:161};
+var SHEET_BG=null;   /* the sheet's own backdrop, so a tilt reveals more of it */
 function skinRGBA(a){ return 'rgba('+SKIN.r+','+SKIN.g+','+SKIN.b+','+a+')'; }
 var calibrating=false;
 
@@ -344,6 +355,11 @@ var layerCache={};                          /* slot -> masked region canvas */
 var showBrow=null, showEye=null;
 var wantBrow=null, wantEye=null;
 var browAmt=0, eyeAmt=0, tearWant=0, tearAmt=0, emoK=0;
+
+/* pose and mood, all eased so nothing snaps */
+var poseT=0, poseD=0, poseS=1, squint=0, blush=0, breathRate=1;
+var wantT=0, wantD=0, wantS=1, wantSquint=0, wantBlush=0, wantBreath=1;
+var kickV=0, kickX=0;                 /* the movement a new feeling arrives with */
 
 /* blink */
 var blinkAmt=0, blinkPhase=-1, nextBlink=2.5;
@@ -359,6 +375,13 @@ function setExpression(k,strength,tears){
   wantBrow = (e.brow&&images[e.brow]) ? e.brow : null;
   wantEye  = (e.eye &&images[e.eye ]) ? e.eye  : null;
   tearWant = Math.max(0,Math.min(1, (typeof tears==='number'?tears:e.tears) )) * (0.35+0.65*emoK);
+  wantSquint = (e.squint||0)*emoK;
+  wantT      = (e.tilt||0)*emoK;
+  wantD      = (e.dy||0)*emoK;
+  wantS      = 1+((e.sc||1)-1)*emoK;
+  wantBlush  = (e.blush||0)*emoK;
+  wantBreath = 1+((e.breath||1)-1)*emoK;
+  kickV += (e.kick||0)*emoK*0.9;      /* a small recoil, then it settles */
 }
 
 /* Bands sized from the eye spacing, which is the one measurement two taps
@@ -467,7 +490,7 @@ function setSlotImage(k,dataUrl,persist){
     images[k]=img;
     markSlot(k,img.width+'×'+img.height,true);
     if(k==='base'){
-      sampleSkin(); setDiag('顔','読み込み済み '+img.width+'×'+img.height,'ok');
+      sampleSkin(); sampleBackdrop(); setDiag('顔','読み込み済み '+img.width+'×'+img.height,'ok');
       Object.keys(images).forEach(function(o){ if(o!=='base') alignSheet(o); });
       rebuildLayers();
     }else{
@@ -589,6 +612,15 @@ function baseCtx(){
   var g=c.getContext('2d'); g.drawImage(img,0,0);
   return {g:g,img:img};
 }
+/* Sampled from the sheet's corner: with the tile painted the same colour, a
+   tilt or a lean shows more backdrop instead of the frame behind it. */
+function sampleBackdrop(){
+  try{
+    var b=baseCtx(); if(!b) return;
+    var d=b.g.getImageData(2,2,1,1).data;
+    SHEET_BG='rgb('+d[0]+','+d[1]+','+d[2]+')';
+  }catch(e){ SHEET_BG=null; }
+}
 function sampleSkin(){
   try{
     var b=baseCtx(); if(!b) return;
@@ -689,12 +721,14 @@ function fitCanvas(){
   draw(true);
 }
 
-var breath=0, tsec=0, lastDraw='';
+var breath=0, breathPhase=0, tsec=0, lastDraw='';
 function draw(force){
   var W=canvas.width, H=canvas.height;
   var key=[Math.round(vis.w*100),Math.round(vis.h*100),Math.round(breath*400),
            calibrating,showBrow,showEye,Math.round(browAmt*50),Math.round(eyeAmt*50),
            Math.round(blinkAmt*40),Math.round(tearAmt*50),tearAmt>0.01?Math.round(tsec*20):0,
+           Math.round(squint*50),Math.round(blush*50),Math.round(poseT*40),
+           Math.round(poseD*3000),Math.round(poseS*400),Math.round(kickX*400),
            document.getElementById('showbands').checked?1:0].join(',');
   if(!force && key===lastDraw) return;
   lastDraw=key;
@@ -702,16 +736,28 @@ function draw(force){
   fx.clearRect(0,0,W,H);
   var base=images.base;
   if(base){
+    if(SHEET_BG){ fx.fillStyle=SHEET_BG; fx.fillRect(0,0,W,H); }
     var scale=Math.min(W/base.width,H/base.height);
     var iw=base.width*scale, ih=base.height*scale;
     var ox=(W-iw)/2, oy=(H-ih)/2;
+    /* Everything below moves as one, so a tilt or a lean never separates the
+       face from the drawn mouth or the layers over it. */
+    var pvx=ox+((eyes.lx+eyes.rx)/2)*iw, pvy=oy+((eyes.ly+eyes.ry)/2)*ih;
     fx.save();
-    fx.translate(W/2,H/2); fx.scale(1+breath*0.004,1+breath*0.004); fx.translate(-W/2,-H/2);
+    fx.translate(pvx, pvy+(poseD+kickX*0.012)*ih);
+    fx.rotate((poseT+kickX*1.2)*Math.PI/180);
+    var zz=poseS*(1+breath*0.004)+kickX*0.006;
+    fx.scale(zz,zz);
+    fx.translate(-pvx,-pvy);
     fx.drawImage(base,ox,oy,iw,ih);
     /* the expression sheets share this framing, so they lay straight over it */
     if(showBrow) drawLayer(showBrow,browAmt,ox,oy,iw,ih);
     if(showEye)  drawLayer(showEye, eyeAmt, ox,oy,iw,ih);
-    if(blinkAmt>0.01) drawLayer('eyeClosed',blinkAmt,ox,oy,iw,ih);
+    /* A partial blend to the closed-eye sheet is a narrowed eye — a smile or
+       a heavy lid — without another drawing of her. */
+    var lid=Math.max(blinkAmt,squint);
+    if(lid>0.01) drawLayer('eyeClosed',lid,ox,oy,iw,ih);
+    if(blush>0.01) drawBlush(ox,oy,iw,ih,blush);
     drawTears(ox,oy,iw,ih,tearAmt,tsec);
     drawMouth(ox+mouth.x*iw, oy+mouth.y*ih, mouth.w*scale, mouth.cover*scale);
     fx.restore();
@@ -774,6 +820,21 @@ function drawLayer(k,alpha,ox,oy,iw,ih){
   fx.globalAlpha=alpha;
   fx.drawImage(L.canvas, ox+L.reg.x*iw, oy+L.reg.y*ih, L.reg.w*iw, L.reg.h*ih);
   fx.globalAlpha=1;
+}
+
+/* Warmth in the cheeks, laid over the picture rather than painted into it. */
+function drawBlush(ox,oy,iw,ih,amt){
+  var sp=Math.abs(eyes.rx-eyes.lx)*iw;
+  var cy=oy+((eyes.ly+eyes.ry)/2)*ih+sp*0.52;
+  fx.save(); fx.globalCompositeOperation='multiply';
+  [[eyes.lx,-1],[eyes.rx,1]].forEach(function(e){
+    var cxp=ox+e[0]*iw+e[1]*sp*0.16, r=sp*0.46;
+    var g2=fx.createRadialGradient(cxp,cy,0,cxp,cy,r);
+    g2.addColorStop(0,'rgba(238,150,140,'+(0.34*amt).toFixed(3)+')');
+    g2.addColorStop(1,'rgba(238,150,140,0)');
+    fx.fillStyle=g2; fx.beginPath(); fx.arc(cxp,cy,r,0,Math.PI*2); fx.fill();
+  });
+  fx.restore();
 }
 
 /* Tears are drawn, not photographed: a wet trail with a bead running down it
@@ -1412,7 +1473,8 @@ var last=performance.now();
 function loop(now){
   requestAnimationFrame(loop);
   var dt=Math.min(0.05,(now-last)/1000); last=now;
-  breath=Math.sin(now/1000*1.15);
+  breathPhase+=dt*1.15*breathRate;
+  breath=Math.sin(breathPhase);
 
   if(speaking){
     var i=Math.floor((now-visStart)/1000*moraPerSec);
@@ -1437,6 +1499,20 @@ function loop(now){
     if(eyeAmt<0.02){ eyeAmt=0; showEye=wantEye; }
   }else eyeAmt+=((showEye?emoK:0)-eyeAmt)*ek;
   tearAmt+=(tearWant-tearAmt)*(1-Math.exp(-dt/(tearWant>tearAmt?0.9:2.2)));
+
+  /* pose eases in over about a third of a second; the arrival movement is a
+     damped spring, so a feeling lands with a motion rather than a jump */
+  var pk=1-Math.exp(-dt/0.30);
+  poseT+=(wantT-poseT)*pk; poseD+=(wantD-poseD)*pk; poseS+=(wantS-poseS)*pk;
+  squint+=(wantSquint-squint)*(1-Math.exp(-dt/0.16));
+  blush+=(wantBlush-blush)*(1-Math.exp(-dt/0.45));
+  breathRate+=(wantBreath-breathRate)*pk;
+  kickV += -kickX*46*dt - kickV*7.0*dt;
+  kickX += kickV*dt;
+  if(Math.abs(kickX)<0.0004&&Math.abs(kickV)<0.004){ kickX=0; kickV=0; }
+
+  /* while she speaks, the head moves a little with the mouth */
+  if(speaking) kickX += (vis.h-0.35)*dt*0.22;
 
   /* blink: only when there is a closed-eye sheet to fade to */
   if(images.eyeClosed){
