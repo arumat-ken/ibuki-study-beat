@@ -161,6 +161,8 @@ dl.rows{display:flex;flex-direction:column;margin:0}
   word-break:break-word;color:var(--ink-2);
 }
 .check{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2)}
+/* not [hidden]: Safari will not open a picker for a display:none input */
+.offscreen{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px}
 .setup{display:flex;flex-direction:column;gap:9px}
 .slider{display:flex;align-items:center;gap:10px}
 .slider input{flex:1}
@@ -218,7 +220,8 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
           <div class="bar" id="tryrow"></div>
           <div class="slider"><span class="hint" style="min-width:64px">口の大きさ</span><input type="range" id="mwidth" min="16" max="200" value="70"></div>
           <div class="slider"><span class="hint" style="min-width:64px">隠す範囲</span><input type="range" id="mcover" min="12" max="240" value="56"></div>
-          <input type="file" id="imgfile" accept="image/*" hidden>
+          <input type="file" id="imgfile" accept="image/*" class="offscreen">
+          <label class="check"><input type="checkbox" id="showbands"> 目と眉の帯を表示</label>
         </div>
       </section>
 
@@ -324,7 +327,7 @@ function skinRGBA(a){ return 'rgba('+SKIN.r+','+SKIN.g+','+SKIN.b+','+a+')'; }
 var calibrating=false;
 
 /* eyes drive both the eye band and the brow band above it */
-var eyes={lx:0.40,ly:0.42,rx:0.60,ry:0.42};
+var eyes={lx:0.40,ly:0.42,rx:0.60,ry:0.42}, eyesSet=false;
 var layerCache={};                          /* slot -> masked region canvas */
 
 /* what is showing now, and what it is easing towards */
@@ -335,8 +338,13 @@ var browAmt=0, eyeAmt=0, tearWant=0, tearAmt=0, emoK=0;
 /* blink */
 var blinkAmt=0, blinkPhase=-1, nextBlink=2.5;
 
+var LABEL={}; SLOTS.forEach(function(x){ LABEL[x.k]=x.label; });
 function setExpression(k,strength,tears){
   var e=EMO[k]||EMO.neutral;
+  var miss=[];
+  if(e.brow&&!images[e.brow]) miss.push(LABEL[e.brow]);
+  if(e.eye &&!images[e.eye ]) miss.push(LABEL[e.eye]);
+  if(miss.length) sysLine('その表情には「'+miss.join('」と「')+'」の絵が要ります。まだ入っていないので顔は変わりません。');
   emoK = (typeof strength==='number') ? Math.max(0,Math.min(1,strength)) : e.k;
   wantBrow = (e.brow&&images[e.brow]) ? e.brow : null;
   wantEye  = (e.eye &&images[e.eye ]) ? e.eye  : null;
@@ -349,11 +357,11 @@ function setExpression(k,strength,tears){
    they must not overlap or the upper layer re-imposes the other's feature. */
 function eyeRegion(){
   var cx=(eyes.lx+eyes.rx)/2, cy=(eyes.ly+eyes.ry)/2, sp=Math.abs(eyes.rx-eyes.lx);
-  return {x:cx-sp*0.95, y:cy-sp*0.26, w:sp*1.90, h:sp*0.58};
+  return {x:cx-sp*0.95, y:cy-sp*0.24, w:sp*1.90, h:sp*0.56};
 }
 function browRegion(){
   var cx=(eyes.lx+eyes.rx)/2, cy=(eyes.ly+eyes.ry)/2, sp=Math.abs(eyes.rx-eyes.lx);
-  return {x:cx-sp*0.95, y:cy-sp*0.82, w:sp*1.90, h:sp*0.56};
+  return {x:cx-sp*0.95, y:cy-sp*0.84, w:sp*1.90, h:sp*0.60};
 }
 
 var VISEME={
@@ -370,6 +378,7 @@ SLOTS.forEach(function(sl){
   var sm=document.createElement('small'); sm.textContent='未設定'; b.appendChild(sm);
   b.addEventListener('click',function(){
     pickingSlot=sl.k;
+    rlog('スロットを押した: '+sl.label);
     document.getElementById('imgfile').click();
   });
   slotsEl.appendChild(b); slotBtns[sl.k]={btn:b,sub:sm};
@@ -401,7 +410,10 @@ function loadStored(){
     if(oldBlink && !localStorage.getItem('mio.img.eyeClosed')){
       try{ localStorage.setItem('mio.img.eyeClosed',oldBlink); localStorage.removeItem('mio.img.blink'); }catch(e){}
     }
-    try{ var ey=localStorage.getItem('mio.eyes'); if(ey) eyes=JSON.parse(ey); }catch(e){}
+    try{
+      var ey=localStorage.getItem('mio.eyes');
+      if(ey){ eyes=JSON.parse(ey); eyesSet=localStorage.getItem('mio.eyesSet')==='1'; }
+    }catch(e){}
     SLOTS.forEach(function(sl){
       try{
         var a=localStorage.getItem('mio.align.'+sl.k);
@@ -427,6 +439,10 @@ function setSlotImage(k,dataUrl,persist){
       rebuildLayers();
     }else{
       var fit=alignSheet(k);
+      if(k==='eyeClosed' && !eyesSet && autoEyes()){
+        rebuildLayers();
+        sysLine('閉じた目の絵から、目の位置を自動で割り出しました。ずれていたら「目の位置を合わせる」で直せます。');
+      }
       buildLayer(k);
       /* a large residual means it is a different picture, not a different face */
       if(fit>26){
@@ -498,6 +514,40 @@ function alignSheet(k){
   try{ localStorage.setItem('mio.align.'+k,JSON.stringify(aligns[k])); }catch(e){}
   rlog('位置合わせ '+k+' '+(performance.now()-t0).toFixed(0)+'ms / 倍率'+best.s.toFixed(2)+' 残差'+best.c.toFixed(1));
   return best.c;
+}
+
+function greyAligned(k,N){
+  var im=images[k], a=aligns[k]||{dx:0,dy:0,s:1};
+  var c=document.createElement('canvas'); c.width=N; c.height=N;
+  var g=c.getContext('2d');
+  var w=N*a.s, h=N*a.s;
+  g.drawImage(im, a.dx*N+(N-w)/2, a.dy*N+(N-h)/2, w, h);
+  var d=g.getImageData(0,0,N,N).data, out=new Float32Array(N*N);
+  for(var i=0,j=0;j<out.length;j++,i+=4) out[j]=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+  return out;
+}
+
+/* The closed-eye sheet differs from the neutral one almost only at the eyes,
+   so the difference map locates them without asking anyone to tap. */
+function autoEyes(){
+  if(!images.base||!images.eyeClosed) return false;
+  var N=96, A=greyOf(images.base,N), B=greyAligned('eyeClosed',N);
+  var diff=new Float32Array(N*N), max=0, i;
+  for(i=0;i<diff.length;i++){ diff[i]=Math.abs(A[i]-B[i]); if(diff[i]>max) max=diff[i]; }
+  if(max<18) return false;                       /* the sheets barely differ */
+  var thr=max*0.45, L={x:0,y:0,n:0}, R={x:0,y:0,n:0}, x, y;
+  for(y=0;y<N;y++) for(x=0;x<N;x++){
+    if(diff[y*N+x]<thr) continue;
+    var t = x<N/2 ? L : R;
+    t.x+=x; t.y+=y; t.n++;
+  }
+  if(L.n<8||R.n<8) return false;
+  var lx=L.x/L.n/N, ly=L.y/L.n/N, rx=R.x/R.n/N, ry=R.y/R.n/N;
+  if(rx-lx<0.06||rx-lx>0.55) return false;       /* not a plausible pair of eyes */
+  eyes={lx:lx,ly:ly,rx:rx,ry:ry};
+  try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes)); }catch(e){}
+  rlog('目の位置を自動検出: 間隔'+((rx-lx)*100).toFixed(1)+'%');
+  return true;
 }
 
 function baseCtx(){
@@ -572,7 +622,8 @@ function draw(force){
   var W=canvas.width, H=canvas.height;
   var key=[Math.round(vis.w*100),Math.round(vis.h*100),Math.round(breath*400),
            calibrating,showBrow,showEye,Math.round(browAmt*50),Math.round(eyeAmt*50),
-           Math.round(blinkAmt*40),Math.round(tearAmt*50),tearAmt>0.01?Math.round(tsec*20):0].join(',');
+           Math.round(blinkAmt*40),Math.round(tearAmt*50),tearAmt>0.01?Math.round(tsec*20):0,
+           document.getElementById('showbands').checked?1:0].join(',');
   if(!force && key===lastDraw) return;
   lastDraw=key;
 
@@ -594,6 +645,17 @@ function draw(force){
     fx.restore();
   }else{
     drawStandIn(W,H);
+  }
+  if(document.getElementById('showbands').checked && images.base){
+    var sc3=Math.min(W/images.base.width,H/images.base.height);
+    var iw3=images.base.width*sc3, ih3=images.base.height*sc3;
+    var ox3=(W-iw3)/2, oy3=(H-ih3)/2;
+    [[browRegion(),'rgba(216,182,118,.9)'],[eyeRegion(),'rgba(127,176,138,.9)']].forEach(function(pair){
+      var r=pair[0];
+      fx.strokeStyle=pair[1]; fx.lineWidth=Math.max(1,W*0.004); fx.setLineDash([6,5]);
+      fx.strokeRect(ox3+r.x*iw3, oy3+r.y*ih3, r.w*iw3, r.h*ih3);
+    });
+    fx.setLineDash([]);
   }
   if(calibrating){
     var dp=(window.devicePixelRatio||1);
@@ -1177,8 +1239,8 @@ typed.addEventListener('input',armAutoSend);
 /* ---- portrait + mouth calibration ---- */
 document.getElementById('imgfile').addEventListener('change',function(e){
   var f=e.target.files&&e.target.files[0], slot=pickingSlot;
-  e.target.value='';                       /* so the same file can be re-picked */
-  if(!f) return;
+  rlog('ファイル選択: '+(f?(f.name+' '+Math.round(f.size/1024)+'KB'):'なし'));
+  if(!f){ e.target.value=''; return; }
   var fr=new FileReader();
   fr.onload=function(){
     /* downscale before storing: seven full-size photos will not fit in
@@ -1190,6 +1252,7 @@ document.getElementById('imgfile').addEventListener('change',function(e){
       c.width=Math.round(img.width*sc); c.height=Math.round(img.height*sc);
       c.getContext('2d').drawImage(img,0,0,c.width,c.height);
       setSlotImage(slot,c.toDataURL('image/jpeg',0.85),true);
+      document.getElementById('imgfile').value='';   /* so the same file re-picks */
       if(slot==='base'){
         sysLine('通常の絵を読み込みました。「口の位置を合わせる」で口の中心をタップしてください。隠す範囲は自動で合わせます。');
       }else{
@@ -1233,8 +1296,9 @@ canvas.addEventListener('click',function(e){
     if(nx2<0||nx2>1||ny2<0||ny2>1) return;
     if(eyeStep===0){ eyes.lx=nx2; eyes.ly=ny2; eyeStep=1; sysLine('次に右目の中心をタップしてください。'); }
     else{
-      eyes.rx=nx2; eyes.ry=ny2; eyeStep=0; calibrating=false;
-      try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes)); }catch(e2){}
+      eyes.rx=nx2; eyes.ry=ny2; eyeStep=0; calibrating=false; eyesSet=true;
+      try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes));
+           localStorage.setItem('mio.eyesSet','1'); }catch(e2){}
       rebuildLayers();
       sysLine('目と眉の範囲を覚えました。');
     }
@@ -1256,6 +1320,7 @@ canvas.addEventListener('click',function(e){
 document.getElementById('mwidth').addEventListener('input',function(e){
   mouth.w=+e.target.value; store(); draw(true);
 });
+document.getElementById('showbands').addEventListener('change',function(){ draw(true); });
 document.getElementById('mcover').addEventListener('input',function(e){
   mouth.cover=+e.target.value; store(); sampleSkin(); draw(true);
 });
