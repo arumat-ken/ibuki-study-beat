@@ -575,46 +575,54 @@ function sampleSkin(){
    than the surrounding skin are the lip line; the 94th percentile of their
    distance from the centre ignores stray specks. */
 function autoCover(){
+  var fail=function(why){
+    rlog('口の測定に失敗: '+why);
+    sysLine('口の大きさを自動で測れませんでした（'+why+'）。「隠す範囲」のつまみで手で合わせてください。');
+    return false;
+  };
   try{
-    var b=baseCtx(); if(!b) return;
+    var b=baseCtx(); if(!b) return false;
     var img=b.img;
     var mx=Math.round(mouth.x*img.width), my=Math.round(mouth.y*img.height);
-    var rx=Math.round(img.width*0.15), ry=Math.round(img.height*0.07);
+    var rx=Math.round(img.width*0.11), ry=Math.round(img.height*0.05);
     var x0=Math.max(0,mx-rx), y0=Math.max(0,my-ry);
     var x1=Math.min(img.width,mx+rx), y1=Math.min(img.height,my+ry);
-    var W=x1-x0, H=y1-y0; if(W<8||H<8) return;
-    var d=b.g.getImageData(x0,y0,W,H).data, ring=[], x, y, i, L;
+    var W=x1-x0, H=y1-y0; if(W<8||H<8) return fail('範囲が取れない');
+    var d=b.g.getImageData(x0,y0,W,H).data, ring=[], x, y, i, L, minL=255;
     for(y=0;y<H;y++) for(x=0;x<W;x++){
-      if(x<W*0.08||x>W*0.92||y<H*0.10||y>H*0.90){
-        i=(y*W+x)*4; ring.push(0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]);
-      }
+      i=(y*W+x)*4; L=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      if(L<minL) minL=L;
+      if(x<W*0.08||x>W*0.92||y<H*0.12||y>H*0.88) ring.push(L);
     }
-    if(ring.length<60) return;
+    if(ring.length<60) return fail('範囲が狭すぎる');
     ring.sort(function(a,b2){return a-b2;});
     var skinL=ring[Math.floor(ring.length*0.6)];
+    /* Adapt to the picture's own contrast. A fixed threshold treats ordinary
+       soft shading on an illustrated cheek as if it were the lip line. */
+    if(skinL-minL<25) return fail('口らしい暗さが見当たらない');
+    var thr=skinL-(skinL-minL)*0.50;
     var dxs=[], dys=[];
     for(y=0;y<H;y++) for(x=0;x<W;x++){
       i=(y*W+x)*4; L=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
-      if(skinL-L>26){ dxs.push(Math.abs(x0+x-mx)); dys.push(Math.abs(y0+y-my)); }
+      if(L<thr){ dxs.push(Math.abs(x0+x-mx)); dys.push(Math.abs(y0+y-my)); }
     }
-    if(dxs.length<40) return;
+    if(dxs.length<30) return fail('暗い点が少なすぎる');
     var num=function(a,b2){return a-b2;};
     dxs.sort(num); dys.sort(num);
-    var px=dxs[Math.floor(dxs.length*0.94)], py=dys[Math.floor(dys.length*0.94)];
-    /* 1.65 puts the measured extent inside the patch's opaque core (0.74) */
-    var want=Math.max(px, py/0.66)*1.65;
-    mouth.cover=Math.round(Math.min(img.width*0.24, Math.max(16, want)));
+    var px=dxs[Math.floor(dxs.length*0.90)], py=dys[Math.floor(dys.length*0.90)];
+    /* The 90th percentile of a filled shape sits inside its true half-width,
+       so 1.85 is what actually lands the real edge inside the opaque core. */
+    var want=Math.max(px, py/0.66)*1.85;
+    /* Saturating at the cap used to pass silently, which put a patch a quarter
+       of the picture wide over her face. Out of range is a failed measurement. */
+    if(want>img.width*0.17) return fail('測った口が大きすぎる。口以外を拾っている');
+    if(want<img.width*0.02) return fail('測った口が小さすぎる');
+    mouth.cover=Math.round(want);
     document.getElementById('mcover').value=mouth.cover;
+    rlog('口の測定: 半幅'+px+'px → 隠す範囲'+mouth.cover+'px（画像幅の'+(mouth.cover/img.width*100).toFixed(1)+'%）');
     store();
-  }catch(e){}
-}
-
-function fitCanvas(){
-  var r=canvas.getBoundingClientRect();
-  var dpr=Math.min(window.devicePixelRatio||1,2);
-  canvas.width=Math.max(1,Math.round(r.width*dpr));
-  canvas.height=Math.max(1,Math.round(r.height*dpr));
-  draw(true);
+    return true;
+  }catch(e){ return fail(e.message); }
 }
 
 var breath=0, tsec=0, lastDraw='';
