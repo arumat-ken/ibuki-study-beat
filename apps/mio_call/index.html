@@ -295,6 +295,7 @@ var SLOTS=[
   {k:'surprised', label:'おどろき'}
 ];
 var images={};                              /* slot -> Image */
+var aligns={};                              /* slot -> {dx,dy,s} in image fractions */
 /* `w` sizes the drawn mouth, `cover` the patch that hides the drawn-on one.
    They were the same number, so shrinking the mouth uncovered the original. */
 var mouth={x:0.5,y:0.72,w:70,cover:56};
@@ -353,6 +354,10 @@ function loadStored(){
       try{ localStorage.setItem('mio.img.base',legacy); localStorage.removeItem('mio.portrait'); }catch(e){}
     }
     SLOTS.forEach(function(sl){
+      try{
+        var a=localStorage.getItem('mio.align.'+sl.k);
+        if(a) aligns[sl.k]=JSON.parse(a);
+      }catch(e){}
       var d=localStorage.getItem('mio.img.'+sl.k);
       if(d) setSlotImage(sl.k,d,false);
     });
@@ -367,7 +372,19 @@ function setSlotImage(k,dataUrl,persist){
   img.onload=function(){
     images[k]=img;
     markSlot(k,img.width+'×'+img.height,true);
-    if(k==='base'){ sampleSkin(); setDiag('顔','読み込み済み '+img.width+'×'+img.height,'ok'); }
+    if(k==='base'){
+      sampleSkin(); setDiag('顔','読み込み済み '+img.width+'×'+img.height,'ok');
+      Object.keys(images).forEach(function(o){ if(o!=='base') alignSheet(o); });
+    }else{
+      var fit=alignSheet(k);
+      /* a large residual means it is a different picture, not a different face */
+      if(fit>26){
+        markSlot(k,'別の絵に見えます',true);
+        sysLine('その絵は「通常」と構図が違うようです。同じ顔・同じ大きさで作った絵でないと、重ねたときにずれます。');
+      }else{
+        markSlot(k,'ずれ '+(Math.abs(aligns[k].dx)*100).toFixed(1)+'% / 倍率 '+aligns[k].s.toFixed(2),true);
+      }
+    }
     setDiag('表情の絵', Object.keys(images).length+' / '+SLOTS.length+' 枚');
     if(persist){
       try{ localStorage.setItem('mio.img.'+k,dataUrl); }
@@ -381,6 +398,51 @@ function setSlotImage(k,dataUrl,persist){
 
 /* average the two cheek pixels either side of the mouth, so the patch that
    hides her drawn mouth matches her actual skin instead of a guess */
+/* Sheets come back from the image model at slightly different framing, and a
+   cross-fade between two faces that are not registered reads as a jolt. Find
+   the shift and scale that minimise the difference against the neutral sheet:
+   coarse pass first, then a finer one around the winner. */
+function greyOf(im,N){
+  var c=document.createElement('canvas'); c.width=N; c.height=N;
+  var g=c.getContext('2d'); g.drawImage(im,0,0,N,N);
+  var d=g.getImageData(0,0,N,N).data, out=new Float32Array(N*N);
+  for(var i=0,j=0;j<out.length;j++,i+=4) out[j]=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+  return out;
+}
+function cost(A,B,N,dx,dy,sc){
+  var half=N/2, sum=0, n=0, x, y, sx, sy;
+  for(y=0;y<N;y+=2) for(x=0;x<N;x+=2){
+    sx=Math.round((x-half-dx)/sc+half);
+    sy=Math.round((y-half-dy)/sc+half);
+    if(sx<0||sy<0||sx>=N||sy>=N) continue;
+    sum+=Math.abs(A[y*N+x]-B[sy*N+sx]); n++;
+  }
+  return n? sum/n : 1e9;
+}
+function alignSheet(k){
+  var base=images.base, img=images[k];
+  if(!base||!img||k==='base'){ aligns[k]={dx:0,dy:0,s:1}; return; }
+  var best={dx:0,dy:0,s:1,c:1e9}, N, A, B, dx, dy, si, sc, c;
+  var scales, range, step;
+  [[40,6,2,[0.94,1.00,1.06]],[72,4,1,[-0.03,0,0.03]]].forEach(function(stage,pass){
+    N=stage[0]; range=stage[1]; step=stage[2];
+    scales = pass===0 ? stage[3] : stage[3].map(function(d){ return best.s+d; });
+    A=greyOf(base,N); B=greyOf(img,N);
+    var cx=Math.round(best.dx*N), cy=Math.round(best.dy*N), found={c:1e9};
+    for(si=0;si<scales.length;si++){
+      sc=scales[si];
+      for(dy=cy-range;dy<=cy+range;dy+=step) for(dx=cx-range;dx<=cx+range;dx+=step){
+        c=cost(A,B,N,dx,dy,sc);
+        if(c<found.c) found={dx:dx/N,dy:dy/N,s:sc,c:c};
+      }
+    }
+    best=found;
+  });
+  aligns[k]={dx:best.dx,dy:best.dy,s:best.s};
+  try{ localStorage.setItem('mio.align.'+k,JSON.stringify(aligns[k])); }catch(e){}
+  return best.c;
+}
+
 function baseCtx(){
   var img=images.base; if(!img) return null;
   var c=document.createElement('canvas'); c.width=img.width; c.height=img.height;
@@ -467,10 +529,10 @@ function draw(force){
     fx.drawImage(base,ox,oy,iw,ih);
     /* the expression sheets share this framing, so they lay straight over it */
     if(exprFade>0.01 && images[exprShown] && exprShown!=='base'){
-      fx.globalAlpha=exprFade; fx.drawImage(images[exprShown],ox,oy,iw,ih); fx.globalAlpha=1;
+      fx.globalAlpha=exprFade; drawSheet(exprShown,ox,oy,iw,ih); fx.globalAlpha=1;
     }
     if(blinkAmt>0.01 && images.blink){
-      fx.globalAlpha=blinkAmt; fx.drawImage(images.blink,ox,oy,iw,ih); fx.globalAlpha=1;
+      fx.globalAlpha=blinkAmt; drawSheet('blink',ox,oy,iw,ih); fx.globalAlpha=1;
     }
     drawMouth(ox+mouth.x*iw, oy+mouth.y*ih, mouth.w*scale, mouth.cover*scale);
     fx.restore();
@@ -484,6 +546,12 @@ function draw(force){
     fx.textBaseline='middle';
     fx.fillText('口の中心をタップしてください', 10*(window.devicePixelRatio||1), 13*(window.devicePixelRatio||1));
   }
+}
+
+function drawSheet(k,ox,oy,iw,ih){
+  var im=images[k], a=aligns[k]||{dx:0,dy:0,s:1};
+  var w=iw*a.s, h=ih*a.s;
+  fx.drawImage(im, ox+a.dx*iw+(iw-w)/2, oy+a.dy*ih+(ih-h)/2, w, h);
 }
 
 function drawMouth(cx,cy,w,cover){
