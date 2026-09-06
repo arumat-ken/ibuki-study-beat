@@ -186,10 +186,11 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
         <button class="btn" id="hangup" disabled>終了</button>
       </div>
       <div class="row">
-        <input type="text" id="typed" placeholder="声が使えないときは、ここに書いて送る" autocomplete="off">
+        <input type="text" id="typed" placeholder="ここに話しかける" autocomplete="off">
         <button class="btn" id="send">送る</button>
       </div>
-      <p class="hint">マイクの音声は端末の中だけで文字にします。録音はどこにも保存されません。</p>
+      <p class="hint" id="dictate"></p>
+      <label class="check"><input type="checkbox" id="autosend" checked> 入力が止まったら自動で送る</label>
     </div>
 
     <div class="side">
@@ -253,6 +254,7 @@ function setDiag(k,v,st){
 /* ================= transcript ================= */
 var logEl=document.getElementById('log'), seeded=true;
 function addTurn(who,text,cls){
+  lastSys='';
   if(seeded){ logEl.innerHTML=''; seeded=false; }
   var li=document.createElement('li'); li.className='turn '+(cls||'');
   var w=document.createElement('div'); w.className='who'; w.textContent=who;
@@ -261,7 +263,10 @@ function addTurn(who,text,cls){
   logEl.scrollTop=logEl.scrollHeight;
   return p;
 }
+var lastSys='';
 function sysLine(text){
+  if(text===lastSys) return;   /* the same advice four times is noise */
+  lastSys=text;
   if(seeded){ logEl.innerHTML=''; seeded=false; }
   var li=document.createElement('li'); li.className='turn sys';
   var p=document.createElement('p'); p.className='said'; p.textContent=text;
@@ -539,8 +544,31 @@ function selfText(t,dim){
    user's refusal does. Measuring the input level tells the two apart —
    a moving bar means the mic reaches us and only recognition is at fault. */
 var levelBar=document.getElementById('levelbar');
+/* Distinguishing a refusal from a frame that never had the permission:
+   a refusal leaves permissions.query at "denied"; a frame policy block
+   leaves it at "prompt" while getUserMedia still fails at once. */
+function probePermission(){
+  try{
+    if(document.featurePolicy&&document.featurePolicy.allowsFeature){
+      var ok=document.featurePolicy.allowsFeature('microphone');
+      setDiag('枠のマイク許可', ok?'あり':'なし（枠が塞いでいる）', ok?'ok':'bad');
+      rlog('featurePolicy microphone = '+ok);
+    }
+  }catch(e){}
+  try{
+    if(navigator.permissions&&navigator.permissions.query){
+      navigator.permissions.query({name:'microphone'}).then(function(st){
+        setDiag('ブラウザの設定', st.state==='granted'?'許可':(st.state==='denied'?'拒否':'未設定'),
+                st.state==='denied'?'bad':(st.state==='granted'?'ok':''));
+        rlog('permissions.query microphone = '+st.state);
+      }).catch(function(){ rlog('permissions.query は使えない'); });
+    }
+  }catch(e){}
+}
+
 document.getElementById('miccheck').addEventListener('click',function(){
   var btn=this;
+  probePermission();
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
     setDiag('マイク','この端末では開けない','bad'); rlog('getUserMedia が無い'); return;
   }
@@ -576,9 +604,11 @@ document.getElementById('miccheck').addEventListener('click',function(){
     btn.disabled=false; btn.textContent='マイクを確認';
     setDiag('マイク', err.name, 'bad');
     rlog('getUserMedia 失敗: '+err.name+' / '+(err.message||''));
-    sysLine(err.name==='NotAllowedError'
-      ? 'マイクが許可されませんでした。Safari の設定でこのサイトのマイクを「許可」にするか、確認ダイアログで許可を選んでください。'
-      : (err.name==='NotFoundError' ? 'マイクが見つかりません。' : 'マイクを開けませんでした（'+err.name+'）。'));
+    if(err.name==='NotAllowedError'){
+      goDictation('この画面の枠にはマイクが渡っていないため、ページからは音を拾えません。');
+    }else{
+      sysLine(err.name==='NotFoundError' ? 'マイクが見つかりません。' : 'マイクを開けませんでした（'+err.name+'）。');
+    }
   });
 });
 
@@ -599,9 +629,20 @@ function beginListen(){
   setTimeout(function(){ pendingListen=false; startListening(); }, wasSpeaking?350:0);
 }
 
+var micBlocked=false;
+function goDictation(reason){
+  if(micBlocked) return;
+  micBlocked=true;
+  var cb=document.getElementById('autolisten');
+  cb.checked=false; cb.disabled=true;
+  setDiag('聞き取りの方法','端末の音声入力を使う');
+  sysLine(reason+'かわりに、端末そのものの音声入力が使えます。'+dictateHow()+'話した内容が下の欄に入り、そのまま送られます。');
+  document.getElementById('typed').focus();
+}
+
 var REC_ERR={
-  'not-allowed':'マイクが許可されていません。「マイクを確認」を押して許可してください。',
-  'service-not-allowed':'この画面では音声認識が許可されていません。「マイクを確認」の結果を教えてください。',
+  'not-allowed':'',
+  'service-not-allowed':'',
   'audio-capture':'マイクを開けませんでした。他のアプリが使っていないか確認してください。',
   'network':'音声認識の通信に失敗しました。回線を確認してもう一度どうぞ。',
   'language-not-supported':'この端末の音声認識が日本語に対応していません。',
@@ -648,6 +689,10 @@ function startListening(){
         selfText(said); ask(said); return;
       }
       setState('idle');
+      if(errCode==='not-allowed'||errCode==='service-not-allowed'){
+        goDictation('この画面の枠にはマイクが渡っていないため、ページからは声を拾えません。');
+        return;
+      }
       var msg=REC_ERR[errCode];
       if(msg){ sysLine(msg); return; }
       /* nothing said: try once more, then stop rather than loop */
@@ -719,6 +764,7 @@ function ask(said){
     setDiag('最後の感情',emo);
     busy=false;
     speak(reply,kana,function(){
+      if(micBlocked){ typed.focus(); return; }
       if(started && autoListen() && !listening) beginListen();
     });
   })
@@ -764,14 +810,35 @@ hangBtn.addEventListener('click',function(){
 });
 
 var typed=document.getElementById('typed');
+var isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||
+          (/Macintosh/.test(navigator.userAgent)&&(navigator.maxTouchPoints||0)>1);
+var isMac=/Macintosh/.test(navigator.userAgent)&&!isIOS;
+function dictateHow(){
+  if(isIOS) return '入力欄をタップして、キーボードのマイクの絵を押してから話してください。';
+  if(isMac) return '入力欄をクリックして、fn キーを2回押す（または「編集」メニューの「音声入力を開始」）と話せます。';
+  return 'お使いの端末の音声入力機能をお使いください。';
+}
+document.getElementById('dictate').textContent='声で入れられます。'+dictateHow();
+
+var sendTimer=null;
+function armAutoSend(){
+  clearTimeout(sendTimer);
+  if(!document.getElementById('autosend').checked) return;
+  if(!typed.value.trim()) return;
+  /* dictation drops text in without a "finished" event, so a pause is the
+     only signal we get; any further input restarts the wait */
+  sendTimer=setTimeout(sendTyped,2200);
+}
 function sendTyped(){
+  clearTimeout(sendTimer);
   var t=typed.value.trim(); if(!t) return;
   typed.value='';
   if(!started){ started=true; hangBtn.disabled=false; talkBtn.textContent='話す'; }
   ask(t);
 }
 document.getElementById('send').addEventListener('click',sendTyped);
-typed.addEventListener('keydown',function(e){ if(e.key==='Enter') sendTyped(); });
+typed.addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); sendTyped(); } });
+typed.addEventListener('input',armAutoSend);
 
 /* ---- portrait + mouth calibration ---- */
 document.getElementById('pickimg').addEventListener('click',function(){
@@ -844,6 +911,7 @@ setDiag('マイク','未確認');
 setDiag('頭脳','確認中…');
 setDiag('顔','仮の顔');
 rlog('起動 / SpeechRecognition '+(SR?'あり':'なし')+' / '+((window.self!==window.top)?'ビューア内':'直接'));
+probePermission();
 if(!SR) sysLine('この端末の Safari は音声認識に対応していません。下の入力欄から文字で送ってください。');
 loadStored();
 fitCanvas();
