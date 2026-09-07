@@ -871,9 +871,19 @@ function autoEyes(force){
    as much. Both must hold — a genuine sheet fails at most one. */
 function shiftLooking(k,rp){
   if(rp.peakY==null) return false;
-  var reg = USE[k]==='brow' ? browRegion() : eyeRegion();
-  var pad = reg.h*0.15;
-  if(rp.peakY >= reg.y-pad && rp.peakY <= reg.y+reg.h+pad) return false;
+  /* Outside its OWN band was too strict, and it failed a good sheet. Asked
+     for one feeling, the generator redraws the whole eye-and-brow area, so a
+     sheet's strongest change lands in the neighbouring band often enough to
+     be normal: of six sheets from one run, the brow band and the eye band
+     were within 1.35x of each other on four, and a teary-eye sheet peaked up
+     in the brow band while being a perfectly good sheet.
+     What an offset picture does instead is peak at neither feature — at the
+     frame edge, or wherever the strongest edge happens to be. The 1px-shifted
+     control peaks at y0.992 with the bands at 0.232-0.337. So require the
+     peak to be away from BOTH bands. */
+  var br=browRegion(), er=eyeRegion();
+  function near(reg){ var pad=reg.h*0.15; return rp.peakY>=reg.y-pad && rp.peakY<=reg.y+reg.h+pad; }
+  if(near(br)||near(er)) return false;
   var own = USE[k]==='brow' ? rp.browBand : rp.eyeBand;
   var other = USE[k]==='brow' ? rp.eyeBand : rp.browBand;
   return own < other*1.35;
