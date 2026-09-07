@@ -183,6 +183,16 @@ details.tools .panel{border:0;background:transparent;padding:0 15px 15px}
 .slider{display:flex;align-items:center;gap:10px}
 .slider input{flex:1}
 .mini{border:1px solid var(--line-strong);background:transparent;padding:7px 13px;border-radius:9px;font-size:12.5px}
+/* These had no rule of their own, so they kept the browser's default button
+   surface while `color:inherit` handed them the theme's ink. In dark mode
+   that is near-white lettering on a near-white box: four blank tablets. */
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{
+  border:1px solid var(--line-strong); background:var(--panel); color:var(--ink);
+  padding:8px 13px; border-radius:999px; font-size:13px; line-height:1.3;
+}
+.chip:hover{border-color:var(--accent); color:var(--accent)}
+.chip:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
 
 footer{border-top:1px solid var(--line);padding-top:13px;color:var(--ink-3);font-size:12.5px;display:flex;flex-direction:column;gap:4px}
 footer p{margin:0}
@@ -236,7 +246,8 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
           <div class="slots" id="slots"></div>
           <p class="hint" id="setupmsg" style="margin:0;color:var(--accent)"></p>
           <p class="hint" style="margin:0">枠を押して絵を選ぶと、その下に判定が出ます。<b>「変化◯ / 集中度◯」なら合格</b>、「ほぼ同じ絵」ならもう一度作り直しです。<br>
-          <b>保存ボタンはありません。</b>選んだ時点でこの端末に保存され、次に開いたときもそのまま残ります。<b>「判定をまとめてコピー」</b>を押すと、8枚ぶんの判定が文章になるので、それを Claude に貼れば見てもらえます。</p>
+          <b>保存ボタンはありません。</b>選んだ時点で自動的に保存されます。<b>ただし、この画面はブラウザから「消していい保存データ」と見なされる位置で動いているため、端末側の絵が予告なく消えることがあります。</b>そのため同じ絵の控えを端末の外にも置いています（「声の状態」の<b>絵の控え</b>を参照）。消えていれば次に開いたときに控えから戻ります。<br>
+          <b>「判定をまとめてコピー」</b>を押すと、8枚ぶんの判定が文章になるので、それを Claude に貼れば見てもらえます。</p>
           <div class="bar">
             <button class="mini" id="calib">口の位置を合わせる</button>
             <button class="mini" id="calibEyes">目の位置を合わせる</button>
@@ -1704,7 +1715,15 @@ function probePermission(){
   try{
     if(navigator.permissions&&navigator.permissions.query){
       navigator.permissions.query({name:'microphone'}).then(function(st){
-        setDiag('ブラウザの設定', st.state==='granted'?'許可':(st.state==='denied'?'拒否':'未設定'),
+        /* A frame the microphone was never delegated to reports "denied"
+           here, exactly as a refusal by the viewer does. Calling that
+           "拒否" sends someone hunting through their browser settings for
+           a permission they never refused. Say which one it is. */
+        var framed = (window.self!==window.top);
+        var label = st.state==='granted' ? '許可'
+                  : st.state==='denied' ? (framed?'この画面の枠には渡っていません':'拒否')
+                  : '未設定';
+        setDiag('ブラウザの設定', label,
                 st.state==='denied'?'bad':(st.state==='granted'?'ok':''));
         rlog('permissions.query microphone = '+st.state);
       }).catch(function(){ rlog('permissions.query は使えない'); });
@@ -1997,17 +2016,33 @@ function handsFreeHow(){
 }
 var handsFree=false;
 try{ handsFree = localStorage.getItem('mio.handsfree')==='1'; }catch(e){}
+/* Ticking the box turned no lights on: it swapped a paragraph and changed
+   what the page does with text that arrives, neither of which is visible.
+   The part the page cannot do — switching the feature on in the operating
+   system — is also the part that decides whether any of it works. So lay the
+   steps out, and report the one thing the page CAN see: whether words are
+   arriving. That turns the switch into a test with an answer. */
 function paintDictateLine(){
   var el=document.getElementById('dictate');
   el.innerHTML='';
   var p1=document.createElement('div');
-  p1.innerHTML = handsFree
-    ? '<b>ハンズフリーで話しています。</b>'+handsFreeHow()
-      +'澪が話している間に入った言葉は、彼女自身の声なので捨てます。'
-      +'<b>イヤホンを使うと確実です。</b>'
-    : '声で入れられます。'+dictateHow()
+  if(handsFree){
+    p1.innerHTML =
+      '<b>ずっと聞いてもらう：オン</b><br>'
+      +'<b>①</b> '+handsFreeHow()+'<b>これは端末側の設定で、このアプリからは入れられません。</b><br>'
+      +'<b>②</b> 下の入力欄を一度だけクリックする（以後は触れません）<br>'
+      +'<b>③</b> 何か話しかける<br>'
+      +'<b>状態：</b><span id="hfstate">まだ何も届いていません</span><br>'
+      +'澪が話している間に届いた言葉は、彼女自身の声なので捨てます。<b>イヤホンを使うと確実です。</b>';
+  }else{
+    p1.innerHTML = '声で入れられます。'+dictateHow()
       +'<br><b>毎回押すのが面倒なら、下の「ずっと聞いてもらう」を入れてください。</b>';
+  }
   el.appendChild(p1);
+}
+function hfState(msg){
+  var e=document.getElementById('hfstate');
+  if(e) e.textContent=msg;
 }
 paintDictateLine();
 
@@ -2028,9 +2063,11 @@ function armAutoSend(){
   clearTimeout(sendTimer);
   if(echoWindow()){
     /* her own words, arriving through the microphone */
+    if(handsFree && typed.value.trim()) hfState('澪の声が入ったので捨てました（イヤホンで防げます）');
     typed.value='';
     return;
   }
+  if(handsFree && typed.value.trim()) hfState('聞こえています：「'+typed.value.trim().slice(0,24)+'」');
   if(!document.getElementById('autosend').checked) return;
   if(!typed.value.trim()) return;
   /* dictation drops text in without a "finished" event, so a pause is the
@@ -2041,6 +2078,11 @@ function sendTyped(){
   clearTimeout(sendTimer);
   var t=typed.value.trim(); if(!t) return;
   typed.value='';
+  /* Only the recogniser used to write here, so on a device where the frame
+     never gets the microphone the tile held its placeholder forever — "your
+     voice appears here", and it never did. What was said reaches her the same
+     way whichever route it took; show it. */
+  selfText(t);
   if(!started){ started=true; hangBtn.disabled=false; talkBtn.textContent='話す'; }
   /* Dictation types into whatever holds focus. Sending emptied the box but
      also let focus go, so the next sentence landed nowhere and the viewer had
