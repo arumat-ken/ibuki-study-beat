@@ -163,6 +163,15 @@ dl.rows{display:flex;flex-direction:column;margin:0}
 .check{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-2)}
 /* not [hidden]: Safari will not open a picker for a display:none input */
 .offscreen{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px}
+details.tools{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
+details.tools>summary{
+  list-style:none;cursor:pointer;padding:13px 15px;font-size:12.5px;font-weight:600;
+  display:flex;align-items:center;gap:8px;color:var(--ink-2);
+}
+details.tools>summary::-webkit-details-marker{display:none}
+details.tools>summary::before{content:"▸";color:var(--ink-3);transition:transform .15s}
+details.tools[open]>summary::before{transform:rotate(90deg)}
+details.tools .panel{border:0;background:transparent;padding:0 15px 15px}
 .setup{display:flex;flex-direction:column;gap:9px}
 .slider{display:flex;align-items:center;gap:10px}
 .slider input{flex:1}
@@ -209,11 +218,14 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
         </ul>
       </section>
 
+      <details class="tools">
+        <summary>顔と声の設定</summary>
       <section class="panel">
         <h2>澪の顔</h2>
         <div class="setup">
           <p class="hint" style="margin:0">澪の顔は最初から入っていて、まばたきもします。感情の絵を足すとその表情に変わります。枠を押すと別の絵に差し替えられます（同じ構図・同じ大きさで作ってください）。</p>
           <div class="slots" id="slots"></div>
+          <p class="hint" id="setupmsg" style="margin:0;color:var(--accent)"></p>
           <p class="hint" style="margin:0">枠を押して絵を選ぶと、その下に判定が出ます。<b>「変化◯ / 集中度◯」なら合格</b>、「ほぼ同じ絵」ならもう一度作り直しです。</p>
           <div class="bar">
             <button class="mini" id="calib">口の位置を合わせる</button>
@@ -238,6 +250,7 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
         <div class="level"><i id="levelbar"></i></div>
         <pre class="reclog" id="reclog"></pre>
       </section>
+      </details>
     </div>
   </div>
 
@@ -277,6 +290,14 @@ function addTurn(who,text,cls){
   logEl.scrollTop=logEl.scrollHeight;
   return p;
 }
+/* Setting up the face is not part of the conversation: its messages belong
+   beside the controls, not in the transcript. */
+function setupLine(text){
+  var el=document.getElementById('setupmsg');
+  if(el) el.textContent=text;
+  rlog(text.slice(0,60));
+}
+
 var lastSys='';
 function sysLine(text){
   if(text===lastSys) return;   /* the same advice four times is noise */
@@ -358,7 +379,7 @@ var wantBrow=null, wantEye=null;
 var browAmt=0, eyeAmt=0, tearWant=0, tearAmt=0, emoK=0;
 
 /* pose and mood, all eased so nothing snaps */
-var poseT=0, poseD=0, poseS=1, squint=0, blush=0, breathRate=1;
+var poseT=0, poseD=0, poseS=1, squint=0, blush=0, breathRate=1, attend=0;
 var wantT=0, wantD=0, wantS=1, wantSquint=0, wantBlush=0, wantBreath=1;
 var kickV=0, kickX=0;                 /* the movement a new feeling arrives with */
 
@@ -371,7 +392,7 @@ function setExpression(k,strength,tears){
   var miss=[];
   if(e.brow&&!images[e.brow]) miss.push(LABEL[e.brow]);
   if(e.eye &&!images[e.eye ]) miss.push(LABEL[e.eye]);
-  if(miss.length) sysLine('その表情には「'+miss.join('」と「')+'」の絵が要ります。まだ入っていないので顔は変わりません。');
+  if(miss.length) setupLine('その表情には「'+miss.join('」と「')+'」の絵が要ります。まだ入っていないので顔は変わりません。');
   emoK = (typeof strength==='number') ? Math.max(0,Math.min(1,strength)) : e.k;
   wantBrow = (e.brow&&images[e.brow]) ? e.brow : null;
   wantEye  = (e.eye &&images[e.eye ]) ? e.eye  : null;
@@ -495,7 +516,7 @@ function reviewSheet(k){
   buildLayer(k);
   if(fit>26){
     markSlot(k,'別の絵に見えます',true);
-    sysLine('その絵は「通常」と構図が違うようです。同じ顔・同じ大きさで作った絵でないと、重ねたときにずれます。');
+    setupLine('その絵は「通常」と構図が違うようです。同じ顔・同じ大きさで作った絵でないと、重ねたときにずれます。');
     return;
   }
   var rp=sheetReport(k);
@@ -508,7 +529,7 @@ function reviewSheet(k){
     if(autoEyes(true)){
       rebuildLayers();
       rlog('目の帯が合っていないので測り直した');
-      sysLine('目の帯が目からずれていたので、測り直して合わせました。');
+      setupLine('目の帯が目からずれていたので、測り直して合わせました。');
       reviewSheet(k); return;
     }
   }
@@ -517,13 +538,13 @@ function reviewSheet(k){
      a real change of the band measures around 19. 6 separates them. */
   if(rp.inside<6.0){
     markSlot(k,'ほぼ同じ絵',true);
-    sysLine('その絵は「通常」とほとんど同じです。'+band+'が変わっていないので、表情も変わりません（'+band+'の変化 '+rp.inside.toFixed(1)+'、目安は12以上）。もう一度、'+band+'をはっきり変えて作ってください。');
+    setupLine('その絵は「通常」とほとんど同じです。'+band+'が変わっていないので、表情も変わりません（'+band+'の変化 '+rp.inside.toFixed(1)+'、目安は12以上）。もう一度、'+band+'をはっきり変えて作ってください。');
   }else if(rp.focus<1.8){
     markSlot(k,band+'以外も変化',true);
-    sysLine(band+'の外も同じくらい変わっています（集中度 '+rp.focus.toFixed(1)+'、目安は3以上）。'+band+'だけを変えた絵にしてください。');
+    setupLine(band+'の外も同じくらい変わっています（集中度 '+rp.focus.toFixed(1)+'、目安は3以上）。'+band+'だけを変えた絵にしてください。');
   }else{
     markSlot(k,'変化'+rp.inside.toFixed(0)+' / 集中度'+rp.focus.toFixed(1),true);
-    sysLine(band+'がちゃんと変わっています（'+band+'の変化 '+rp.inside.toFixed(1)+'、集中度 '+rp.focus.toFixed(1)+'）。');
+    setupLine(band+'がちゃんと変わっています（'+band+'の変化 '+rp.inside.toFixed(1)+'、集中度 '+rp.focus.toFixed(1)+'）。');
   }
 }
 
@@ -537,14 +558,14 @@ function setSlotImage(k,dataUrl,persist){
       setDiag('顔','読み込み済み '+img.width+'×'+img.height,'ok');
       /* the neutral face has arrived: judge everything that was waiting on it */
       if(images.eyeClosed && !eyesSet && autoEyes()){
-        sysLine('閉じた目の絵から、目の位置を自動で割り出しました。ずれていたら「目の位置を合わせる」で直せます。');
+        setupLine('閉じた目の絵から、目の位置を自動で割り出しました。ずれていたら「目の位置を合わせる」で直せます。');
       }
       rebuildLayers();
       Object.keys(images).forEach(function(o){ if(o!=='base') reviewSheet(o); });
     }else{
       if(k==='eyeClosed' && images.base && !eyesSet && autoEyes()){
         rebuildLayers();
-        sysLine('閉じた目の絵から、目の位置を自動で割り出しました。ずれていたら「目の位置を合わせる」で直せます。');
+        setupLine('閉じた目の絵から、目の位置を自動で割り出しました。ずれていたら「目の位置を合わせる」で直せます。');
       }
       reviewSheet(k);
     }
@@ -703,7 +724,7 @@ function sampleSkin(){
 function autoCover(){
   var fail=function(why){
     rlog('口の測定に失敗: '+why);
-    sysLine('口の大きさを自動で測れませんでした（'+why+'）。「隠す範囲」のつまみで手で合わせてください。');
+    setupLine('口の大きさを自動で測れませんでした（'+why+'）。「隠す範囲」のつまみで手で合わせてください。');
     return false;
   };
   try{
@@ -790,6 +811,7 @@ function draw(force){
            Math.round(blinkAmt*40),Math.round(tearAmt*50),tearAmt>0.01?Math.round(tsec*20):0,
            Math.round(squint*50),Math.round(blush*50),Math.round(poseT*40),
            Math.round(poseD*3000),Math.round(poseS*400),Math.round(kickX*400),
+           Math.round(attend*4000),
            document.getElementById('showbands').checked?1:0].join(',');
   if(!force && key===lastDraw) return;
   lastDraw=key;
@@ -805,9 +827,9 @@ function draw(force){
        face from the drawn mouth or the layers over it. */
     var pvx=ox+((eyes.lx+eyes.rx)/2)*iw, pvy=oy+((eyes.ly+eyes.ry)/2)*ih;
     fx.save();
-    fx.translate(pvx, pvy+(poseD+kickX*0.012)*ih);
+    fx.translate(pvx, pvy+(poseD+kickX*0.012+attend*0.55)*ih);
     fx.rotate((poseT+kickX*1.2)*Math.PI/180);
-    var zz=poseS*(1+breath*0.004)+kickX*0.006;
+    var zz=poseS*(1+breath*0.004)+kickX*0.006+attend*1.6;
     fx.scale(zz,zz);
     fx.translate(-pvx,-pvy);
     fx.drawImage(base,ox,oy,iw,ih);
@@ -1449,10 +1471,10 @@ document.getElementById('imgfile').addEventListener('change',function(e){
       document.getElementById('imgfile').value='';   /* so the same file re-picks */
       if(slot==='base'){ try{ localStorage.removeItem('mio.calFor'); }catch(e){} }
       if(slot==='base'){
-        sysLine('通常の絵を読み込みました。「口の位置を合わせる」で口の中心をタップしてください。隠す範囲は自動で合わせます。');
+        setupLine('通常の絵を読み込みました。「口の位置を合わせる」で口の中心をタップしてください。隠す範囲は自動で合わせます。');
       }else{
         var lab=''; SLOTS.forEach(function(x){ if(x.k===slot) lab=x.label; });
-        sysLine(lab+'の絵を読み込みました。');
+        setupLine(lab+'の絵を読み込みました。');
       }
     };
     img.onerror=function(){ markSlot(slot,'読めなかった',false); };
@@ -1462,12 +1484,12 @@ document.getElementById('imgfile').addEventListener('change',function(e){
 });
 document.getElementById('calib').addEventListener('click',function(){
   calibrating = calibrating==='mouth' ? false : 'mouth'; draw(true);
-  if(calibrating) sysLine('画面の中の、澪の口の中心をタップしてください。');
+  if(calibrating) setupLine('画面の中の、澪の口の中心をタップしてください。');
 });
 var eyeStep=0;
 document.getElementById('calibEyes').addEventListener('click',function(){
   calibrating = calibrating==='eyes' ? false : 'eyes'; eyeStep=0; draw(true);
-  if(calibrating) sysLine('左目の中心、続けて右目の中心をタップしてください。眉の範囲はそこから決めます。');
+  if(calibrating) setupLine('左目の中心、続けて右目の中心をタップしてください。眉の範囲はそこから決めます。');
 });
 
 /* try each feeling without having to talk her into one */
@@ -1489,13 +1511,13 @@ canvas.addEventListener('click',function(e){
     var nx2=((e.clientX-r2.left)/r2.width*W2-(W2-iw2)/2)/iw2;
     var ny2=((e.clientY-r2.top)/r2.height*H2-(H2-ih2)/2)/ih2;
     if(nx2<0||nx2>1||ny2<0||ny2>1) return;
-    if(eyeStep===0){ eyes.lx=nx2; eyes.ly=ny2; eyeStep=1; sysLine('次に右目の中心をタップしてください。'); }
+    if(eyeStep===0){ eyes.lx=nx2; eyes.ly=ny2; eyeStep=1; setupLine('次に右目の中心をタップしてください。'); }
     else{
       eyes.rx=nx2; eyes.ry=ny2; eyeStep=0; calibrating=false; eyesSet=true;
       try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes));
            localStorage.setItem('mio.eyesSet','1'); }catch(e2){}
       rebuildLayers();
-      sysLine('目と眉の範囲を覚えました。');
+      setupLine('目と眉の範囲を覚えました。');
     }
     draw(true); return;
   }
@@ -1510,7 +1532,7 @@ canvas.addEventListener('click',function(e){
   mouth.x=nx; mouth.y=ny;
   autoCover(); store(); sampleSkin();
   calibrating=false; draw(true);
-  sysLine('口の位置を覚えました。元の口を隠す範囲も測って合わせています。はみ出すときは「隠す範囲」で調整してください。');
+  setupLine('口の位置を覚えました。元の口を隠す範囲も測って合わせています。はみ出すときは「隠す範囲」で調整してください。');
 });
 document.getElementById('mwidth').addEventListener('input',function(e){
   mouth.w=+e.target.value; store(); draw(true);
@@ -1522,7 +1544,7 @@ document.getElementById('reset').addEventListener('click',function(){
   });
   try{ localStorage.removeItem('mio.eyes'); localStorage.removeItem('mio.eyesSet'); }catch(e){}
   eyesSet=false; layerCache={}; wantBrow=wantEye=showBrow=showEye=null; browAmt=eyeAmt=0;
-  useBuiltIn(true); sysLine('最初の顔に戻しました。');
+  useBuiltIn(true); setupLine('最初の顔に戻しました。');
 });
 document.getElementById('showbands').addEventListener('change',function(){ draw(true); });
 document.getElementById('mcover').addEventListener('input',function(e){
@@ -1574,6 +1596,12 @@ function loop(now){
 
   /* while she speaks, the head moves a little with the mouth */
   if(speaking) kickX += (vis.h-0.35)*dt*0.22;
+
+  /* listening leans in a touch and nods slowly; speaking leans in further.
+     Both are the whole picture moving, so nothing can tear. */
+  var lean = listening ? 0.010 : (speaking ? 0.006 : 0);
+  var nod  = listening ? Math.sin(tsec*1.9)*0.0016 : 0;
+  attend += ((lean+nod)-attend)*(1-Math.exp(-dt/0.28));
 
   /* blink: only when there is a closed-eye sheet to fade to */
   if(images.eyeClosed){
