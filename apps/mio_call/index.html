@@ -1156,7 +1156,16 @@ function buildLayer(k){
   g.globalCompositeOperation='destination-in';
   g.save(); g.translate(pw/2,ph/2); g.scale(1,ph/pw);
   var m=g.createRadialGradient(0,0,0,0,0,pw/2);
-  m.addColorStop(0,'rgba(0,0,0,1)'); m.addColorStop(0.68,'rgba(0,0,0,1)');
+  /* The rim fades so a sheet's own colour does not meet the base along a
+     visible rectangle — the sheets come from separate generations and differ
+     across the whole frame (measured at 5.7 on one real set), so the join has
+     to be soft. But the fade started at 68% of the way out, which is inside
+     the feature: the brows run to about 78% of the band's half-width, so
+     their outer ends were drawn part-transparent and the resting brow showed
+     through underneath them. That is a double exposure again, at the tips
+     only, which is what it looked like. Cover the feature outright and blend
+     in the last sixth, where both pictures hold the same skin and hair. */
+  m.addColorStop(0,'rgba(0,0,0,1)'); m.addColorStop(0.86,'rgba(0,0,0,1)');
   m.addColorStop(1,'rgba(0,0,0,0)');
   g.fillStyle=m; g.beginPath(); g.arc(0,0,pw/2,0,Math.PI*2); g.fill();
   g.restore();
@@ -1384,7 +1393,13 @@ function faceReport(){
     if(stored) own++;
     if(!images[k]){ L.push('・'+sl.label+'：未設定'); return; }
     var r=reports[k], size=images[k].width+'×'+images[k].height;
-    var line='・'+sl.label+'：'+size+(stored?'／保存済み':'／保存なし（内蔵の絵）');
+    /* Only two slots have a built-in picture. Saying "built-in" for the other
+       six turned a warning into a reassurance: those sheets were the viewer's
+       own, still on screen but no longer in storage, and one reload would
+       have lost them. */
+    var hasBuiltIn = (k==='base'||k==='eyeClosed');
+    var line='・'+sl.label+'：'+size+(stored ? '／保存済み'
+             : (hasBuiltIn ? '／保存なし（内蔵の絵）' : '／！保存されていません（次に開くと消えます）'));
     if(k==='base'){ L.push(line); return; }
     if(!r){ L.push(line+'／判定なし'); return; }
     if(r.inside==null){ L.push(line+'／'+r.verdict+'（ずれ '+(r.fit||0).toFixed(1)+'）'); return; }
@@ -1409,6 +1424,14 @@ function faceReport(){
          ' / 目 y'+_er.y.toFixed(3)+'〜'+(_er.y+_er.h).toFixed(3));
   L.push('口：位置'+mouth.x.toFixed(3)+','+mouth.y.toFixed(3)+' 大きさ'+mouth.w+' 隠す範囲'+mouth.cover);
   L.push('自分で入れた絵：'+own+'枚 / '+SLOTS.length+'枠');
+  var lost=0;
+  SLOTS.forEach(function(sl){
+    if(sl.k==='base'||sl.k==='eyeClosed') return;
+    var st=false; try{ st=!!localStorage.getItem('mio.img.'+sl.k); }catch(e){}
+    if(images[sl.k]&&!st) lost++;
+  });
+  if(lost) L.push('！いま表示されている絵のうち '+lost+'枚が保存されていません。'
+    +'このまま再読み込みすると消えます。もう一度その枠に入れ直してください。');
 
   /* Two conclusions worth drawing here rather than leaving to be eyeballed,
      because each one invalidates every number above it. */
