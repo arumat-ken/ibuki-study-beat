@@ -214,6 +214,7 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
         <div class="setup">
           <p class="hint" style="margin:0">澪の顔は最初から入っていて、まばたきもします。感情の絵を足すとその表情に変わります。枠を押すと別の絵に差し替えられます（同じ構図・同じ大きさで作ってください）。</p>
           <div class="slots" id="slots"></div>
+          <p class="hint" style="margin:0">枠を押して絵を選ぶと、その下に判定が出ます。<b>「変化◯ / 集中度◯」なら合格</b>、「ほぼ同じ絵」ならもう一度作り直しです。</p>
           <div class="bar">
             <button class="mini" id="calib">口の位置を合わせる</button>
             <button class="mini" id="calibEyes">目の位置を合わせる</button>
@@ -223,7 +224,7 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
           <div class="slider"><span class="hint" style="min-width:64px">口の大きさ</span><input type="range" id="mwidth" min="16" max="260" value="70"></div>
           <div class="slider"><span class="hint" style="min-width:64px">隠す範囲</span><input type="range" id="mcover" min="12" max="240" value="56"></div>
           <input type="file" id="imgfile" accept="image/*" class="offscreen">
-          <label class="check"><input type="checkbox" id="showbands"> 目と眉の帯を表示</label>
+          <label class="check"><input type="checkbox" id="showbands"> 目と眉の帯を表示（確認用。ふだんは不要）</label>
         </div>
       </section>
 
@@ -348,7 +349,7 @@ function skinRGBA(a){ return 'rgba('+SKIN.r+','+SKIN.g+','+SKIN.b+','+a+')'; }
 var calibrating=false;
 
 /* eyes drive both the eye band and the brow band above it */
-var eyes={lx:0.40,ly:0.42,rx:0.60,ry:0.42}, eyesSet=false;
+var eyes={lx:0.40,ly:0.42,rx:0.60,ry:0.42}, eyesSet=false, eyeRetried=false;
 var layerCache={};                          /* slot -> masked region canvas */
 
 /* what is showing now, and what it is easing towards */
@@ -499,6 +500,18 @@ function reviewSheet(k){
   }
   var rp=sheetReport(k);
   if(!rp){ markSlot(k,'倍率 '+aligns[k].s.toFixed(2),true); return; }
+  /* The closed-eye sheet is known to differ at the eyes, so a poor score for
+     it means the band is in the wrong place, not that the sheet is bad.
+     Measure the eyes again and judge once more. */
+  if(k==='eyeClosed' && !eyeRetried && (rp.inside<6.0 || rp.focus<1.8)){
+    eyeRetried=true;
+    if(autoEyes(true)){
+      rebuildLayers();
+      rlog('目の帯が合っていないので測り直した');
+      sysLine('目の帯が目からずれていたので、測り直して合わせました。');
+      reviewSheet(k); return;
+    }
+  }
   rlog('差分 '+k+': '+band+'の中'+rp.inside.toFixed(1)+' / 外'+rp.outside.toFixed(1)+' / 集中度'+rp.focus.toFixed(1));
   /* An identical picture still measures about 3 from re-encoding alone, while
      a real change of the band measures around 19. 6 separates them. */
@@ -606,8 +619,9 @@ function greyAligned(k,N){
 
 /* The closed-eye sheet differs from the neutral one almost only at the eyes,
    so the difference map locates them without asking anyone to tap. */
-function autoEyes(){
+function autoEyes(force){
   if(!images.base||!images.eyeClosed) return false;
+  if(eyesSet&&!force) return false;
   var N=96, A=greyOf(images.base,N), B=greyAligned('eyeClosed',N);
   var diff=new Float32Array(N*N), max=0, i;
   for(i=0;i<diff.length;i++){ diff[i]=Math.abs(A[i]-B[i]); if(diff[i]>max) max=diff[i]; }
@@ -622,7 +636,9 @@ function autoEyes(){
   var lx=L.x/L.n/N, ly=L.y/L.n/N, rx=R.x/R.n/N, ry=R.y/R.n/N;
   if(rx-lx<0.06||rx-lx>0.55) return false;       /* not a plausible pair of eyes */
   eyes={lx:lx,ly:ly,rx:rx,ry:ry};
-  try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes)); }catch(e){}
+  eyesSet=false;                       /* measured, not chosen: measure again if it is off */
+  try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes));
+       localStorage.removeItem('mio.eyesSet'); }catch(e){}
   rlog('目の位置を自動検出: 間隔'+((rx-lx)*100).toFixed(1)+'%');
   return true;
 }
