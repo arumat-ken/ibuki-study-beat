@@ -484,29 +484,56 @@ function useBuiltIn(withCalibration){
   rlog('内蔵の顔を使用');
 }
 
+/* Align, cut and judge one sheet. A sheet stored in the browser can finish
+   loading before the neutral face exists, and then there is nothing to compare
+   it against — so this runs again for every sheet once the neutral one is in. */
+function reviewSheet(k){
+  if(!images.base||!images[k]||k==='base') return;
+  var band = USE[k]==='brow' ? '眉' : '目';
+  var fit=alignSheet(k);
+  buildLayer(k);
+  if(fit>26){
+    markSlot(k,'別の絵に見えます',true);
+    sysLine('その絵は「通常」と構図が違うようです。同じ顔・同じ大きさで作った絵でないと、重ねたときにずれます。');
+    return;
+  }
+  var rp=sheetReport(k);
+  if(!rp){ markSlot(k,'倍率 '+aligns[k].s.toFixed(2),true); return; }
+  rlog('差分 '+k+': '+band+'の中'+rp.inside.toFixed(1)+' / 外'+rp.outside.toFixed(1)+' / 集中度'+rp.focus.toFixed(1));
+  /* An identical picture still measures about 3 from re-encoding alone, while
+     a real change of the band measures around 19. 6 separates them. */
+  if(rp.inside<6.0){
+    markSlot(k,'ほぼ同じ絵',true);
+    sysLine('その絵は「通常」とほとんど同じです。'+band+'が変わっていないので、表情も変わりません（'+band+'の変化 '+rp.inside.toFixed(1)+'、目安は12以上）。もう一度、'+band+'をはっきり変えて作ってください。');
+  }else if(rp.focus<1.8){
+    markSlot(k,band+'以外も変化',true);
+    sysLine(band+'の外も同じくらい変わっています（集中度 '+rp.focus.toFixed(1)+'、目安は3以上）。'+band+'だけを変えた絵にしてください。');
+  }else{
+    markSlot(k,'変化'+rp.inside.toFixed(0)+' / 集中度'+rp.focus.toFixed(1),true);
+    sysLine(band+'がちゃんと変わっています（'+band+'の変化 '+rp.inside.toFixed(1)+'、集中度 '+rp.focus.toFixed(1)+'）。');
+  }
+}
+
 function setSlotImage(k,dataUrl,persist){
   var img=new Image();
   img.onload=function(){
     images[k]=img;
     markSlot(k,img.width+'×'+img.height,true);
     if(k==='base'){
-      sampleSkin(); sampleBackdrop(); setDiag('顔','読み込み済み '+img.width+'×'+img.height,'ok');
-      Object.keys(images).forEach(function(o){ if(o!=='base') alignSheet(o); });
+      sampleSkin(); sampleBackdrop();
+      setDiag('顔','読み込み済み '+img.width+'×'+img.height,'ok');
+      /* the neutral face has arrived: judge everything that was waiting on it */
+      if(images.eyeClosed && !eyesSet && autoEyes()){
+        sysLine('閉じた目の絵から、目の位置を自動で割り出しました。ずれていたら「目の位置を合わせる」で直せます。');
+      }
       rebuildLayers();
+      Object.keys(images).forEach(function(o){ if(o!=='base') reviewSheet(o); });
     }else{
-      var fit=alignSheet(k);
-      if(k==='eyeClosed' && !eyesSet && autoEyes()){
+      if(k==='eyeClosed' && images.base && !eyesSet && autoEyes()){
         rebuildLayers();
         sysLine('閉じた目の絵から、目の位置を自動で割り出しました。ずれていたら「目の位置を合わせる」で直せます。');
       }
-      buildLayer(k);
-      /* a large residual means it is a different picture, not a different face */
-      if(fit>26){
-        markSlot(k,'別の絵に見えます',true);
-        sysLine('その絵は「通常」と構図が違うようです。同じ顔・同じ大きさで作った絵でないと、重ねたときにずれます。');
-      }else{
-        markSlot(k,'ずれ '+(Math.abs(aligns[k].dx)*100).toFixed(1)+'% / 倍率 '+aligns[k].s.toFixed(2),true);
-      }
+      reviewSheet(k);
     }
     setDiag('表情の絵', Object.keys(images).length+' / '+SLOTS.length+' 枚');
     if(persist){
@@ -519,12 +546,6 @@ function setSlotImage(k,dataUrl,persist){
   img.src=dataUrl;
 }
 
-/* average the two cheek pixels either side of the mouth, so the patch that
-   hides her drawn mouth matches her actual skin instead of a guess */
-/* Sheets come back from the image model at slightly different framing, and a
-   cross-fade between two faces that are not registered reads as a jolt. Find
-   the shift and scale that minimise the difference against the neutral sheet:
-   coarse pass first, then a finer one around the winner. */
 function greyOf(im,N){
   var c=document.createElement('canvas'); c.width=N; c.height=N;
   var g=c.getContext('2d'); g.drawImage(im,0,0,N,N);
@@ -604,6 +625,30 @@ function autoEyes(){
   try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes)); }catch(e){}
   rlog('目の位置を自動検出: 間隔'+((rx-lx)*100).toFixed(1)+'%');
   return true;
+}
+
+/* Does this sheet change what it is supposed to change? The difference from
+   the neutral sheet should be concentrated in that slot's band; a sheet whose
+   change is tiny, or spread across the whole face, will not read as the
+   feeling it is for. */
+function sheetReport(k){
+  if(!images.base||!images[k]||k==='base') return null;
+  var N=128, A=greyOf(images.base,N), B=greyAligned(k,N);
+  var reg = USE[k]==='brow' ? browRegion() : eyeRegion();
+  var inS=0, inN=0, outS=0, outN=0, x, y, d, nx, ny;
+  for(y=0;y<N;y++) for(x=0;x<N;x++){
+    d=Math.abs(A[y*N+x]-B[y*N+x]);
+    nx=x/N; ny=y/N;
+    if(nx>=reg.x&&nx<=reg.x+reg.w&&ny>=reg.y&&ny<=reg.y+reg.h){ inS+=d; inN++; }
+    else { outS+=d; outN++; }
+  }
+  if(!inN||!outN) return null;
+  var mi=inS/inN, mo=outS/outN;
+  /* Share of total difference is the wrong measure: the band is about 6% of
+     the frame, so area beats magnitude and a sheet that changes only the eyes
+     still scores 25%. Compare the densities instead — the genuine closed-eye
+     sheet measures 17.3 inside against 3.25 outside. */
+  return {inside:mi, outside:mo, focus: mi/Math.max(mo,0.4)};
 }
 
 function baseCtx(){
