@@ -172,6 +172,13 @@ details.tools>summary::-webkit-details-marker{display:none}
 details.tools>summary::before{content:"▸";color:var(--ink-3);transition:transform .15s}
 details.tools[open]>summary::before{transform:rotate(90deg)}
 details.tools .panel{border:0;background:transparent;padding:0 15px 15px}
+.recipes{display:flex;flex-direction:column;gap:10px}
+.recipe{border:1px solid var(--line);border-radius:9px;padding:10px 11px;background:var(--panel-2)}
+.recipe h3{margin:0 0 6px;font-size:12.5px;font-weight:600}
+.recipe pre{
+  margin:0 0 8px;font-family:"IBM Plex Sans JP",sans-serif;font-size:11.5px;line-height:1.65;
+  white-space:pre-wrap;word-break:break-word;color:var(--ink-2);max-height:118px;overflow-y:auto;
+}
 .setup{display:flex;flex-direction:column;gap:9px}
 .slider{display:flex;align-items:center;gap:10px}
 .slider input{flex:1}
@@ -249,6 +256,12 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
         </div>
         <div class="level"><i id="levelbar"></i></div>
         <pre class="reclog" id="reclog"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>絵の作り方（Gemini に渡す文面）</h2>
+        <p class="hint" style="margin:0">Gemini に<b>「通常」の絵を添付して</b>、下の文面を1つずつ送ってください。できた絵を上の枠に入れると、その場で合否が出ます。</p>
+        <div class="recipes" id="recipes"></div>
       </section>
       </details>
     </div>
@@ -1030,6 +1043,61 @@ function drawStandIn(W,H){
   fx.fillStyle='rgba(239,231,214,.8)'; fx.textBaseline='middle';
   fx.fillText(label,W-tw-20*dpr,22*dpr);
 }
+
+/* ================= what to ask Gemini for =================
+   Each sheet must change one band and nothing else — that is what the slot
+   measures — so every prompt pins the crop, the position and every feature
+   it must not touch, and ends with something the eye can check. */
+var COMMON_KEEP=[
+ '【絶対に変えないこと】',
+ '・同じ顔のアップのまま。全身にしない',
+ '・顔の位置と大きさ。画面の中で動かさない',
+ '・髪型、前髪のかかり方、服、アクセサリー、背景、画風、光の当たり方',
+ '・口は閉じたまま、添付画像とまったく同じ形'
+].join('\n');
+
+var RECIPES=[
+ {slot:'browUp', title:'上げ眉',
+  change:'・両方の眉を、はっきり上げる。眉と目のあいだが、今の倍近く開くくらい\n・眉全体を弓なりにする\n・目は開いたまま、添付画像と同じ形',
+  check:'眉と目のあいだの隙間が、元の絵より明らかに広い'},
+ {slot:'browSad', title:'困り眉',
+  change:'・眉の内側（鼻に近いほう）を上げ、外側（こめかみ側）を下げる\n・左右あわせて「ハ」の字になるようにする\n・目は開いたまま、添付画像と同じ形',
+  check:'両方の眉が「ハ」の形。内側が高く、外側が低い'},
+ {slot:'browAngry', title:'怒り眉',
+  change:'・眉の内側（鼻に近いほう）を下げて、目に近づける。外側は少し上げる\n・左右あわせて「V」に近い形にし、眉間を狭くする\n・目は開いたまま、添付画像と同じ形',
+  check:'眉の内側が目のすぐ上まで下りていて、眉間が狭い'},
+ {slot:'eyeSmile', title:'笑う目',
+  change:'・両目を細める。下まぶたを持ち上げて、目が上に弧を描く三日月の形にする\n・黒目は半分ほど隠れる\n・眉は添付画像と同じ形のまま動かさない',
+  check:'目が横長の弧になっていて、ひと目で笑っているとわかる'},
+ {slot:'eyeWide', title:'見開く目',
+  change:'・両目を大きく見開く。上まぶたを上げて、黒目の上側にも白目が見えるようにする\n・眉は添付画像と同じ形のまま動かさない',
+  check:'黒目の上に白目が見えている'},
+ {slot:'eyeTear', title:'潤んだ目',
+  change:'・目に涙がたまっている状態にする。下まぶたに水の膜が光り、まつげが少し濡れる\n・涙はまだこぼれていない。頬に涙の筋は描かない\n・眉は添付画像と同じ形のまま動かさない',
+  check:'目の下側が濡れて光っている。頬には涙の筋がない'}
+];
+function recipeText(r){
+  return '添付した画像の、'+r.title+'にした絵を作ってください。\n\n'+
+         COMMON_KEEP+'\n\n【変えるところ】\n'+r.change+
+         '\n\n【できたかどうかの判定】\n・'+r.check;
+}
+(function(){
+  var wrap=document.getElementById('recipes');
+  RECIPES.forEach(function(r){
+    var box=document.createElement('div'); box.className='recipe';
+    var h=document.createElement('h3'); h.textContent=r.title;
+    var pre=document.createElement('pre'); pre.textContent=recipeText(r);
+    var btn=document.createElement('button'); btn.className='mini'; btn.type='button';
+    btn.textContent='この文面をコピー';
+    btn.addEventListener('click',function(){
+      var t=recipeText(r), done=function(){ btn.textContent='コピーしました'; setTimeout(function(){ btn.textContent='この文面をコピー'; },1600); };
+      if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done,function(){ fallback(t,done); });
+      else fallback(t,done);
+    });
+    box.appendChild(h); box.appendChild(pre); box.appendChild(btn);
+    wrap.appendChild(box);
+  });
+})();
 
 /* ================= kana to visemes ================= */
 var VOWEL={};
