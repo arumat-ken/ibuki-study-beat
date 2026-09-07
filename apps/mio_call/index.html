@@ -212,6 +212,7 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
         <input type="text" id="typed" placeholder="ここに話しかける" autocomplete="off">
         <button class="btn" id="send">送る</button>
       </div>
+      <div class="chips" id="topics"></div>
       <p class="hint" id="dictate"></p>
       <p class="hint">はじめて話しかけたとき「Use Claude」の確認が出ます。これは claude.ai の画面で、澪の返事を作るために Claude を呼ぶ許可です。マイクや外部サービスとは関係ありません。</p>
       <label class="check"><input type="checkbox" id="autosend" checked> 入力が止まったら自動で送る</label>
@@ -395,6 +396,15 @@ var browAmt=0, eyeAmt=0, tearWant=0, tearAmt=0, emoK=0;
 var poseT=0, poseD=0, poseS=1, squint=0, blush=0, breathRate=1, attend=0;
 var wantT=0, wantD=0, wantS=1, wantSquint=0, wantBlush=0, wantBreath=1;
 var kickV=0, kickX=0;                 /* the movement a new feeling arrives with */
+/* A gesture is chosen per reply, separately from the feeling: agreeing while
+   sad and wondering while cheerful are both ordinary. */
+var gNod=0, gTilt=0, gShake=0, gT=0;
+function doGesture(g){
+  gT=0;
+  if(g==='nod') gNod=1;
+  else if(g==='tilt') gTilt=1;
+  else if(g==='shake') gShake=1;
+}
 
 /* blink */
 var blinkAmt=0, blinkPhase=-1, nextBlink=2.5;
@@ -402,6 +412,7 @@ var blinkAmt=0, blinkPhase=-1, nextBlink=2.5;
 var LABEL={}; SLOTS.forEach(function(x){ LABEL[x.k]=x.label; });
 function setExpression(k,strength,tears){
   var e=EMO[k]||EMO.neutral;
+  curEmotion = EMO[k] ? k : 'neutral';
   var miss=[];
   if(e.brow&&!images[e.brow]) miss.push(LABEL[e.brow]);
   if(e.eye &&!images[e.eye ]) miss.push(LABEL[e.eye]);
@@ -488,15 +499,29 @@ function loadStored(){
         var a=localStorage.getItem('mio.align.'+sl.k);
         if(a) aligns[sl.k]=JSON.parse(a);
       }catch(e){}
-      var d=localStorage.getItem('mio.img.'+sl.k);
-      if(d) setSlotImage(sl.k,d,false);
     });
-    if(!haveOwn){
+
+    /* Her face goes up first. Reading six expression sheets out of the browser
+       store and decoding them takes seconds, and doing that before the neutral
+       face left the screen empty for the whole of it. */
+    if(haveOwn) setSlotImage('base',localStorage.getItem('mio.img.base'),false);
+    else{
       /* An old calibration belongs to an image that is no longer here, so the
          built-in face brings its own unless the viewer has adjusted it since. */
       var tuned = localStorage.getItem('mio.calFor')==='builtin';
       useBuiltIn(!tuned);
     }
+
+    setTimeout(function(){
+      SLOTS.forEach(function(sl){
+        if(sl.k==='base') return;
+        if(images[sl.k]) return;                 /* the built-in eyeClosed is already in */
+        try{
+          var d=localStorage.getItem('mio.img.'+sl.k);
+          if(d) setSlotImage(sl.k,d,false);
+        }catch(e){}
+      });
+    },80);
   }catch(e){}
 }
 function store(){
@@ -522,8 +547,11 @@ function useBuiltIn(withCalibration){
 /* Align, cut and judge one sheet. A sheet stored in the browser can finish
    loading before the neutral face exists, and then there is nothing to compare
    it against — so this runs again for every sheet once the neutral one is in. */
-function reviewSheet(k){
+var reviewed={};
+function reviewSheet(k,force){
   if(!images.base||!images[k]||k==='base') return;
+  if(reviewed[k]&&!force) return;      /* aligning seven sheets twice is wasted work */
+  reviewed[k]=true;
   var band = USE[k]==='brow' ? '眉' : '目';
   var fit=alignSheet(k);
   buildLayer(k);
@@ -543,21 +571,28 @@ function reviewSheet(k){
       rebuildLayers();
       rlog('目の帯が合っていないので測り直した');
       setupLine('目の帯が目からずれていたので、測り直して合わせました。');
-      reviewSheet(k); return;
+      reviewSheet(k,true); return;
     }
   }
   rlog('差分 '+k+': '+band+'の中'+rp.inside.toFixed(1)+' / 外'+rp.outside.toFixed(1)+' / 集中度'+rp.focus.toFixed(1));
-  /* An identical picture still measures about 3 from re-encoding alone, while
-     a real change of the band measures around 19. 6 separates them. */
-  if(rp.inside<6.0){
+  /* Only reject what is provably the same picture. Re-encoding alone measures
+     about 3; a closed-eye sheet measures 19, but a brow is a thin line in a
+     thin band and moves a far smaller number, so a threshold tuned to the eye
+     would throw good brow sheets away. Below 4.5 is unchanged; above it, the
+     numbers are reported and a small change is flagged rather than refused. */
+  if(rp.inside<4.5){
     markSlot(k,'ほぼ同じ絵',true);
-    setupLine('その絵は「通常」とほとんど同じです。'+band+'が変わっていないので、表情も変わりません（'+band+'の変化 '+rp.inside.toFixed(1)+'、目安は12以上）。もう一度、'+band+'をはっきり変えて作ってください。');
+    setupLine('その絵は「通常」とほとんど同じです。'+band+'が変わっていないので、表情も変わりません（'+band+'の変化 '+rp.inside.toFixed(1)+'）。もう一度、'+band+'をはっきり変えて作ってください。');
   }else if(rp.focus<1.8){
     markSlot(k,band+'以外も変化',true);
     setupLine(band+'の外も同じくらい変わっています（集中度 '+rp.focus.toFixed(1)+'、目安は3以上）。'+band+'だけを変えた絵にしてください。');
   }else{
     markSlot(k,'変化'+rp.inside.toFixed(0)+' / 集中度'+rp.focus.toFixed(1),true);
-    setupLine(band+'がちゃんと変わっています（'+band+'の変化 '+rp.inside.toFixed(1)+'、集中度 '+rp.focus.toFixed(1)+'）。');
+    if(rp.inside<10){
+      setupLine(band+'は変わっていますが、変化は小さめです（'+rp.inside.toFixed(1)+'）。物足りなければ、もっと大きく変えた絵で作り直してください。集中度 '+rp.focus.toFixed(1)+' は良好です。');
+    }else{
+      setupLine(band+'がちゃんと変わっています（'+band+'の変化 '+rp.inside.toFixed(1)+'、集中度 '+rp.focus.toFixed(1)+'）。');
+    }
   }
 }
 
@@ -574,7 +609,8 @@ function setSlotImage(k,dataUrl,persist){
         setupLine('閉じた目の絵から、目の位置を自動で割り出しました。ずれていたら「目の位置を合わせる」で直せます。');
       }
       rebuildLayers();
-      Object.keys(images).forEach(function(o){ if(o!=='base') reviewSheet(o); });
+      reviewed={};   /* a new neutral face invalidates every judgement */
+      Object.keys(images).forEach(function(o){ if(o!=='base') reviewSheet(o,true); });
     }else{
       if(k==='eyeClosed' && images.base && !eyesSet && autoEyes()){
         rebuildLayers();
@@ -824,7 +860,8 @@ function draw(force){
            Math.round(blinkAmt*40),Math.round(tearAmt*50),tearAmt>0.01?Math.round(tsec*20):0,
            Math.round(squint*50),Math.round(blush*50),Math.round(poseT*40),
            Math.round(poseD*3000),Math.round(poseS*400),Math.round(kickX*400),
-           Math.round(attend*4000),
+           Math.round(attend*4000),Math.round((gNod+gTilt+gShake)*40),
+           (gNod+gTilt+gShake)>0.02?Math.round(gT*25):0,
            document.getElementById('showbands').checked?1:0].join(',');
   if(!force && key===lastDraw) return;
   lastDraw=key;
@@ -840,8 +877,10 @@ function draw(force){
        face from the drawn mouth or the layers over it. */
     var pvx=ox+((eyes.lx+eyes.rx)/2)*iw, pvy=oy+((eyes.ly+eyes.ry)/2)*ih;
     fx.save();
-    fx.translate(pvx, pvy+(poseD+kickX*0.012+attend*0.55)*ih);
-    fx.rotate((poseT+kickX*1.2)*Math.PI/180);
+    var gDy = Math.sin(gT*9.5)*gNod*0.013;
+    var gRot = gTilt*4.2 + Math.sin(gT*11.5)*gShake*2.6;
+    fx.translate(pvx, pvy+(poseD+kickX*0.012+attend*0.55+gDy)*ih);
+    fx.rotate((poseT+kickX*1.2+gRot)*Math.PI/180);
     var zz=poseS*(1+breath*0.004)+kickX*0.006+attend*1.6;
     fx.scale(zz,zz);
     fx.translate(-pvx,-pvy);
@@ -1141,7 +1180,11 @@ function toVisemes(kana){
 }
 
 /* ================= speech out ================= */
-var jaVoice=null, moraPerSec=7.4, speaking=false;
+var jaVoice=null, moraPerSec=7.4, speaking=false, curEmotion='neutral';
+var VOICE={
+  neutral  :[1.00,1.06], relaxed:[0.96,1.03], happy:[1.07,1.13],
+  sad      :[0.92,0.98], angry  :[1.09,1.00], surprised:[1.12,1.17]
+};
 function pickVoice(){
   var vs=window.speechSynthesis?speechSynthesis.getVoices():[];
   var ja=vs.filter(function(v){ return /^ja/i.test(v.lang); });
@@ -1174,7 +1217,10 @@ function speak(text,kana,done){
   var myId=++utterSeq, settled=false, t0=0;
   var u=new SpeechSynthesisUtterance(text);
   u.lang='ja-JP'; if(jaVoice) u.voice=jaVoice;
-  u.rate=1.0; u.pitch=1.06;
+  /* The device voice takes no emotional direction, so the feeling has to come
+     through speed and pitch. */
+  var V=VOICE[curEmotion]||VOICE.neutral;
+  u.rate=V[0]; u.pitch=V[1];
   visSeq=toVisemes(kana||text);
   u.onstart=function(){
     speaking=true; t0=performance.now(); visStart=t0; setState('speak');
@@ -1402,7 +1448,7 @@ var RULES=[
  '・相手は「ケンさん」。',
  '',
  '必ず次の形のJSONだけを返してください。前後に説明を付けないこと。',
- '{"reply":"話す文","kana":"replyの読みを全てひらがなで。漢字・数字・英字を残さない","emotion":"neutral|happy|sad|angry|surprised|relaxed","strength":0.0〜1.0でその感情の強さ,"tears":涙ぐむなら true そうでなければ false}'
+ '{"reply":"話す文","kana":"replyの読みを全てひらがなで。漢字・数字・英字を残さない","emotion":"neutral|happy|sad|angry|surprised|relaxed","strength":0.0〜1.0でその感情の強さ,"tears":涙ぐむなら true そうでなければ false,"gesture":"nod|tilt|shake|none のどれか。うなずく・首をかしげる・首を振る"}'
 ].join('\n');
 
 var ERR={
@@ -1437,11 +1483,13 @@ function ask(said){
     if(!EMO[emo]) emo='neutral';
     var strength=(d&&typeof d.strength==='number')?d.strength:undefined;
     var tears=(d&&d.tears)?1:0;
+    var gesture=(d&&d.gesture)||'none';
     if(!reply){ throw {code:'empty_completion'}; }
     turns.push({role:'assistant',content:reply});
     addTurn('澪 · '+emo,reply,'mio');
     setDiag('最後の感情',emo+(strength!==undefined?(' '+Math.round(strength*100)+'%'):'')+(tears?' / 涙':''));
     setExpression(emo,strength,tears?0.85:undefined);
+    doGesture(gesture);
     busy=false;
     speak(reply,kana,function(){
       if(micBlocked){ typed.focus(); return; }
@@ -1488,6 +1536,18 @@ hangBtn.addEventListener('click',function(){
   hangBtn.disabled=true; setState('idle'); selfText('あなたの声がここに出ます',true);
   sysLine('通話を終了しました。');
 });
+
+(function(){
+  var wrap=document.getElementById('topics');
+  ['おつかれさま','今日はどうだった？','ちょっと聞いてほしいことがある','元気出ないんだ'].forEach(function(t){
+    var b=document.createElement('button'); b.className='chip'; b.type='button'; b.textContent=t;
+    b.addEventListener('click',function(){
+      if(!started){ started=true; hangBtn.disabled=false; talkBtn.textContent='話す'; }
+      ask(t);
+    });
+    wrap.appendChild(b);
+  });
+})();
 
 var typed=document.getElementById('typed');
 var isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||
@@ -1660,6 +1720,10 @@ function loop(now){
   breathRate+=(wantBreath-breathRate)*pk;
   kickV += -kickX*46*dt - kickV*7.0*dt;
   kickX += kickV*dt;
+  gT+=dt;
+  var gd=1-Math.exp(-dt/0.42);
+  gNod+=(0-gNod)*gd; gTilt+=(0-gTilt)*gd; gShake+=(0-gShake)*gd;
+  if(gNod<0.01) gNod=0; if(gTilt<0.01) gTilt=0; if(gShake<0.01) gShake=0;
   if(Math.abs(kickX)<0.0004&&Math.abs(kickV)<0.004){ kickX=0; kickV=0; }
 
   /* while she speaks, the head moves a little with the mouth */
