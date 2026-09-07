@@ -701,6 +701,94 @@ function rejudgeAll(){
   draw(true);
 }
 
+/* Browser storage is not durable here. The page runs in a frame served from
+   a different origin than the site around it, and Safari treats storage
+   written in that position as disposable: it can go without warning, without
+   the quota being anywhere near full. Measured on a real device — eight
+   sheets come to 0.83 MB against a 967 MB budget, and six of them vanished
+   anyway, still on screen but no longer in the store, one reload from gone.
+   A different local store (IndexedDB) sits under the same rules, so it is no
+   answer.
+
+   So keep a copy off the device, in the page's own database. localStorage
+   stays the fast path — the face has to be up in milliseconds — and this
+   fills in whatever the browser threw away, on every open. Every call is
+   wrapped: when the capability is absent (served outside its viewer) or a
+   write fails, the page behaves exactly as it did before. */
+var cloud=null;
+function cloudDoc(k){ return cloud.doc('sheets/'+k); }
+
+/* A document holds 256 KiB serialized. A sheet stored at 640px wide and
+   quality 0.85 measures about 124 KB, so it fits — but not by enough to
+   assume it always will. Shrink the copy when it would not, rather than
+   letting the write reject and leaving no copy at all: a sheet restored at
+   half the width beats a slot that comes back empty. */
+var CLOUD_MAX=230000;
+function shrunk(dataUrl,cb){
+  if(dataUrl.length<=CLOUD_MAX){ cb(dataUrl); return; }
+  var im=new Image();
+  im.onload=function(){
+    var w=im.width, q=0.82;
+    for(var pass=0; pass<4; pass++){
+      w=Math.round(w*0.75);
+      var c=document.createElement('canvas');
+      c.width=w; c.height=Math.round(im.height*(w/im.width));
+      c.getContext('2d').drawImage(im,0,0,c.width,c.height);
+      var out=c.toDataURL('image/jpeg',q);
+      if(out.length<=CLOUD_MAX){ cb(out); return; }
+    }
+    cb(null);
+  };
+  im.onerror=function(){ cb(null); };
+  im.src=dataUrl;
+}
+function cloudSave(k,dataUrl){
+  if(!cloud||!dataUrl) return;
+  shrunk(dataUrl,function(payload){
+    if(!payload){ rlog('控えに入らない大きさ '+k); return; }
+    try{
+      cloudDoc(k).set({data:payload, at:Date.now()}).then(function(){
+        rlog('控えを保存 '+k+' '+Math.round(payload.length/1024)+'KB');
+      },function(e){ rlog('控えの保存に失敗 '+k+': '+((e&&e.code)||e)); });
+    }catch(e){ rlog('控えの保存に失敗 '+k); }
+  });
+}
+function cloudForget(k){
+  if(!cloud) return;
+  try{ cloudDoc(k)['delete'](); }catch(e){}
+}
+
+/* Fill any slot the browser lost, once her face is already up. */
+function cloudRestore(){
+  if(!cloud) return;
+  var want=SLOTS.filter(function(sl){
+    if(images[sl.k] && sl.k!=='base') return false;          /* already here */
+    if(sl.k==='eyeClosed' && images.eyeClosed && !ownSheet('eyeClosed')) return true; /* only the built-in */
+    return !images[sl.k];
+  });
+  if(!want.length) return;
+  var found=0, done=0;
+  want.forEach(function(sl){
+    var fin=function(){ if(++done===want.length && found){
+      setupLine('保存されていなかった絵 '+found+'枚を控えから戻しました。');
+      rlog('控えから復元 '+found+'枚');
+    } };
+    try{
+      cloudDoc(sl.k).get().then(function(d){
+        /* `data` is a method on the snapshot, not a field. Reading it as a
+           field finds a function, which is truthy, so a wrong test here
+           reports success and restores nothing. */
+        var v = (d && d.exists) ? d.data() : null;
+        if(v && typeof v.data==='string'){ found++; setSlotImage(sl.k,v.data,true); }
+        fin();
+      },fin);
+    }catch(e){ fin(); }
+  });
+}
+function ownSheet(k){
+  try{ return !!localStorage.getItem('mio.img.'+k); }catch(e){ return false; }
+}
+
 function setSlotImage(k,dataUrl,persist){
   var img=new Image();
   img.onload=function(){
@@ -727,6 +815,7 @@ function setSlotImage(k,dataUrl,persist){
     if(persist){
       try{ localStorage.setItem('mio.img.'+k,dataUrl); }
       catch(e){ markSlot(k,'表示中（保存できず）',true); }
+      cloudSave(k,dataUrl);
     }
     draw(true);
   };
@@ -2091,6 +2180,7 @@ document.getElementById('reset').addEventListener('click',function(){
     delete images[sl.k]; delete aligns[sl.k]; markSlot(sl.k,'未設定',false);
   });
   try{ localStorage.removeItem('mio.eyes'); localStorage.removeItem('mio.eyesSet'); }catch(e){}
+  SLOTS.forEach(function(sl){ cloudForget(sl.k); });
   eyesSet=false; eyesSrc='default'; eyeFail=''; eyeRetried=false; layerCache={}; wantBrow=wantEye=showBrow=showEye=null; browAmt=eyeAmt=0;
   useBuiltIn(true); setupLine('最初の顔に戻しました。');
 });
@@ -2185,6 +2275,29 @@ rlog('起動 / SpeechRecognition '+(SR?'あり':'なし')+' / '+((window.self!==
 probePermission();
 if(!SR) sysLine('この端末の Safari は音声認識に対応していません。下の入力欄から文字で送ってください。');
 loadStored();
+
+/* The capability resolves later than the first paint, and may never resolve.
+   Neither case may delay or block anything above. */
+(function(){
+  if(!(window.claude&&claude.use)) return;
+  claude.use('db').then(function(db){
+    cloud=db||null;
+    if(!cloud){ rlog('控えは使えません'); return; }
+    rlog('控えに接続');
+    setDiag('絵の控え','使えます','ok');
+    setTimeout(cloudRestore,600);          /* after the stored sheets have had their turn */
+    /* and push up anything that is only on this device, so the next open has it */
+    setTimeout(function(){
+      SLOTS.forEach(function(sl){
+        if(!ownSheet(sl.k)) return;
+        try{ cloudDoc(sl.k).get().then(function(d){
+          var v = (d && d.exists) ? d.data() : null;
+          if(!(v && typeof v.data==='string')) cloudSave(sl.k,localStorage.getItem('mio.img.'+sl.k));
+        },function(){}); }catch(e){}
+      });
+    },1800);
+  },function(){ cloud=null; });
+})();
 fitCanvas();
 window.addEventListener('resize',fitCanvas);
 requestAnimationFrame(loop);
