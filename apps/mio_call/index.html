@@ -399,6 +399,11 @@ var calibrating=false;
 /* eyes drive both the eye band and the brow band above it */
 var eyes={lx:0.40,ly:0.42,rx:0.60,ry:0.42}, eyesSet=false, eyeRetried=false;
 var eyeFail='';                              /* why the last auto-detection was refused */
+/* Where the current eye position came from. The starting value is a guess at
+   the centre of a generic frame, and judging sheets against it fails all of
+   them for changing the wrong region — silently, because a guess and a
+   measurement looked alike. They no longer do. */
+var eyesSrc='default';                       /* 'default' | 'auto' | 'hand' */
 var layerCache={};                          /* slot -> masked region canvas */
 
 /* what is showing now, and what it is easing towards */
@@ -506,7 +511,8 @@ function loadStored(){
     }
     try{
       var ey=localStorage.getItem('mio.eyes');
-      if(ey){ eyes=JSON.parse(ey); eyesSet=localStorage.getItem('mio.eyesSet')==='1'; }
+      if(ey){ eyes=JSON.parse(ey); eyesSet=localStorage.getItem('mio.eyesSet')==='1';
+              eyesSrc = eyesSet ? 'hand' : 'auto'; }
     }catch(e){}
     SLOTS.forEach(function(sl){
       try{
@@ -633,6 +639,11 @@ function reviewSheet(k,force){
     }else{
       setupLine(band+'がちゃんと変わっています（'+band+'の変化 '+rp.inside.toFixed(1)+'、集中度 '+rp.focus.toFixed(1)+'）。');
     }
+  }
+  if(eyesSrc==='default'){
+    setupLine('目の位置をまだ一度も測っていないので、この判定は無効です。'
+      +'「閉じた目」の枠に、同じ絵から作った目を閉じた絵を入れると自動で測ります。'
+      +'その絵がなければ「目の位置を合わせる」を押して、左目・右目の順に中心をタップしてください。');
   }
   if(needHand){
     setupLine('目の位置を自動で測れませんでした（'+(eyeFail||'理由不明')+'）。'
@@ -807,7 +818,7 @@ function autoEyes(force){
     return false;
   }
   eyes={lx:lx,ly:ly,rx:rx,ry:ry};
-  eyeFail='';
+  eyeFail=''; eyesSrc='auto';
   eyesSet=false;                       /* measured, not chosen: measure again if it is off */
   try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes));
        localStorage.removeItem('mio.eyesSet'); }catch(e){}
@@ -1266,7 +1277,8 @@ function faceReport(){
            ' 集中度'+r.focus.toFixed(1)+' 倍率'+r.scale.toFixed(2)+' ずれ'+r.fit.toFixed(1));
   });
   var sp=Math.abs(eyes.rx-eyes.lx), tilt=sp>0 ? Math.abs(eyes.ly-eyes.ry)/sp : 0;
-  L.push('目の位置：'+(eyesSet?'手で設定':'自動')+' 左'+eyes.lx.toFixed(3)+','+eyes.ly.toFixed(3)+
+  var SRC={hand:'手で設定',auto:'自動で測定',default:'未測定（初期値のまま）'};
+  L.push('目の位置：'+SRC[eyesSrc]+' 左'+eyes.lx.toFixed(3)+','+eyes.ly.toFixed(3)+
          ' 右'+eyes.rx.toFixed(3)+','+eyes.ry.toFixed(3)+
          ' 間隔'+sp.toFixed(3)+' 傾き'+Math.round(tilt*100)+'%'+(eyeFail?'（自動測定を拒否：'+eyeFail+'）':''));
   L.push('口：位置'+mouth.x.toFixed(3)+','+mouth.y.toFixed(3)+' 大きさ'+mouth.w+' 隠す範囲'+mouth.cover);
@@ -1274,6 +1286,7 @@ function faceReport(){
 
   /* Two conclusions worth drawing here rather than leaving to be eyeballed,
      because each one invalidates every number above it. */
+  if(eyesSrc==='default') L.push('！目の位置を一度も測っていません。帯は画面の真ん中あたりを指したままなので、上の判定はすべて無効です。');
   if(tilt>0.25) L.push('！目の位置が傾きすぎています。帯がずれているので、上の判定はあてになりません。');
   var outs=[], n=0;
   Object.keys(reports).forEach(function(k){
@@ -1811,7 +1824,7 @@ canvas.addEventListener('click',function(e){
     if(nx2<0||nx2>1||ny2<0||ny2>1) return;
     if(eyeStep===0){ eyes.lx=nx2; eyes.ly=ny2; eyeStep=1; setupLine('次に右目の中心をタップしてください。'); }
     else{
-      eyes.rx=nx2; eyes.ry=ny2; eyeStep=0; calibrating=false; eyesSet=true; eyeFail='';
+      eyes.rx=nx2; eyes.ry=ny2; eyeStep=0; calibrating=false; eyesSet=true; eyeFail=''; eyesSrc='hand';
       try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes));
            localStorage.setItem('mio.eyesSet','1'); }catch(e2){}
       rebuildLayers();
@@ -1853,7 +1866,7 @@ document.getElementById('reset').addEventListener('click',function(){
     delete images[sl.k]; delete aligns[sl.k]; markSlot(sl.k,'未設定',false);
   });
   try{ localStorage.removeItem('mio.eyes'); localStorage.removeItem('mio.eyesSet'); }catch(e){}
-  eyesSet=false; layerCache={}; wantBrow=wantEye=showBrow=showEye=null; browAmt=eyeAmt=0;
+  eyesSet=false; eyesSrc='default'; eyeFail=''; eyeRetried=false; layerCache={}; wantBrow=wantEye=showBrow=showEye=null; browAmt=eyeAmt=0;
   useBuiltIn(true); setupLine('最初の顔に戻しました。');
 });
 document.getElementById('showbands').addEventListener('change',function(){ draw(true); });
