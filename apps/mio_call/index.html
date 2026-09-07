@@ -234,17 +234,20 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
           <p class="hint" style="margin:0">澪の顔は最初から入っていて、まばたきもします。感情の絵を足すとその表情に変わります。枠を押すと別の絵に差し替えられます（同じ構図・同じ大きさで作ってください）。</p>
           <div class="slots" id="slots"></div>
           <p class="hint" id="setupmsg" style="margin:0;color:var(--accent)"></p>
-          <p class="hint" style="margin:0">枠を押して絵を選ぶと、その下に判定が出ます。<b>「変化◯ / 集中度◯」なら合格</b>、「ほぼ同じ絵」ならもう一度作り直しです。</p>
+          <p class="hint" style="margin:0">枠を押して絵を選ぶと、その下に判定が出ます。<b>「変化◯ / 集中度◯」なら合格</b>、「ほぼ同じ絵」ならもう一度作り直しです。<br>
+          <b>保存ボタンはありません。</b>選んだ時点でこの端末に保存され、次に開いたときもそのまま残ります。<b>「判定をまとめてコピー」</b>を押すと、8枚ぶんの判定が文章になるので、それを Claude に貼れば見てもらえます。</p>
           <div class="bar">
             <button class="mini" id="calib">口の位置を合わせる</button>
             <button class="mini" id="calibEyes">目の位置を合わせる</button>
             <button class="mini" id="reset">最初の顔に戻す</button>
+            <button class="mini" id="copystate">判定をまとめてコピー</button>
           </div>
           <div class="bar" id="tryrow"></div>
           <div class="slider"><span class="hint" style="min-width:64px">口の大きさ</span><input type="range" id="mwidth" min="16" max="260" value="70"></div>
           <div class="slider"><span class="hint" style="min-width:64px">隠す範囲</span><input type="range" id="mcover" min="12" max="240" value="56"></div>
           <input type="file" id="imgfile" accept="image/*" class="offscreen">
           <label class="check"><input type="checkbox" id="showbands"> 目と眉の帯を表示（確認用。ふだんは不要）</label>
+          <pre class="reclog" id="copyout" hidden></pre>
         </div>
       </section>
 
@@ -380,6 +383,11 @@ var BUILTIN_CAL={mouth:{x:0.505,y:0.4296,w:93,cover:59}};
 
 var images={};                              /* slot -> Image */
 var aligns={};                              /* slot -> {dx,dy,s} in image fractions */
+/* The judgement is shown once, under the slot, and then it is gone. Keeping
+   the numbers lets the whole face be reported in one block — Ken reads them
+   on his phone and I never see the images, so this is how a sheet gets a
+   second opinion. */
+var reports={};
 /* `w` sizes the drawn mouth, `cover` the patch that hides the drawn-on one.
    They were the same number, so shrinking the mouth uncovered the original. */
 var mouth={x:0.5,y:0.72,w:70,cover:56};
@@ -561,12 +569,13 @@ function reviewSheet(k,force){
   var fit=alignSheet(k);
   buildLayer(k);
   if(fit>26){
+    reports[k]={verdict:'別の絵に見えます',fit:fit};
     markSlot(k,'別の絵に見えます',true);
     setupLine('その絵は「通常」と構図が違うようです。同じ顔・同じ大きさで作った絵でないと、重ねたときにずれます。');
     return;
   }
   var rp=sheetReport(k);
-  if(!rp){ markSlot(k,'倍率 '+aligns[k].s.toFixed(2),true); return; }
+  if(!rp){ reports[k]={verdict:'測れず',fit:fit}; markSlot(k,'倍率 '+aligns[k].s.toFixed(2),true); return; }
   /* The closed-eye sheet is known to differ at the eyes, so a poor score for
      it means the band is in the wrong place, not that the sheet is bad.
      Measure the eyes again and judge once more. */
@@ -580,21 +589,35 @@ function reviewSheet(k,force){
     }
   }
   rlog('差分 '+k+': '+band+'の中'+rp.inside.toFixed(1)+' / 外'+rp.outside.toFixed(1)+' / 集中度'+rp.focus.toFixed(1));
-  /* Only reject what is provably the same picture. Re-encoding alone measures
-     about 3; a closed-eye sheet measures 19, but a brow is a thin line in a
-     thin band and moves a far smaller number, so a threshold tuned to the eye
-     would throw good brow sheets away. Below 4.5 is unchanged; above it, the
-     numbers are reported and a small change is flagged rather than refused. */
-  if(rp.inside<4.5){
+  /* Only reject what is provably the same picture. Size alone cannot tell a
+     brow sheet from a re-save: a drawn brow stroke measures 2.9 inside the
+     band and so does the same picture nudged one pixel. What separates them is
+     where the change sits. Measured on the built-in face:
+
+        the same file, re-saved      change 0.0  outside 0.0  focus 0.0
+        the same file, moved 1px     change 2.9  outside 2.9  focus 1.0
+        a drawn brow, thin stroke    change 2.9  outside 0.1  focus 7.1
+        a drawn brow, bold stroke    change 5.0  outside 0.1  focus 12.5
+        the whole face brightened    change 11.1 outside 20.3 focus 0.5
+
+     Rows 2 and 3 are indistinguishable by size and opposite in meaning, so a
+     sheet is called unchanged only when the change is both small AND spread
+     across the frame. A small change concentrated in the band is a real sheet
+     with a subtle expression: report it as small, do not throw it away. */
+  reports[k]={inside:rp.inside,outside:rp.outside,focus:rp.focus,fit:fit,scale:aligns[k].s,band:band};
+  if(rp.inside<4.5 && rp.focus<3.0){
+    reports[k].verdict='不合格・ほぼ同じ絵';
     markSlot(k,'ほぼ同じ絵',true);
-    setupLine('その絵は「通常」とほとんど同じです。'+band+'が変わっていないので、表情も変わりません（'+band+'の変化 '+rp.inside.toFixed(1)+'）。もう一度、'+band+'をはっきり変えて作ってください。');
+    setupLine('その絵は「通常」とほとんど同じです。'+band+'が変わっていないので、表情も変わりません（変化 '+rp.inside.toFixed(1)+'、集中度 '+rp.focus.toFixed(1)+'）。もう一度、'+band+'をはっきり変えて作ってください。');
   }else if(rp.focus<1.8){
+    reports[k].verdict='不合格・'+band+'以外も変化';
     markSlot(k,band+'以外も変化',true);
     setupLine(band+'の外も同じくらい変わっています（集中度 '+rp.focus.toFixed(1)+'、目安は3以上）。'+band+'だけを変えた絵にしてください。');
   }else{
+    reports[k].verdict = rp.inside<10 ? '合格・変化は小さめ' : '合格';
     markSlot(k,'変化'+rp.inside.toFixed(0)+' / 集中度'+rp.focus.toFixed(1),true);
     if(rp.inside<10){
-      setupLine(band+'は変わっていますが、変化は小さめです（'+rp.inside.toFixed(1)+'）。物足りなければ、もっと大きく変えた絵で作り直してください。集中度 '+rp.focus.toFixed(1)+' は良好です。');
+      setupLine(band+'だけが変わっています（集中度 '+rp.focus.toFixed(1)+'）。合格です。ただし変化そのものは小さめなので（'+rp.inside.toFixed(1)+'）、表情が弱く感じたら、もっとはっきり変えた絵で作り直してください。');
     }else{
       setupLine(band+'がちゃんと変わっています（'+band+'の変化 '+rp.inside.toFixed(1)+'、集中度 '+rp.focus.toFixed(1)+'）。');
     }
@@ -1125,6 +1148,60 @@ function recipeText(r){
          COMMON_KEEP+'\n\n【変えるところ】\n'+r.change+
          '\n\n【できたかどうかの判定】\n・'+r.check;
 }
+/* Copying was written against navigator.clipboard alone and called a fallback
+   that did not exist, so on any browser that refuses the async clipboard the
+   button threw instead of copying. */
+function fallback(text,done){
+  var ta=document.createElement('textarea');
+  ta.value=text;
+  ta.setAttribute('readonly','');
+  ta.style.cssText='position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+  document.body.appendChild(ta);
+  ta.select(); ta.setSelectionRange(0,text.length);
+  var ok=false;
+  try{ ok=document.execCommand('copy'); }catch(e){}
+  document.body.removeChild(ta);
+  if(ok){ done(); return; }
+  /* Neither route worked: show the text so it can be selected by hand rather
+     than leaving a button that silently does nothing. */
+  var box=document.getElementById('copyout');
+  if(box){ box.textContent=text; box.hidden=false; }
+}
+function copyVia(text,btn,label){
+  var done=function(){ btn.textContent='コピーしました'; setTimeout(function(){ btn.textContent=label; },1600); };
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done,function(){ fallback(text,done); });
+  else fallback(text,done);
+}
+
+/* One block covering every slot: what is loaded, how it scored, and whether it
+   survived being stored. I never see the pictures, so this is the evidence. */
+function faceReport(){
+  var L=['澪 顔の状態'];
+  var own=0;
+  SLOTS.forEach(function(sl){
+    var k=sl.k, stored=false;
+    try{ stored = !!localStorage.getItem('mio.img.'+k); }catch(e){}
+    if(stored) own++;
+    if(!images[k]){ L.push('・'+sl.label+'：未設定'); return; }
+    var r=reports[k], size=images[k].width+'×'+images[k].height;
+    var line='・'+sl.label+'：'+size+(stored?'／保存済み':'／保存なし（内蔵の絵）');
+    if(k==='base'){ L.push(line); return; }
+    if(!r){ L.push(line+'／判定なし'); return; }
+    if(r.inside==null){ L.push(line+'／'+r.verdict+'（ずれ '+(r.fit||0).toFixed(1)+'）'); return; }
+    L.push(line+'／'+r.verdict+'　変化'+r.inside.toFixed(1)+' 外'+r.outside.toFixed(1)+
+           ' 集中度'+r.focus.toFixed(1)+' 倍率'+r.scale.toFixed(2)+' ずれ'+r.fit.toFixed(1));
+  });
+  L.push('目の位置：'+(eyesSet?'設定済み':'自動')+' 左'+eyes.lx.toFixed(3)+','+eyes.ly.toFixed(3)+
+         ' 右'+eyes.rx.toFixed(3)+','+eyes.ry.toFixed(3));
+  L.push('口：位置'+mouth.x.toFixed(3)+','+mouth.y.toFixed(3)+' 大きさ'+mouth.w+' 隠す範囲'+mouth.cover);
+  L.push('自分で入れた絵：'+own+'枚 / '+SLOTS.length+'枠');
+  return L.join('\n');
+}
+(function(){
+  var b=document.getElementById('copystate');
+  if(b) b.addEventListener('click',function(){ copyVia(faceReport(),b,'判定をまとめてコピー'); });
+})();
+
 (function(){
   var wrap=document.getElementById('recipes');
   RECIPES.forEach(function(r){
@@ -1133,11 +1210,7 @@ function recipeText(r){
     var pre=document.createElement('pre'); pre.textContent=recipeText(r);
     var btn=document.createElement('button'); btn.className='mini'; btn.type='button';
     btn.textContent='この文面をコピー';
-    btn.addEventListener('click',function(){
-      var t=recipeText(r), done=function(){ btn.textContent='コピーしました'; setTimeout(function(){ btn.textContent='この文面をコピー'; },1600); };
-      if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(done,function(){ fallback(t,done); });
-      else fallback(t,done);
-    });
+    btn.addEventListener('click',function(){ copyVia(recipeText(r),btn,'この文面をコピー'); });
     box.appendChild(h); box.appendChild(pre); box.appendChild(btn);
     wrap.appendChild(box);
   });
