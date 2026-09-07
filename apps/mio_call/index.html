@@ -398,6 +398,7 @@ var calibrating=false;
 
 /* eyes drive both the eye band and the brow band above it */
 var eyes={lx:0.40,ly:0.42,rx:0.60,ry:0.42}, eyesSet=false, eyeRetried=false;
+var eyeFail='';                              /* why the last auto-detection was refused */
 var layerCache={};                          /* slot -> masked region canvas */
 
 /* what is showing now, and what it is easing towards */
@@ -553,8 +554,14 @@ function useBuiltIn(withCalibration){
     try{ localStorage.setItem('mio.calFor','builtin'); }catch(e){}
   }
   setSlotImage('base',BUILTIN.base,false);
-  setSlotImage('eyeClosed',BUILTIN.eyeClosed,false);
-  rlog('内蔵の顔を使用');
+  /* Only fill the closed-eye slot when it is empty. Loading it unconditionally
+     overwrote a sheet the viewer had chosen, every time they opened the page,
+     for as long as they were still on the built-in neutral face. */
+  var ownClosed=null;
+  try{ ownClosed=localStorage.getItem('mio.img.eyeClosed'); }catch(e){}
+  if(ownClosed) setSlotImage('eyeClosed',ownClosed,false);
+  else setSlotImage('eyeClosed',BUILTIN.eyeClosed,false);
+  rlog('内蔵の顔を使用'+(ownClosed?'（閉じた目は自分の絵）':''));
 }
 
 /* Align, cut and judge one sheet. A sheet stored in the browser can finish
@@ -565,7 +572,7 @@ function reviewSheet(k,force){
   if(!images.base||!images[k]||k==='base') return;
   if(reviewed[k]&&!force) return;      /* aligning seven sheets twice is wasted work */
   reviewed[k]=true;
-  var band = USE[k]==='brow' ? '眉' : '目';
+  var band = USE[k]==='brow' ? '眉' : '目', needHand=false;
   var fit=alignSheet(k);
   buildLayer(k);
   if(fit>26){
@@ -585,8 +592,13 @@ function reviewSheet(k,force){
       rebuildLayers();
       rlog('目の帯が合っていないので測り直した');
       setupLine('目の帯が目からずれていたので、測り直して合わせました。');
-      reviewSheet(k,true); return;
+      rejudgeAll(); return;
     }
+    /* The measurement was refused, so the bands are still wrong and every
+       verdict below is being taken against the wrong part of the face.
+       Say that last, after the verdict, or the verdict's own message
+       overwrites the only line that tells the viewer what to do. */
+    needHand=true;
   }
   rlog('差分 '+k+': '+band+'の中'+rp.inside.toFixed(1)+' / 外'+rp.outside.toFixed(1)+' / 集中度'+rp.focus.toFixed(1));
   /* Only reject what is provably the same picture. Size alone cannot tell a
@@ -622,6 +634,18 @@ function reviewSheet(k,force){
       setupLine(band+'がちゃんと変わっています（'+band+'の変化 '+rp.inside.toFixed(1)+'、集中度 '+rp.focus.toFixed(1)+'）。');
     }
   }
+  if(needHand){
+    setupLine('目の位置を自動で測れませんでした（'+(eyeFail||'理由不明')+'）。'
+      +'このままでは目と眉の帯がずれたまま判定されるので、上の判定はあてになりません。'
+      +'「目の位置を合わせる」を押して、左目・右目の順に中心をタップしてください。そのあと全部を測り直します。');
+  }
+}
+
+/* Anything that moves a band invalidates every judgement made against it. */
+function rejudgeAll(){
+  reviewed={};
+  Object.keys(images).forEach(function(k){ if(k!=='base') reviewSheet(k,true); });
+  draw(true);
 }
 
 function setSlotImage(k,dataUrl,persist){
@@ -723,17 +747,67 @@ function autoEyes(force){
   var N=96, A=greyOf(images.base,N), B=greyAligned('eyeClosed',N);
   var diff=new Float32Array(N*N), max=0, i;
   for(i=0;i<diff.length;i++){ diff[i]=Math.abs(A[i]-B[i]); if(diff[i]>max) max=diff[i]; }
-  if(max<18) return false;                       /* the sheets barely differ */
-  var thr=max*0.45, L={x:0,y:0,n:0}, R={x:0,y:0,n:0}, x, y;
+  if(max<18){ eyeFail='2枚の絵がほとんど同じ'; return false; }   /* nothing to locate */
+  /* Averaging every changed pixel in each half assumes the eyes are the only
+     thing that moved. Two separate renders of the same character do not
+     honour that: hair strands and clothing differ too, and one dark patch
+     low on the right drags that half's average down onto it. Reproduced by
+     painting such a patch onto the closed-eye sheet — the right eye landed at
+     y=0.42 against the left eye's 0.30, a 55% tilt, and that matches what a
+     real device reported (0.301 against 0.484, 56%).
+
+     So use what is actually known about eyes: there are two, they sit level,
+     and there is one on each side. Score each row by the SMALLER of its two
+     halves' change, which a lone blob cannot raise, and take the best row. */
+  var blur=new Float32Array(N*N), x, y, i, j, sum2, cnt;
   for(y=0;y<N;y++) for(x=0;x<N;x++){
-    if(diff[y*N+x]<thr) continue;
-    var t = x<N/2 ? L : R;
-    t.x+=x; t.y+=y; t.n++;
+    sum2=0; cnt=0;
+    for(j=Math.max(0,y-1);j<=Math.min(N-1,y+1);j++)
+      for(i=Math.max(0,x-1);i<=Math.min(N-1,x+1);i++){ sum2+=diff[j*N+i]; cnt++; }
+    blur[y*N+x]=sum2/cnt;
   }
-  if(L.n<8||R.n<8) return false;
-  var lx=L.x/L.n/N, ly=L.y/L.n/N, rx=R.x/R.n/N, ry=R.y/R.n/N;
-  if(rx-lx<0.06||rx-lx>0.55) return false;       /* not a plausible pair of eyes */
+  var bestRow=-1, bestScore=0, half=N>>1;
+  for(y=Math.round(N*0.05); y<Math.round(N*0.80); y++){
+    var ls=0, rs=0;
+    for(x=0;x<half;x++) ls+=blur[y*N+x];
+    for(x=half;x<N;x++) rs+=blur[y*N+x];
+    var sc=Math.min(ls,rs);
+    if(sc>bestScore){ bestScore=sc; bestRow=y; }
+  }
+  if(bestRow<0){ eyeFail='目の高さが決まらない'; return false; }
+
+  /* Within a band around that row, take each side's strongest point and a
+     small centroid around it, so a far-away cluster cannot pull it. */
+  var band=Math.max(2,Math.round(N*0.05));
+  function side(x0,x1){
+    var px=-1, py=-1, pv=0;
+    for(y=Math.max(0,bestRow-band); y<=Math.min(N-1,bestRow+band); y++)
+      for(x=x0;x<x1;x++){ var v=blur[y*N+x]; if(v>pv){ pv=v; px=x; py=y; } }
+    if(px<0) return null;
+    var r=Math.max(2,Math.round(N*0.06)), sx=0, sy=0, sw=0;
+    for(y=Math.max(0,py-r); y<=Math.min(N-1,py+r); y++)
+      for(x=Math.max(0,px-r); x<=Math.min(N-1,px+r); x++){
+        var w=blur[y*N+x]; if(w<pv*0.45) continue;
+        sx+=x*w; sy+=y*w; sw+=w;
+      }
+    return sw ? {x:sx/sw, y:sy/sw, n:sw} : {x:px, y:py, n:pv};
+  }
+  var L=side(0,half), R=side(half,N);
+  if(!L||!R){ eyeFail='変化した点が少なすぎる'; return false; }
+  var lx=L.x/N, ly=L.y/N, rx=R.x/N, ry=R.y/N;
+  if(rx-lx<0.06||rx-lx>0.55){ eyeFail='間隔が顔として不自然'; return false; }
+  /* Two eyes sit level. A measurement putting one far below the other has
+     latched onto something that is not an eye — hair moving between the two
+     sheets, a shoulder, a shadow — and every band derived from it is wrong,
+     which then fails every sheet that is judged against it. Refuse it rather
+     than pass bad geometry on. Seen on a real device: 0.301 against 0.484
+     with a spread of 0.325, a 56% tilt, which failed all six sheets. */
+  if(Math.abs(ly-ry) > (rx-lx)*0.25){
+    eyeFail='左右の高さが違いすぎる（傾き'+Math.round(Math.abs(ly-ry)/(rx-lx)*100)+'%）';
+    return false;
+  }
   eyes={lx:lx,ly:ly,rx:rx,ry:ry};
+  eyeFail='';
   eyesSet=false;                       /* measured, not chosen: measure again if it is off */
   try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes));
        localStorage.removeItem('mio.eyesSet'); }catch(e){}
@@ -1191,10 +1265,28 @@ function faceReport(){
     L.push(line+'／'+r.verdict+'　変化'+r.inside.toFixed(1)+' 外'+r.outside.toFixed(1)+
            ' 集中度'+r.focus.toFixed(1)+' 倍率'+r.scale.toFixed(2)+' ずれ'+r.fit.toFixed(1));
   });
-  L.push('目の位置：'+(eyesSet?'設定済み':'自動')+' 左'+eyes.lx.toFixed(3)+','+eyes.ly.toFixed(3)+
-         ' 右'+eyes.rx.toFixed(3)+','+eyes.ry.toFixed(3));
+  var sp=Math.abs(eyes.rx-eyes.lx), tilt=sp>0 ? Math.abs(eyes.ly-eyes.ry)/sp : 0;
+  L.push('目の位置：'+(eyesSet?'手で設定':'自動')+' 左'+eyes.lx.toFixed(3)+','+eyes.ly.toFixed(3)+
+         ' 右'+eyes.rx.toFixed(3)+','+eyes.ry.toFixed(3)+
+         ' 間隔'+sp.toFixed(3)+' 傾き'+Math.round(tilt*100)+'%'+(eyeFail?'（自動測定を拒否：'+eyeFail+'）':''));
   L.push('口：位置'+mouth.x.toFixed(3)+','+mouth.y.toFixed(3)+' 大きさ'+mouth.w+' 隠す範囲'+mouth.cover);
   L.push('自分で入れた絵：'+own+'枚 / '+SLOTS.length+'枠');
+
+  /* Two conclusions worth drawing here rather than leaving to be eyeballed,
+     because each one invalidates every number above it. */
+  if(tilt>0.25) L.push('！目の位置が傾きすぎています。帯がずれているので、上の判定はあてになりません。');
+  var outs=[], n=0;
+  Object.keys(reports).forEach(function(k){
+    if(reports[k] && reports[k].outside!=null){ outs.push(reports[k].outside); n++; }
+  });
+  if(n>=2){
+    var mean=outs.reduce(function(a,b){return a+b;},0)/n;
+    L.push('帯の外の差の平均：'+mean.toFixed(1)+'（'+n+'枚）');
+    if(mean>4){
+      L.push('！どの絵も顔全体が「通常」と違っています。表情の絵は、いま入っている「通常」とは別の絵から作られた可能性が高いです。'
+        +'Gemini に渡した元の絵を「通常」の枠に入れてください。');
+    }
+  }
   return L.join('\n');
 }
 (function(){
@@ -1719,11 +1811,15 @@ canvas.addEventListener('click',function(e){
     if(nx2<0||nx2>1||ny2<0||ny2>1) return;
     if(eyeStep===0){ eyes.lx=nx2; eyes.ly=ny2; eyeStep=1; setupLine('次に右目の中心をタップしてください。'); }
     else{
-      eyes.rx=nx2; eyes.ry=ny2; eyeStep=0; calibrating=false; eyesSet=true;
+      eyes.rx=nx2; eyes.ry=ny2; eyeStep=0; calibrating=false; eyesSet=true; eyeFail='';
       try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes));
            localStorage.setItem('mio.eyesSet','1'); }catch(e2){}
       rebuildLayers();
-      setupLine('目と眉の範囲を覚えました。');
+      /* Every verdict was measured against the old bands, so all of them are
+         now stale. Leaving them on screen tells the viewer their sheets
+         failed when what failed was the band they were judged against. */
+      rejudgeAll();
+      setupLine('目と眉の範囲を覚えました。表情の絵をすべて測り直しました。');
     }
     draw(true); return;
   }
@@ -1744,6 +1840,14 @@ document.getElementById('mwidth').addEventListener('input',function(e){
   mouth.w=+e.target.value; store(); draw(true);
 });
 document.getElementById('reset').addEventListener('click',function(){
+  /* This throws away every sheet the viewer has loaded, and it sits next to
+     the buttons they press while checking those sheets. Ask first, and say
+     how many are about to go. */
+  var loaded=0;
+  SLOTS.forEach(function(sl){
+    try{ if(localStorage.getItem('mio.img.'+sl.k)) loaded++; }catch(e){}
+  });
+  if(loaded && !window.confirm('自分で入れた絵 '+loaded+'枚を消して、最初の顔に戻します。よろしいですか？\n（消えるのはこのアプリの中だけで、元のファイルは残ります）')) return;
   SLOTS.forEach(function(sl){
     try{ localStorage.removeItem('mio.img.'+sl.k); localStorage.removeItem('mio.align.'+sl.k); }catch(e){}
     delete images[sl.k]; delete aligns[sl.k]; markSlot(sl.k,'未設定',false);
