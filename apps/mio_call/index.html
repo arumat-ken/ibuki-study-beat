@@ -216,6 +216,7 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
       <p class="hint" id="dictate"></p>
       <p class="hint">はじめて話しかけたとき「Use Claude」の確認が出ます。これは claude.ai の画面で、澪の返事を作るために Claude を呼ぶ許可です。マイクや外部サービスとは関係ありません。</p>
       <label class="check"><input type="checkbox" id="autosend" checked> 入力が止まったら自動で送る</label>
+      <label class="check"><input type="checkbox" id="handsfree"> ずっと聞いてもらう（端末の音声コントロールを使う・画面に触れない）</label>
     </div>
 
     <div class="side">
@@ -356,22 +357,24 @@ var USE={}; SLOTS.forEach(function(x){ USE[x.k]=x.use; });
 
 /* the matrix, as a table rather than as pictures */
 /* Beyond the sheets, each feeling carries things the code can do to the
-   picture it already has, with no warping: how far the eyes close (a partial
-   blend to the closed-eye sheet), how she holds her head, warmth in the
-   cheeks, how fast she breathes, and a one-off movement when it arrives. */
+   picture it already has, with no warping: how she holds her head, warmth in
+   the cheeks, how fast she breathes, and a one-off movement when it arrives.
+   Every one of these is continuous by nature. What is NOT here is any
+   half-strength version of a drawing: a sheet is shown or it is not, because
+   a drawing at half opacity is two faces, not a milder face. */
 var EMO={
   neutral  :{brow:null,        eye:null,       tears:0,    k:0.0,
-             squint:0.00, tilt: 0.0, dy: 0.000, sc:1.000, blush:0.00, breath:1.00, kick:0.0},
+             tilt: 0.0, dy: 0.000, sc:1.000, blush:0.00, breath:1.00, kick:0.0},
   relaxed  :{brow:null,        eye:'eyeSmile', tears:0,    k:0.45,
-             squint:0.30, tilt: 1.0, dy: 0.004, sc:1.000, blush:0.14, breath:0.82, kick:0.3},
+             tilt: 1.0, dy: 0.004, sc:1.000, blush:0.14, breath:0.82, kick:0.3},
   happy    :{brow:'browUp',    eye:'eyeSmile', tears:0,    k:1.0,
-             squint:0.44, tilt:-0.8, dy:-0.006, sc:1.012, blush:0.32, breath:1.18, kick:1.0},
+             tilt:-0.8, dy:-0.006, sc:1.012, blush:0.32, breath:1.18, kick:1.0},
   sad      :{brow:'browSad',   eye:'eyeTear',  tears:0.55, k:0.9,
-             squint:0.24, tilt: 1.6, dy: 0.014, sc:0.994, blush:0.06, breath:0.76, kick:-0.7},
+             tilt: 1.6, dy: 0.014, sc:0.994, blush:0.06, breath:0.76, kick:-0.7},
   angry    :{brow:'browAngry', eye:'eyeWide',  tears:0,    k:0.9,
-             squint:0.06, tilt:-0.5, dy:-0.002, sc:1.020, blush:0.20, breath:1.34, kick:0.8},
+             tilt:-0.5, dy:-0.002, sc:1.020, blush:0.20, breath:1.34, kick:0.8},
   surprised:{brow:'browUp',    eye:'eyeWide',  tears:0,    k:1.0,
-             squint:0.00, tilt: 0.0, dy:-0.012, sc:1.034, blush:0.10, breath:1.45, kick:-1.6}
+             tilt: 0.0, dy:-0.012, sc:1.034, blush:0.10, breath:1.45, kick:-1.6}
 };
 /* Her face ships with the page. Nothing to load, nothing to calibrate, and
    nothing that a cleared browser store can take away. */
@@ -412,8 +415,8 @@ var wantBrow=null, wantEye=null;
 var browAmt=0, eyeAmt=0, tearWant=0, tearAmt=0, emoK=0;
 
 /* pose and mood, all eased so nothing snaps */
-var poseT=0, poseD=0, poseS=1, squint=0, blush=0, breathRate=1, attend=0;
-var wantT=0, wantD=0, wantS=1, wantSquint=0, wantBlush=0, wantBreath=1;
+var poseT=0, poseD=0, poseS=1, blush=0, breathRate=1, attend=0;
+var wantT=0, wantD=0, wantS=1, wantBlush=0, wantBreath=1;
 var kickV=0, kickX=0;                 /* the movement a new feeling arrives with */
 /* A gesture is chosen per reply, separately from the feeling: agreeing while
    sad and wondering while cheerful are both ordinary. */
@@ -440,7 +443,6 @@ function setExpression(k,strength,tears){
   wantBrow = (e.brow&&images[e.brow]) ? e.brow : null;
   wantEye  = (e.eye &&images[e.eye ]) ? e.eye  : null;
   tearWant = Math.max(0,Math.min(1, (typeof tears==='number'?tears:e.tears) )) * (0.35+0.65*emoK);
-  wantSquint = (e.squint||0)*emoK;
   wantT      = (e.tilt||0)*emoK;
   wantD      = (e.dy||0)*emoK;
   wantS      = 1+((e.sc||1)-1)*emoK;
@@ -1070,7 +1072,7 @@ function draw(force){
   var key=[Math.round(vis.w*100),Math.round(vis.h*100),Math.round(breath*400),
            calibrating,showBrow,showEye,Math.round(browAmt*50),Math.round(eyeAmt*50),
            Math.round(blinkAmt*40),Math.round(tearAmt*50),tearAmt>0.01?Math.round(tsec*20):0,
-           Math.round(squint*50),Math.round(blush*50),Math.round(poseT*40),
+           Math.round(blush*50),Math.round(poseT*40),
            Math.round(poseD*3000),Math.round(poseS*400),Math.round(kickX*400),
            Math.round(attend*4000),Math.round((gNod+gTilt+gShake)*40),
            (gNod+gTilt+gShake)>0.02?Math.round(gT*25):0,
@@ -1100,10 +1102,13 @@ function draw(force){
     /* the expression sheets share this framing, so they lay straight over it */
     if(showBrow) drawLayer(showBrow,browAmt,ox,oy,iw,ih);
     if(showEye)  drawLayer(showEye, eyeAmt, ox,oy,iw,ih);
-    /* A partial blend to the closed-eye sheet is a narrowed eye — a smile or
-       a heavy lid — without another drawing of her. */
-    var lid=Math.max(blinkAmt,squint);
-    if(lid>0.01) drawLayer('eyeClosed',lid,ox,oy,iw,ih);
+    /* Narrowing the eyes by half-drawing the closed sheet over the open one
+       was the worst of the double exposures: it never blinked away, so her
+       eyes carried a second pair of lids for as long as the feeling lasted.
+       A narrowed eye needs its own drawing — that is what the smiling-eye
+       sheet is for — so only the blink reaches for the closed one, and only
+       while it is properly shut. */
+    if(blinkAmt>=0.5) drawLayer('eyeClosed',1,ox,oy,iw,ih);
     if(blush>0.01) drawBlush(ox,oy,iw,ih,blush);
     drawTears(ox,oy,iw,ih,tearAmt,tsec);
     drawMouth(ox+mouth.x*iw, oy+mouth.y*ih, mouth.w*scale, mouth.cover*scale);
@@ -1162,11 +1167,22 @@ function rebuildLayers(){
   Object.keys(images).forEach(function(k){ if(k!=='base') buildLayer(k); });
   draw(true);
 }
-function drawLayer(k,alpha,ox,oy,iw,ih){
-  var L=layerCache[k]; if(!L||alpha<0.01) return;
-  fx.globalAlpha=alpha;
+/* Drawn at a fraction of opacity, a sheet does not read as a weaker version
+   of that expression — it reads as two faces at once. Half of an open eye
+   over half of a closed one is not a half-closed eye; it is a double
+   exposure, and every eyelid and brow line shows twice. That is visible at
+   rest wherever the amount settles part-way (a 0.45 feeling left the raised
+   brow permanently ghosted over the resting one) and on every blink, whose
+   ramp passes through the middle on its way.
+
+   Hand-drawn animation has never solved this by dissolving. It cuts: each
+   frame shows one drawing. So the amount decides WHICH drawing, not how
+   transparent it is. Strength still varies — through the head's tilt and
+   scale, the breathing, the blush, the tears, the arrival movement — all of
+   which are continuous by nature and cost no second drawing. */
+function drawLayer(k,amount,ox,oy,iw,ih){
+  var L=layerCache[k]; if(!L||amount<0.5) return;
   fx.drawImage(L.canvas, ox+L.reg.x*iw, oy+L.reg.y*ih, L.reg.w*iw, L.reg.h*ih);
-  fx.globalAlpha=1;
 }
 
 /* Warmth in the cheeks, laid over the picture rather than painted into it. */
@@ -1503,6 +1519,7 @@ function stopSpeaking(){
   utterSeq++;
   try{ if(window.speechSynthesis) speechSynthesis.cancel(); }catch(e){}
   speaking=false; visTarget='x';
+  closeEchoWindow();
 }
 
 function speak(text,kana,done){
@@ -1522,6 +1539,8 @@ function speak(text,kana,done){
     if(settled) return; settled=true;          /* onerror then onend both fire */
     if(myId!==utterSeq) return;                /* superseded: stay silent */
     speaking=false; visTarget='x'; setState('idle');
+    closeEchoWindow();
+    if(handsFree) keepFocus();
     if(t0){
       var secs=(performance.now()-t0)/1000;
       /* adapt to this device's actual speaking rate for the next utterance */
@@ -1846,16 +1865,60 @@ var typed=document.getElementById('typed');
 var isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||
           (/Macintosh/.test(navigator.userAgent)&&(navigator.maxTouchPoints||0)>1);
 var isMac=/Macintosh/.test(navigator.userAgent)&&!isIOS;
+/* Two different things get called "the device's voice input", and only one of
+   them is hands-free. The dictation key (fn fn, or the microphone on the
+   keyboard) has to be pressed for every single sentence, which is a touch per
+   utterance and defeats the point. Voice Control is an accessibility feature
+   that stays on: switch it on once and it types everything you say into
+   whatever holds focus, with no touching at all. */
 function dictateHow(){
-  if(isIOS) return '入力欄をタップして、キーボードのマイクの絵を押してから話してください。';
-  if(isMac) return '入力欄をクリックして、fn キーを2回押す（または「編集」メニューの「音声入力を開始」）と話せます。';
+  if(isIOS) return '入力欄をタップして、キーボードのマイクの絵を押してから話してください（1回の発言ごとに押します）。';
+  if(isMac) return '入力欄をクリックして、fn キーを2回押します（1回の発言ごとに押します）。';
   return 'お使いの端末の音声入力機能をお使いください。';
 }
-document.getElementById('dictate').textContent='声で入れられます。'+dictateHow();
+function handsFreeHow(){
+  if(isIOS) return '「設定」→「アクセシビリティ」→「音声コントロール」をオンにすると、'
+                 +'話した言葉がそのまま入力欄に入り続けます。画面に触れる必要はありません。';
+  if(isMac) return '「システム設定」→「アクセシビリティ」→「音声コントロール」をオンにすると、'
+                 +'話した言葉がそのまま入力欄に入り続けます。fn キーを押す必要はありません。';
+  return 'お使いの端末に常時オンの音声入力（音声コントロールなど）があれば、それが使えます。';
+}
+var handsFree=false;
+try{ handsFree = localStorage.getItem('mio.handsfree')==='1'; }catch(e){}
+function paintDictateLine(){
+  var el=document.getElementById('dictate');
+  el.innerHTML='';
+  var p1=document.createElement('div');
+  p1.innerHTML = handsFree
+    ? '<b>ハンズフリーで話しています。</b>'+handsFreeHow()
+      +'澪が話している間に入った言葉は、彼女自身の声なので捨てます。'
+      +'<b>イヤホンを使うと確実です。</b>'
+    : '声で入れられます。'+dictateHow()
+      +'<br><b>毎回押すのが面倒なら、下の「ずっと聞いてもらう」を入れてください。</b>';
+  el.appendChild(p1);
+}
+paintDictateLine();
 
 var sendTimer=null;
+
+/* Hands-free dictation (macOS / iOS Voice Control) never stops listening, so
+   it hears her reply through the speaker and types it into the same box —
+   which then auto-sends, and she answers herself, forever. Nothing typed
+   while she is speaking is the viewer, so throw it away. The window stays
+   open a moment after she stops, for the tail the recogniser is still
+   transcribing. Headphones remove the problem at the source; this keeps the
+   loop from starting for anyone using the speaker. */
+var echoUntil=0;
+function echoWindow(){ return speaking || performance.now() < echoUntil; }
+function closeEchoWindow(){ echoUntil = performance.now() + 900; }
+
 function armAutoSend(){
   clearTimeout(sendTimer);
+  if(echoWindow()){
+    /* her own words, arriving through the microphone */
+    typed.value='';
+    return;
+  }
   if(!document.getElementById('autosend').checked) return;
   if(!typed.value.trim()) return;
   /* dictation drops text in without a "finished" event, so a pause is the
@@ -1867,8 +1930,37 @@ function sendTyped(){
   var t=typed.value.trim(); if(!t) return;
   typed.value='';
   if(!started){ started=true; hangBtn.disabled=false; talkBtn.textContent='話す'; }
+  /* Dictation types into whatever holds focus. Sending emptied the box but
+     also let focus go, so the next sentence landed nowhere and the viewer had
+     to touch the screen again — the thing hands-free is meant to avoid. */
+  keepFocus();
   ask(t);
 }
+/* Focus has to come back after her turn as well: on iOS, speaking can take
+   it away. Refuse it while a text field is deliberately not wanted (during
+   calibration taps on the picture). */
+function keepFocus(){
+  if(calibrating) return;
+  try{ typed.focus({preventScroll:true}); }catch(e){ try{ typed.focus(); }catch(e2){} }
+}
+(function(){
+  var cb=document.getElementById('handsfree');
+  cb.checked=handsFree;
+  cb.addEventListener('change',function(){
+    handsFree=cb.checked;
+    try{ localStorage.setItem('mio.handsfree',handsFree?'1':'0'); }catch(e){}
+    paintDictateLine();
+    if(handsFree){
+      document.getElementById('autosend').checked=true;
+      keepFocus();
+      sysLine('ずっと聞いてもらう設定にしました。'+handsFreeHow()
+        +'あとは話しかけるだけで、送信も自動です。');
+    }else{
+      sysLine('元に戻しました。1回ずつ音声入力を押してください。');
+    }
+    setDiag('聞き取りの方法', handsFree?'端末の音声コントロール（常時）':'端末の音声入力（都度）');
+  });
+})();
 document.getElementById('send').addEventListener('click',sendTyped);
 typed.addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); sendTyped(); } });
 typed.addEventListener('input',armAutoSend);
@@ -2002,25 +2094,19 @@ function loop(now){
   var k=1-Math.exp(-dt/tau);
   vis.w+=(t[0]-vis.w)*k; vis.h+=(t[1]-vis.h)*k;
 
-  /* Each band eases on its own: brows can settle into a new shape while the
-     eyes are still arriving. A band swapping sheets fades out first, so two
-     eye shapes are never on screen together. */
-  var ek=1-Math.exp(-dt/0.10);
-  if(showBrow!==wantBrow){
-    browAmt+=(0-browAmt)*ek;
-    if(browAmt<0.02){ browAmt=0; showBrow=wantBrow; }
-  }else browAmt+=((showBrow?emoK:0)-browAmt)*ek;
-  if(showEye!==wantEye){
-    eyeAmt+=(0-eyeAmt)*ek;
-    if(eyeAmt<0.02){ eyeAmt=0; showEye=wantEye; }
-  }else eyeAmt+=((showEye?emoK:0)-eyeAmt)*ek;
+  /* Since a sheet is either shown or not, there is nothing to ease: fading
+     one out before the other in only inserted a frame of neutral between two
+     expressions. Swap the drawing and be done. A feeling weak enough to sit
+     under half strength keeps the resting face and shows itself in the pose. */
+  showBrow=wantBrow; showEye=wantEye;
+  browAmt = (showBrow && emoK>=0.35) ? 1 : 0;
+  eyeAmt  = (showEye  && emoK>=0.35) ? 1 : 0;
   tearAmt+=(tearWant-tearAmt)*(1-Math.exp(-dt/(tearWant>tearAmt?0.9:2.2)));
 
   /* pose eases in over about a third of a second; the arrival movement is a
      damped spring, so a feeling lands with a motion rather than a jump */
   var pk=1-Math.exp(-dt/0.30);
   poseT+=(wantT-poseT)*pk; poseD+=(wantD-poseD)*pk; poseS+=(wantS-poseS)*pk;
-  squint+=(wantSquint-squint)*(1-Math.exp(-dt/0.16));
   blush+=(wantBlush-blush)*(1-Math.exp(-dt/0.45));
   breathRate+=(wantBreath-breathRate)*pk;
   kickV += -kickX*46*dt - kickV*7.0*dt;
