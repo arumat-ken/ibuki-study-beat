@@ -453,13 +453,38 @@ function setExpression(k,strength,tears){
    give us. A brow sits 0.3-0.45 spacings above the eye centre, so the brow
    band runs 0.82 to 0.26 above and the eye band takes everything below it;
    they must not overlap or the upper layer re-imposes the other's feature. */
+/* The bands are placed relative to the gap between the eyes. That gap is
+   measured across the picture and the offsets are applied down it, and x and
+   y here are fractions of two different lengths — so an offset written as
+   0.84 of the eye gap was really 0.84 of the picture's HEIGHT, which on this
+   3:2 portrait is half again as far as intended. The brow band ended up
+   spanning 0.36 to 1.27 eye-gaps above the eye line instead of 0.24 to 0.84:
+   sitting on the forehead, above the brows it is named for. Convert the gap
+   into height units before stepping vertically with it. */
+function eyeGapY(){
+  var b=images.base, a = b && b.height ? b.width/b.height : 0.666;
+  return Math.abs(eyes.rx-eyes.lx)*a;
+}
+/* Where the features actually are, read off her face against a ruler:
+
+      brows   y 0.252 - 0.272     0.17 - 0.29 eye gaps above the eye line
+      eyes    y 0.283 - 0.315     0.10 above  - 0.11 below
+      eye line y 0.298
+
+   The old constants put the brow band 0.24 to 0.84 gaps up, which is the
+   forehead: the brows sat below its lower edge, inside the EYE band. So a
+   brow sheet's change was scored as happening outside the brow band, and
+   three good brow sheets were failed for it. The bands below cover each
+   feature with a margin and meet at 0.13 gaps above the eye line — between
+   the bottom of the brow and the top of the eye — so neither repaints the
+   other's feature. */
 function eyeRegion(){
-  var cx=(eyes.lx+eyes.rx)/2, cy=(eyes.ly+eyes.ry)/2, sp=Math.abs(eyes.rx-eyes.lx);
-  return {x:cx-sp*0.95, y:cy-sp*0.24, w:sp*1.90, h:sp*0.56};
+  var cx=(eyes.lx+eyes.rx)/2, cy=(eyes.ly+eyes.ry)/2, sp=Math.abs(eyes.rx-eyes.lx), sy=eyeGapY();
+  return {x:cx-sp*0.95, y:cy-sy*0.13, w:sp*1.90, h:sy*0.38};
 }
 function browRegion(){
-  var cx=(eyes.lx+eyes.rx)/2, cy=(eyes.ly+eyes.ry)/2, sp=Math.abs(eyes.rx-eyes.lx);
-  return {x:cx-sp*0.95, y:cy-sp*0.84, w:sp*1.90, h:sp*0.60};
+  var cx=(eyes.lx+eyes.rx)/2, cy=(eyes.ly+eyes.ry)/2, sp=Math.abs(eyes.rx-eyes.lx), sy=eyeGapY();
+  return {x:cx-sp*0.95, y:cy-sy*0.42, w:sp*1.90, h:sy*0.29};
 }
 
 var VISEME={
@@ -622,7 +647,8 @@ function reviewSheet(k,force){
      sheet is called unchanged only when the change is both small AND spread
      across the frame. A small change concentrated in the band is a real sheet
      with a subtle expression: report it as small, do not throw it away. */
-  reports[k]={inside:rp.inside,outside:rp.outside,focus:rp.focus,fit:fit,scale:aligns[k].s,band:band};
+  reports[k]={inside:rp.inside,outside:rp.outside,focus:rp.focus,fit:fit,scale:aligns[k].s,band:band,
+              peakY:rp.peakY,peakV:rp.peakV,browBand:rp.browBand,eyeBand:rp.eyeBand};
   if(rp.inside<4.5 && rp.focus<3.0){
     reports[k].verdict='不合格・ほぼ同じ絵';
     markSlot(k,'ほぼ同じ絵',true);
@@ -631,6 +657,20 @@ function reviewSheet(k,force){
     reports[k].verdict='不合格・'+band+'以外も変化';
     markSlot(k,band+'以外も変化',true);
     setupLine(band+'の外も同じくらい変わっています（集中度 '+rp.focus.toFixed(1)+'、目安は3以上）。'+band+'だけを変えた絵にしてください。');
+  }else if(shiftLooking(k,rp)){
+    /* A picture that is merely offset scores like a good sheet: every strong
+       edge differs, and the brows are strong edges. Two things give it away.
+       The change peaks wherever the strongest edge in the frame is rather
+       than at the feature, and it lights both bands about equally, which a
+       sheet that redraws one feature does not. Measured on the built-in face,
+       the same file moved one pixel: peak at y 0.992 against a brow band of
+       0.234-0.278, and 9.6 in the brow band against 7.4 in the eye band. A
+       real brow sheet peaks at 0.250-0.273 and runs 13-20 against 7.5-8.2. */
+    reports[k].verdict='不合格・絵全体がずれている';
+    markSlot(k,'絵全体がずれている',true);
+    setupLine('この絵は「通常」と同じ絵が少しずれているだけのように見えます'
+      +'（変化の中心が'+band+'の帯の外、目と眉が同じくらい変化）。'
+      +band+'をはっきり変えた絵を作ってください。');
   }else{
     reports[k].verdict = rp.inside<10 ? '合格・変化は小さめ' : '合格';
     markSlot(k,'変化'+rp.inside.toFixed(0)+' / 集中度'+rp.focus.toFixed(1),true);
@@ -826,6 +866,19 @@ function autoEyes(force){
   return true;
 }
 
+/* The signature of an offset picture rather than a redrawn feature: the
+   change peaks outside this slot's band, and the other band changed nearly
+   as much. Both must hold — a genuine sheet fails at most one. */
+function shiftLooking(k,rp){
+  if(rp.peakY==null) return false;
+  var reg = USE[k]==='brow' ? browRegion() : eyeRegion();
+  var pad = reg.h*0.15;
+  if(rp.peakY >= reg.y-pad && rp.peakY <= reg.y+reg.h+pad) return false;
+  var own = USE[k]==='brow' ? rp.browBand : rp.eyeBand;
+  var other = USE[k]==='brow' ? rp.eyeBand : rp.browBand;
+  return own < other*1.35;
+}
+
 /* Does this sheet change what it is supposed to change? The difference from
    the neutral sheet should be concentrated in that slot's band; a sheet whose
    change is tiny, or spread across the whole face, will not read as the
@@ -843,11 +896,47 @@ function sheetReport(k){
   }
   if(!inN||!outN) return null;
   var mi=inS/inN, mo=outS/outN;
+
+  /* A failing sheet has two very different causes that the pass/fail number
+     cannot tell apart: the drawing did not change what it was meant to, or
+     the band is not over the feature. So measure where the change actually
+     is, instead of only how much of it fell inside a band that may be in the
+     wrong place. Scan the rows across the face's width, take off the floor
+     that a regenerated picture carries everywhere, and report the row that
+     stands highest above it. */
+  var er=eyeRegion(), br=browRegion();
+  var x0=Math.max(0,Math.round(Math.min(er.x,br.x)*N));
+  var x1=Math.min(N,Math.round(Math.max(er.x+er.w,br.x+br.w)*N));
+  var rowm=new Float32Array(N), sorted=[];
+  for(y=0;y<N;y++){
+    var rs=0, rn=0;
+    for(x=x0;x<x1;x++){ rs+=Math.abs(A[y*N+x]-B[y*N+x]); rn++; }
+    rowm[y] = rn? rs/rn : 0;
+    sorted.push(rowm[y]);
+  }
+  sorted.sort(function(a,b){ return a-b; });
+  var floor=sorted[Math.floor(sorted.length/2)];
+  var peakY=-1, peakV=0;
+  for(y=0;y<N;y++){ var v=rowm[y]-floor; if(v>peakV){ peakV=v; peakY=y; } }
+
+  /* And how much of the change sits in each of the two bands, so a brow sheet
+     that actually redrew the eyes is distinguishable from a brow sheet whose
+     band is simply too high. */
+  function bandMean(reg){
+    var s2=0, n2=0;
+    for(var yy=0;yy<N;yy++) for(var xx=0;xx<N;xx++){
+      var ax=xx/N, ay=yy/N;
+      if(ax>=reg.x&&ax<=reg.x+reg.w&&ay>=reg.y&&ay<=reg.y+reg.h){ s2+=Math.abs(A[yy*N+xx]-B[yy*N+xx]); n2++; }
+    }
+    return n2? s2/n2 : 0;
+  }
   /* Share of total difference is the wrong measure: the band is about 6% of
      the frame, so area beats magnitude and a sheet that changes only the eyes
      still scores 25%. Compare the densities instead — the genuine closed-eye
      sheet measures 17.3 inside against 3.25 outside. */
-  return {inside:mi, outside:mo, focus: mi/Math.max(mo,0.4)};
+  return {inside:mi, outside:mo, focus: mi/Math.max(mo,0.4),
+          peakY: peakY<0 ? null : peakY/N, peakV: peakV,
+          browBand: bandMean(br), eyeBand: bandMean(er)};
 }
 
 function baseCtx(){
@@ -1273,14 +1362,25 @@ function faceReport(){
     if(k==='base'){ L.push(line); return; }
     if(!r){ L.push(line+'／判定なし'); return; }
     if(r.inside==null){ L.push(line+'／'+r.verdict+'（ずれ '+(r.fit||0).toFixed(1)+'）'); return; }
+    var extra='';
+    if(r.peakY!=null){
+      var cy2=(eyes.ly+eyes.ry)/2, sp2=eyeGapY();
+      var above = sp2>0 ? (cy2-r.peakY)/sp2 : 0;      /* in eye gaps above the eye line */
+      extra=' 変化の中心y'+r.peakY.toFixed(3)+'（目の線の'+(above>=0?'上':'下')+
+            Math.abs(above).toFixed(2)+'目間隔・強さ'+r.peakV.toFixed(1)+'）'+
+            ' 眉帯内'+r.browBand.toFixed(1)+' 目帯内'+r.eyeBand.toFixed(1);
+    }
     L.push(line+'／'+r.verdict+'　変化'+r.inside.toFixed(1)+' 外'+r.outside.toFixed(1)+
-           ' 集中度'+r.focus.toFixed(1)+' 倍率'+r.scale.toFixed(2)+' ずれ'+r.fit.toFixed(1));
+           ' 集中度'+r.focus.toFixed(1)+' 倍率'+r.scale.toFixed(2)+' ずれ'+r.fit.toFixed(1)+extra);
   });
   var sp=Math.abs(eyes.rx-eyes.lx), tilt=sp>0 ? Math.abs(eyes.ly-eyes.ry)/sp : 0;
   var SRC={hand:'手で設定',auto:'自動で測定',default:'未測定（初期値のまま）'};
   L.push('目の位置：'+SRC[eyesSrc]+' 左'+eyes.lx.toFixed(3)+','+eyes.ly.toFixed(3)+
          ' 右'+eyes.rx.toFixed(3)+','+eyes.ry.toFixed(3)+
          ' 間隔'+sp.toFixed(3)+' 傾き'+Math.round(tilt*100)+'%'+(eyeFail?'（自動測定を拒否：'+eyeFail+'）':''));
+  var _er=eyeRegion(), _br=browRegion();
+  L.push('帯の位置：眉 y'+_br.y.toFixed(3)+'〜'+(_br.y+_br.h).toFixed(3)+
+         ' / 目 y'+_er.y.toFixed(3)+'〜'+(_er.y+_er.h).toFixed(3));
   L.push('口：位置'+mouth.x.toFixed(3)+','+mouth.y.toFixed(3)+' 大きさ'+mouth.w+' 隠す範囲'+mouth.cover);
   L.push('自分で入れた絵：'+own+'枚 / '+SLOTS.length+'枠');
 
