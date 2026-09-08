@@ -107,6 +107,43 @@ body.tuning .stage .check{display:none}
      example chips stand down so the column fits inside the screen. */
   body.tuning .stage .check{display:revert}
 }
+/* The on-screen keyboard does not resize the page, it covers it, and the
+   browser then scrolls whatever has focus into what is left — which pushed
+   her face off the top while the box being typed into ended up under the
+   keys anyway. The visual viewport reports how much is actually visible, so
+   pin the two things that matter to that: her face at the top, the box
+   directly above the keyboard, with everything else out of the way. */
+body.kbd{overflow:hidden}
+body.kbd .wrap{padding-bottom:0}
+body.kbd .stage{position:static;padding:0;box-shadow:none}
+body.kbd .tile{
+  position:fixed;left:8px;right:8px;top:6px;z-index:40;
+  height:calc(var(--vvh,100vh) - var(--kb,0px) - 132px);
+  max-height:none;aspect-ratio:auto;margin:0;
+}
+body.kbd .row{
+  position:fixed;left:8px;right:8px;z-index:41;
+  bottom:calc(var(--kb,0px) + 8px);
+  background:var(--ground);padding:6px 0;
+}
+body.kbd .side,
+body.kbd .bar,
+body.kbd .chips,
+body.kbd .hint,
+body.kbd .check,
+body.kbd header,
+body.kbd footer{display:none}
+.btn.plus{flex:0 0 auto;padding:11px 15px;font-size:18px;line-height:1}
+.tray{display:flex;flex-wrap:wrap;gap:7px}
+.chip-file{
+  display:flex;align-items:center;gap:7px;border:1px solid var(--line-strong);
+  background:var(--panel);border-radius:9px;padding:5px 8px;font-size:12px;max-width:100%;
+}
+.chip-file img{width:34px;height:34px;object-fit:cover;border-radius:5px;display:block}
+.chip-file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px}
+.chip-file button{border:0;background:transparent;color:var(--ink-3);font-size:15px;padding:0 2px;line-height:1}
+.chip-file button:hover{color:var(--live)}
+body.kbd .tray{position:fixed;left:8px;right:8px;z-index:41;bottom:calc(var(--kb,0px) + 62px);background:var(--ground);padding:4px 0}
 .zoomtag{
   /* top right: bottom left runs into the tile carrying what was just said */
   position:absolute;right:10px;top:10px;background:rgba(0,0,0,.46);color:var(--tile-ink);
@@ -257,14 +294,18 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
         <button class="btn talk" id="talk">通話を始める</button>
         <button class="btn" id="hangup" disabled>終了</button>
       </div>
+      <div class="tray" id="tray" hidden></div>
       <div class="row">
+        <button class="btn plus" id="plus" title="写真やファイルを添える" aria-label="写真やファイルを添える">＋</button>
         <input type="text" id="typed" placeholder="ここに話しかける" autocomplete="off">
         <button class="btn" id="send">送る</button>
       </div>
+      <input type="file" id="attachfile" multiple class="offscreen">
       <div class="chips" id="topics"></div>
       <p class="hint" id="dictate"></p>
       <p class="hint">はじめて話しかけたとき「Use Claude」の確認が出ます。これは claude.ai の画面で、澪の返事を作るために Claude を呼ぶ許可です。マイクや外部サービスとは関係ありません。</p>
       <label class="check"><input type="checkbox" id="autosend" checked> 入力が止まったら自動で送る</label>
+      <label class="check"><input type="checkbox" id="micmode"> アプリのマイクで連続して聞く（キーボードのマイクを毎回押さなくて済みます）</label>
       <label class="check"><input type="checkbox" id="handsfree"> ずっと聞いてもらう（端末の音声コントロールを使う・画面に触れない）</label>
     </div>
 
@@ -2009,8 +2050,13 @@ function goDictation(reason){
   micBlocked=true;
   var cb=document.getElementById('autolisten');
   cb.checked=false; cb.disabled=true;
+  /* If the viewer asked for continuous listening, turning it back off has to
+     be visible: a switch left on while the thing it switches on is refused is
+     the same silence they complained about. */
+  if(window.micModeOff && window.micModeOn && micModeOn()) micModeOff('この画面の枠では使えない');
   setDiag('聞き取りの方法','端末の音声入力を使う');
-  sysLine(reason+'かわりに、端末そのものの音声入力が使えます。'+dictateHow()+'話した内容が下の欄に入り、そのまま送られます。');
+  sysLine(reason+'かわりに、端末そのものの音声入力が使えます。'+dictateHow()
+    +'画面に触れずに続けたい場合は、下の「ずっと聞いてもらう」をお試しください。');
   document.getElementById('typed').focus();
 }
 
@@ -2103,6 +2149,18 @@ var RULES=[
  '{"reply":"話す文","kana":"replyの読みを全てひらがなで。漢字・数字・英字を残さない","emotion":"neutral|happy|sad|angry|surprised|relaxed","strength":0.0〜1.0でその感情の強さ,"tears":涙ぐむなら true そうでなければ false,"gesture":"nod|tilt|shake|none のどれか。うなずく・首をかしげる・首を振る"}'
 ].join('\n');
 
+/* What this view may send. Asking costs nothing and spends no usage, and
+   the answer decides whether the picture button is worth offering. */
+function askImageLimits(){
+  if(!sampleFn||!sampleFn.limits) return;
+  sampleFn.limits().then(function(c){
+    imgCaps=(c&&c.images)||null;
+    setDiag('写真を見せる', imgCaps?('できる（1回'+imgCaps.maxCount+'枚まで）'):'できない', imgCaps?'ok':'');
+    var plus=document.getElementById('plus');
+    if(plus) plus.title = imgCaps ? '写真やファイルを添える' : 'ファイルを添える（写真は見せられません）';
+  },function(){ imgCaps=null; });
+}
+
 var ERR={
   not_granted:'この画面から Claude を呼ぶ許可が下りませんでした。画面を開き直して、確認に「許可」を選んでください。',
   rate_limited:'呼び出しが混み合っています。少し待ってからもう一度どうぞ。',
@@ -2127,9 +2185,23 @@ function ask(said){
     setState('idle'); return;
   }
   busy=true; setState('think');
-  turns.push({role:'user',content:said});
+
+  /* Pictures ride with this turn only — earlier ones are not re-sent — so say
+     in the words what she is being shown, or the next turn refers to
+     something she can no longer see. Files that are not pictures cannot be
+     opened here at all; name them and say so, rather than pretending. */
+  var pics=[], named=[];
+  attached.forEach(function(a){ (a.url?pics:named).push(a.file); });
+  var note='';
+  if(pics.length) note+='\n（'+pics.length+'枚の写真を見せています：'+pics.map(function(f){return f.name;}).join('、')+'）';
+  if(named.length) note+='\n（'+named.map(function(f){return f.name;}).join('、')+' というファイルの名前だけ伝えています。中身は見えていません）';
+
+  turns.push({role:'user',content:said+note});
   if(turns.length>12) turns=turns.slice(-12);
-  sampleFn.json([{role:'user',content:RULES}].concat(turns),{cache:false,modelTier:'quick'})
+  var opts={cache:false,modelTier:'quick'};
+  if(pics.length && imgCaps) opts.images=pics;
+  if(window.clearAttached) clearAttached();
+  sampleFn.json([{role:'user',content:RULES}].concat(turns),opts)
   .then(function(d){
     var reply=(d&&d.reply)||'', kana=(d&&d.kana)||reply, emo=(d&&d.emotion)||'neutral';
     if(!EMO[emo]) emo='neutral';
@@ -2152,6 +2224,7 @@ function ask(said){
     busy=false; setState('idle');
     var code=(e&&e.code)||'upstream_error';
     sysLine(ERR[code]||('うまくいきませんでした（'+code+'）'));
+    if(code==='images_unavailable'){ imgCaps=null; setDiag('写真を見せる','この画面ではできない','bad'); }
     if(code==='not_granted'||code==='sampling_disabled'||code==='capability_disabled'){
       sampleFn=null; setDiag('頭脳','使えない','bad');
     }
@@ -2285,7 +2358,9 @@ function armAutoSend(){
 }
 function sendTyped(){
   clearTimeout(sendTimer);
-  var t=typed.value.trim(); if(!t) return;
+  var t=typed.value.trim();
+  if(!t && attached.length) t='これ、見てもらえる？';
+  if(!t) return;
   typed.value='';
   /* Only the recogniser used to write here, so on a device where the frame
      never gets the microphone the tile held its placeholder forever — "your
@@ -2306,11 +2381,69 @@ function keepFocus(){
   if(calibrating) return;
   try{ typed.focus({preventScroll:true}); }catch(e){ try{ typed.focus(); }catch(e2){} }
 }
+/* Continuous listening, offered as a switch because whether it can work is
+   a property of where this page is running, not of the code: a frame the
+   microphone was never delegated to refuses at the first attempt. Rather
+   than deciding for the viewer, try it when asked and say exactly what came
+   back — "not-allowed from a frame" is a different problem from "no
+   microphone" and from "you declined", and they were all showing up as
+   nothing happening. */
+(function(){
+  var cb=document.getElementById('micmode');
+  var want=false;
+  try{ want=localStorage.getItem('mio.micmode')==='1'; }catch(e){}
+  cb.checked=want;
+  function report(kind,msg,ok){
+    setDiag('連続して聞く',kind,ok?'ok':'bad');
+    sysLine(msg);
+  }
+  function attempt(){
+    if(!SR){
+      cb.checked=false; report('この端末では使えない','この端末には音声認識そのものがありません。文字か、端末の音声入力をお使いください。');
+      return;
+    }
+    micBlocked=false;
+    var al=document.getElementById('autolisten');
+    al.disabled=false; al.checked=true;
+    report('試しています…','マイクを開いています。許可を求められたら「許可」を選んでください。',true);
+    beginListen();
+  }
+  cb.addEventListener('change',function(){
+    var on=cb.checked;
+    try{ localStorage.setItem('mio.micmode',on?'1':'0'); }catch(e){}
+    if(on){
+      if(handsFree){
+        /* both at once means she hears herself twice over */
+        handsFree=false;
+        var h=document.getElementById('handsfree'); if(h) h.checked=false;
+        try{ localStorage.setItem('mio.handsfree','0'); }catch(e){}
+        paintDictateLine();
+      }
+      attempt();
+    }else{
+      try{ if(rec) rec.abort(); }catch(e){}
+      setDiag('連続して聞く','切');
+      sysLine('連続して聞くのをやめました。');
+    }
+  });
+  window.micModeOn=function(){ return cb.checked; };
+  window.micModeOff=function(reason){
+    cb.checked=false;
+    try{ localStorage.setItem('mio.micmode','0'); }catch(e){}
+    setDiag('連続して聞く',reason,'bad');
+  };
+  if(want) setTimeout(attempt,1500);
+})();
+
 (function(){
   var cb=document.getElementById('handsfree');
   cb.checked=handsFree;
   cb.addEventListener('change',function(){
     handsFree=cb.checked;
+    if(handsFree && window.micModeOn && micModeOn()){
+      micModeOff('端末の音声コントロールに切り替え');
+      try{ if(rec) rec.abort(); }catch(e){}
+    }
     try{ localStorage.setItem('mio.handsfree',handsFree?'1':'0'); }catch(e){}
     cloudSettings();
     paintDictateLine();
@@ -2325,6 +2458,60 @@ function keepFocus(){
     setDiag('聞き取りの方法', handsFree?'端末の音声コントロール（常時）':'端末の音声入力（都度）');
   });
 })();
+/* Attaching things. Pictures go to Claude with the message, so she can
+   answer about what is in them; anything else can only be named, since the
+   brain here takes text and images and nothing more — say which it is rather
+   than appearing to send a spreadsheet and quietly sending its filename. */
+var attached=[], imgCaps=null;
+(function(){
+  var plus=document.getElementById('plus'), file=document.getElementById('attachfile'),
+      tray=document.getElementById('tray');
+  function paint(){
+    tray.innerHTML='';
+    tray.hidden = !attached.length;
+    attached.forEach(function(a,i){
+      var c=document.createElement('div'); c.className='chip-file';
+      if(a.url){ var im=document.createElement('img'); im.src=a.url; im.alt=''; c.appendChild(im); }
+      var t=document.createElement('span'); t.textContent=a.file.name; c.appendChild(t);
+      var x=document.createElement('button'); x.type='button'; x.textContent='×';
+      x.setAttribute('aria-label',a.file.name+' を外す');
+      x.addEventListener('click',function(){
+        if(attached[i].url) URL.revokeObjectURL(attached[i].url);
+        attached.splice(i,1); paint();
+      });
+      c.appendChild(x); tray.appendChild(c);
+    });
+  }
+  window.clearAttached=function(){
+    attached.forEach(function(a){ if(a.url) URL.revokeObjectURL(a.url); });
+    attached=[]; paint();
+  };
+  plus.addEventListener('click',function(){
+    file.accept = (imgCaps&&imgCaps.mediaTypes) ? imgCaps.mediaTypes.join(',') : 'image/*';
+    file.click();
+  });
+  file.addEventListener('change',function(e){
+    var picked=Array.prototype.slice.call(e.target.files||[]);
+    e.target.value='';
+    if(!picked.length) return;
+    var max=(imgCaps&&imgCaps.maxCount)||1;
+    var kinds=(imgCaps&&imgCaps.mediaTypes)||[];
+    picked.forEach(function(f){
+      var isImg = kinds.length ? kinds.indexOf(f.type)>=0 : /^image\//.test(f.type);
+      if(isImg && attached.filter(function(a){return a.url;}).length>=max){
+        sysLine('写真は一度に'+max+'枚までです。');
+        return;
+      }
+      attached.push({file:f, url:isImg?URL.createObjectURL(f):null});
+    });
+    paint();
+    var n=attached.filter(function(a){return a.url;}).length;
+    if(n<attached.length){
+      sysLine('写真は澪に見せられます。それ以外のファイルは名前だけ伝わります（中身は読めません）。');
+    }
+  });
+})();
+
 document.getElementById('send').addEventListener('click',sendTyped);
 typed.addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); sendTyped(); } });
 typed.addEventListener('input',armAutoSend);
@@ -2509,6 +2696,32 @@ document.getElementById('reset').addEventListener('click',function(){
   eyesSet=false; eyesSrc='default'; eyeFail=''; eyeRetried=false; layerCache={}; wantBrow=wantEye=showBrow=showEye=null; browAmt=eyeAmt=0;
   useBuiltIn(true); setupLine('最初の顔に戻しました。');
 });
+/* Track what the keyboard actually leaves visible. innerHeight does not
+   change when it opens; visualViewport does. */
+(function(){
+  var vv=window.visualViewport;
+  if(!vv) return;
+  var raf=0;
+  function apply(){
+    raf=0;
+    var kb=Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+    var open = kb>110 && document.activeElement===typed;
+    document.documentElement.style.setProperty('--vvh', Math.round(vv.height+kb)+'px');
+    document.documentElement.style.setProperty('--kb', kb+'px');
+    if(document.body.classList.contains('kbd')!==open){
+      document.body.classList.toggle('kbd',open);
+      /* the tile changed shape, so the drawing surface has to follow */
+      setTimeout(function(){ fitCanvas(); draw(true); },0);
+      if(open) window.scrollTo(0,0);
+    }
+  }
+  function schedule(){ if(!raf) raf=requestAnimationFrame(apply); }
+  vv.addEventListener('resize',schedule);
+  vv.addEventListener('scroll',schedule);
+  typed.addEventListener('focus',function(){ setTimeout(schedule,60); setTimeout(schedule,260); });
+  typed.addEventListener('blur',function(){ setTimeout(schedule,60); setTimeout(schedule,260); });
+})();
+
 (function(){
   var tools=document.querySelector('details.tools');
   function sync(){
@@ -2649,6 +2862,7 @@ if(window.claude&&claude.use){
   claude.use('sample').then(function(s){
     sampleFn=s;
     setDiag('頭脳', s?'Claude を呼べる':'この画面では呼べない', s?'ok':'bad');
+    if(s) askImageLimits();
     if(!s) sysLine('この画面からは Claude を呼べません。claude.ai で開いた画面でお試しください。');
   }).catch(function(){
     setDiag('頭脳','確認できなかった','bad');
