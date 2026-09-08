@@ -75,8 +75,45 @@ h1{margin:0;font-size:25px;font-weight:600;letter-spacing:-.01em}
 
 .call{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
 @media (min-width:880px){.call{grid-template-columns:minmax(300px,440px) minmax(0,1fr);align-items:start}}
+/* Adjusting the mouth means watching the mouth, and the controls that move it
+   are far enough down the page that scrolling to them took her face off the
+   screen. The column holding her sticks to the top of its own grid — which
+   spans the settings as well, so it stays put while they scroll past, in one
+   column or two. */
+/* Sticky only while the settings are open. Pinned all the time, this column
+   is taller than the space it leaves and sits over the panel beneath it —
+   including over the control that opens the settings, so the one thing it was
+   meant to help with became the one thing that could not be reached. */
+body.tuning .stage{
+  position:sticky;top:0;align-self:start;z-index:2;background:var(--ground);
+  /* The panel scrolling underneath has to be covered, not merely overlapped:
+     without its own padding the stage let a line of the settings show through
+     the gap above the tile and run flush under the input. */
+  padding:10px 0 12px;
+  box-shadow:0 10px 14px -10px rgba(0,0,0,.45);
+}
+/* While the settings are open the column has to fit beside them, so the tile
+   gives up height and the explanatory lines stand down. */
+body.tuning .tile{max-height:34vh}
+@media (min-width:880px){body.tuning .tile{max-height:52vh}}
+body.tuning .stage .chips,
+body.tuning .stage .hint,
+body.tuning .stage .check{display:none}
+@media (min-width:880px){
+  /* Two columns already keep her beside the settings; she only needs to hold
+     her place, not shed everything to do it. */
+  body.tuning .stage .chips,
+  body.tuning .stage .hint,
+  body.tuning .stage .check{display:revert}
+}
+.zoomtag{
+  /* top right: bottom left runs into the tile carrying what was just said */
+  position:absolute;right:10px;top:10px;background:rgba(0,0,0,.46);color:var(--tile-ink);
+  border-radius:999px;padding:4px 10px;font-size:11.5px;backdrop-filter:blur(6px);
+}
 
 /* ---- the call tile: her "video" ---- */
+.stage{display:flex;flex-direction:column;gap:12px}
 .tile{
   position:relative;background:var(--tile);border-radius:var(--radius);
   overflow:hidden;aspect-ratio:3/4;max-height:60vh;
@@ -207,11 +244,12 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
   </header>
 
   <div class="call">
-    <div style="display:flex;flex-direction:column;gap:12px">
+    <div class="stage">
       <div class="tile">
         <canvas id="face"></canvas>
         <div class="pill nosel" id="pill" data-s="idle"><i class="dot"></i><span id="pilltext">待機中</span></div>
         <div class="selftile nosel" id="selftile"><span>あなたの声がここに出ます</span></div>
+        <div class="zoomtag nosel" id="zoomtag" hidden></div>
       </div>
 
       <div class="bar">
@@ -486,6 +524,59 @@ function setExpression(k,strength,tears){
    spanning 0.36 to 1.27 eye-gaps above the eye line instead of 0.24 to 0.84:
    sitting on the forehead, above the brows it is named for. Convert the gap
    into height units before stepping vertically with it. */
+/* Where the picture sits on the canvas was worked out in four places — the
+   drawing, the band overlay, and the two calibration taps. Identical copies,
+   harmless while nothing changes them, and a bug the moment something does:
+   a zoom applied to the drawing but not to the tap puts the mouth wherever
+   the finger was not. One function now, and the tap is its inverse. */
+var view={z:1, x:0, y:0};
+function frame(){
+  var base=images.base;
+  if(!base) return null;
+  var W=canvas.width, H=canvas.height;
+  var fit=Math.min(W/base.width,H/base.height)*view.z;
+  var iw=base.width*fit, ih=base.height*fit;
+  return {W:W, H:H, iw:iw, ih:ih, ox:(W-iw)/2+view.x, oy:(H-ih)/2+view.y};
+}
+function toImage(clientX,clientY){
+  var f=frame(); if(!f) return null;
+  var r=canvas.getBoundingClientRect();
+  var px=(clientX-r.left)/r.width*f.W, py=(clientY-r.top)/r.height*f.H;
+  return {x:(px-f.ox)/f.iw, y:(py-f.oy)/f.ih};
+}
+/* Zoom about a point, keeping whatever is under that point under it.
+   The obvious formula — view = m - (m - view)*k — is the one for an offset
+   measured from the corner. This offset is measured from a CENTRED picture,
+   and the centring term (W-iw)/2 moves when the width does, so that formula
+   drifts: a tap at the same place on screen landed 0.12 and 0.30 of the
+   picture away after zooming to 2.5x. Solve for the offset that puts the
+   same fraction of the picture back under the point instead. */
+function zoomAbout(mx,my,z){
+  var base=images.base, f=frame();
+  if(!base||!f) return;
+  var px=(mx-f.ox)/f.iw, py=(my-f.oy)/f.ih;
+  view.z=Math.max(1,Math.min(4,z));
+  var fit=Math.min(f.W/base.width, f.H/base.height)*view.z;
+  var iw=base.width*fit, ih=base.height*fit;
+  view.x = mx - (f.W-iw)/2 - px*iw;
+  view.y = my - (f.H-ih)/2 - py*ih;
+  clampView();
+}
+
+/* Keep the picture from being pushed entirely off its own tile. */
+function clampView(){
+  view.z=Math.max(1,Math.min(4,view.z));
+  var f=frame(); if(!f) return;
+  var mx=Math.max(0,(f.iw-f.W)/2), my=Math.max(0,(f.ih-f.H)/2);
+  view.x=Math.max(-mx,Math.min(mx,view.x));
+  view.y=Math.max(-my,Math.min(my,view.y));
+  var tag=document.getElementById('zoomtag');
+  if(tag){
+    if(view.z>1.01){ tag.hidden=false; tag.textContent=view.z.toFixed(1)+'倍　2回タップで戻る'; }
+    else tag.hidden=true;
+  }
+}
+
 function eyeGapY(){
   var b=images.base, a = b && b.height ? b.width/b.height : 0.666;
   return Math.abs(eyes.rx-eyes.lx)*a;
@@ -964,8 +1055,13 @@ function alignSheet(k){
   /* The search has to span a crop difference, not just a wobble: a face
      close-up and a chest-up portrait of the same character differ by around
      1.4x and a quarter of the frame vertically. */
+  /* A third, finer pass. Two stages left the offset good to about 1/72 of the
+     frame — nine pixels on this picture — so a small misregistration survived
+     into the measurement, raising every sheet's floor and making a picture
+     that is merely shifted score like a redrawn feature. */
   [[40,10,2,[0.68,0.80,0.94,1.06,1.20,1.40]],
-   [72,4,1,[-0.06,-0.03,0,0.03,0.06]]].forEach(function(stage,pass){
+   [72,4,1,[-0.06,-0.03,0,0.03,0.06]],
+   [192,2,1,[-0.012,-0.006,0,0.006,0.012]]].forEach(function(stage,pass){
     N=stage[0]; range=stage[1]; step=stage[2];
     scales = pass===0 ? stage[3] : stage[3].map(function(d){ return best.s+d; });
     A=greyOf(base,N); B=greyOf(img,N);
@@ -1290,9 +1386,9 @@ function draw(force){
   var base=images.base;
   if(base){
     if(SHEET_BG){ fx.fillStyle=SHEET_BG; fx.fillRect(0,0,W,H); }
-    var scale=Math.min(W/base.width,H/base.height);
-    var iw=base.width*scale, ih=base.height*scale;
-    var ox=(W-iw)/2, oy=(H-ih)/2;
+    var _f=frame();
+    var scale=_f.iw/base.width;
+    var iw=_f.iw, ih=_f.ih, ox=_f.ox, oy=_f.oy;
     /* Everything below moves as one, so a tilt or a lean never separates the
        face from the drawn mouth or the layers over it. */
     var pvx=ox+((eyes.lx+eyes.rx)/2)*iw, pvy=oy+((eyes.ly+eyes.ry)/2)*ih;
@@ -1323,9 +1419,8 @@ function draw(force){
     drawStandIn(W,H);
   }
   if(document.getElementById('showbands').checked && images.base){
-    var sc3=Math.min(W/images.base.width,H/images.base.height);
-    var iw3=images.base.width*sc3, ih3=images.base.height*sc3;
-    var ox3=(W-iw3)/2, oy3=(H-ih3)/2;
+    var f3=frame();
+    var iw3=f3.iw, ih3=f3.ih, ox3=f3.ox, oy3=f3.oy;
     [[browRegion(),'rgba(216,182,118,.9)'],[eyeRegion(),'rgba(127,176,138,.9)']].forEach(function(pair){
       var r=pair[0];
       fx.strokeStyle=pair[1]; fx.lineWidth=Math.max(1,W*0.004); fx.setLineDash([6,5]);
@@ -2282,15 +2377,90 @@ Object.keys(EMO).forEach(function(k){
   b.addEventListener('click',function(){ setExpression(k); setDiag('いま試している表情',names[k]||k); });
   tryrow.appendChild(b);
 });
+/* Pinch to zoom, drag to move, double-tap to put it back. Calibration asks
+   for the centre of a mouth or an eye, which on a phone is a few pixels wide
+   at fit-to-tile; magnifying first is the difference between placing it and
+   guessing at it. Zooming keeps the point under the fingers still, so the
+   feature being aimed at does not slide away mid-pinch. Two fingers pan as
+   well, since a pinch is never purely a scale. */
+var justPanned=false;
+(function(){
+  var pts={}, startDist=0, startZ=1, startMid=null, startView=null, moved=0, lastTap=0;
+  function list(){ return Object.keys(pts).map(function(k){ return pts[k]; }); }
+  function mid(a,b){ return {x:(a.x+b.x)/2, y:(a.y+b.y)/2}; }
+  function dist(a,b){ var dx=a.x-b.x, dy=a.y-b.y; return Math.sqrt(dx*dx+dy*dy); }
+  function toCanvas(p){
+    var r=canvas.getBoundingClientRect();
+    return {x:(p.x-r.left)/r.width*canvas.width, y:(p.y-r.top)/r.height*canvas.height};
+  }
+  canvas.addEventListener('pointerdown',function(e){
+    pts[e.pointerId]={x:e.clientX,y:e.clientY};
+    canvas.setPointerCapture&&canvas.setPointerCapture(e.pointerId);
+    var l=list();
+    if(l.length===2){
+      startDist=dist(l[0],l[1]); startZ=view.z;
+      startMid=toCanvas(mid(l[0],l[1]));
+      startView={x:view.x,y:view.y};
+      moved=0;
+    }else if(l.length===1){
+      startView={x:view.x,y:view.y}; moved=0;
+    }
+  });
+  canvas.addEventListener('pointermove',function(e){
+    if(!pts[e.pointerId]) return;
+    var prev=pts[e.pointerId];
+    pts[e.pointerId]={x:e.clientX,y:e.clientY};
+    var l=list();
+    if(l.length===2 && startDist>0){
+      var d=dist(l[0],l[1]);
+      var z=startZ*(d/startDist);
+      var m=toCanvas(mid(l[0],l[1]));
+      zoomAbout(m.x,m.y,z);            /* the point between the fingers stays put */
+      moved+=8;
+      draw(true); e.preventDefault();
+    }else if(l.length===1 && view.z>1.001){
+      var r=canvas.getBoundingClientRect();
+      var sx=canvas.width/r.width, sy=canvas.height/r.height;
+      view.x += (e.clientX-prev.x)*sx;
+      view.y += (e.clientY-prev.y)*sy;
+      moved += Math.abs(e.clientX-prev.x)+Math.abs(e.clientY-prev.y);
+      clampView(); draw(true); e.preventDefault();
+    }
+  });
+  function up(e){
+    delete pts[e.pointerId];
+    if(!list().length){ startDist=0; if(moved>=6) justPanned=true; }
+  }
+  canvas.addEventListener('pointerup',up);
+  canvas.addEventListener('pointercancel',up);
+  /* a second tap in quick succession puts the view back */
+  canvas.addEventListener('pointerup',function(e){
+    var now=Date.now();
+    if(moved<6 && now-lastTap<320 && view.z>1.001){
+      view={z:1,x:0,y:0}; draw(true);
+      setupLine('拡大を元に戻しました。');
+      lastTap=0; return;
+    }
+    if(moved<6) lastTap=now;
+  });
+  /* trackpad and wheel, for the desktop */
+  canvas.addEventListener('wheel',function(e){
+    if(!images.base) return;
+    e.preventDefault();
+    var r=canvas.getBoundingClientRect();
+    var m={x:(e.clientX-r.left)/r.width*canvas.width, y:(e.clientY-r.top)/r.height*canvas.height};
+    zoomAbout(m.x, m.y, view.z*(e.deltaY<0?1.12:1/1.12));
+    draw(true);
+  },{passive:false});
+})();
+
 canvas.addEventListener('click',function(e){
   var base=images.base;
   if(!calibrating||!base) return;
+  if(justPanned){ justPanned=false; return; }   /* that was a drag, not a tap */
   if(calibrating==='eyes'){
-    var r2=canvas.getBoundingClientRect(), W2=canvas.width, H2=canvas.height;
-    var sc2=Math.min(W2/base.width,H2/base.height);
-    var iw2=base.width*sc2, ih2=base.height*sc2;
-    var nx2=((e.clientX-r2.left)/r2.width*W2-(W2-iw2)/2)/iw2;
-    var ny2=((e.clientY-r2.top)/r2.height*H2-(H2-ih2)/2)/ih2;
+    var q=toImage(e.clientX,e.clientY); if(!q) return;
+    var nx2=q.x, ny2=q.y;
     if(nx2<0||nx2>1||ny2<0||ny2>1) return;
     if(eyeStep===0){ eyes.lx=nx2; eyes.ly=ny2; eyeStep=1; setupLine('次に右目の中心をタップしてください。'); }
     else{
@@ -2307,13 +2477,8 @@ canvas.addEventListener('click',function(e){
     }
     draw(true); return;
   }
-  var r=canvas.getBoundingClientRect();
-  var W=canvas.width,H=canvas.height;
-  var scale=Math.min(W/base.width,H/base.height);
-  var iw=base.width*scale, ih=base.height*scale;
-  var ox=(W-iw)/2, oy=(H-ih)/2;
-  var px=(e.clientX-r.left)/r.width*W, py=(e.clientY-r.top)/r.height*H;
-  var nx=(px-ox)/iw, ny=(py-oy)/ih;
+  var q2=toImage(e.clientX,e.clientY); if(!q2) return;
+  var nx=q2.x, ny=q2.y;
   if(nx<0||nx>1||ny<0||ny>1) return;
   mouth.x=nx; mouth.y=ny;
   autoCover(); store(); sampleSkin();
@@ -2343,6 +2508,15 @@ document.getElementById('reset').addEventListener('click',function(){
   eyesSet=false; eyesSrc='default'; eyeFail=''; eyeRetried=false; layerCache={}; wantBrow=wantEye=showBrow=showEye=null; browAmt=eyeAmt=0;
   useBuiltIn(true); setupLine('最初の顔に戻しました。');
 });
+(function(){
+  var tools=document.querySelector('details.tools');
+  function sync(){
+    document.body.classList.toggle('tuning', tools.open);
+    fitCanvas(); draw(true);
+  }
+  tools.addEventListener('toggle',sync);
+  sync();
+})();
 document.getElementById('showbands').addEventListener('change',function(){ draw(true); });
 document.getElementById('mcover').addEventListener('input',function(e){
   mouth.cover=+e.target.value; store(); sampleSkin(); draw(true);
