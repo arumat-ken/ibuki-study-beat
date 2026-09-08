@@ -100,10 +100,11 @@ body.tuning .stage .chips,
 body.tuning .stage .hint,
 body.tuning .stage .check{display:none}
 @media (min-width:880px){
-  /* Two columns already keep her beside the settings; she only needs to hold
-     her place, not shed everything to do it. */
-  body.tuning .stage .chips,
-  body.tuning .stage .hint,
+  /* An element taller than the viewport does not pin: it scrolls until its
+     own bottom arrives, so her face still leaves the screen on a long panel.
+     Measured at 907px against a 900px viewport on a laptop. The switches stay
+     — they are worth reaching while tuning — but the paragraphs and the
+     example chips stand down so the column fits inside the screen. */
   body.tuning .stage .check{display:revert}
 }
 .zoomtag{
