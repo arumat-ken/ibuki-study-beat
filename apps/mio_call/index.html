@@ -524,9 +524,11 @@ function markSlot(k,txt,has){
   e.btn.dataset.has=has?'1':'0'; e.sub.textContent=txt;
 }
 
+var hadLocalSettings=false;
 function loadStored(){
   try{
     var m=localStorage.getItem('mio.mouth');
+    hadLocalSettings=!!m;
     if(m){
       var o=JSON.parse(m);
       if(o&&typeof o.x==='number'){
@@ -582,8 +584,38 @@ function loadStored(){
     },80);
   }catch(e){}
 }
+/* The sheets were given a copy off the device; the adjustments were not, and
+   they go the same way for the same reason — the mouth found by tapping, the
+   eye positions, the alignment worked out for each sheet. Losing those means
+   doing the calibration again, which is worse than losing a file that can be
+   picked from disk a second time. They are a few hundred bytes, so the whole
+   set travels as one document. */
+function settingsBody(){
+  return {
+    mouth: {x:mouth.x, y:mouth.y, w:mouth.w, cover:mouth.cover},
+    eyes: {lx:eyes.lx, ly:eyes.ly, rx:eyes.rx, ry:eyes.ry},
+    eyesSet: !!eyesSet,
+    aligns: aligns,
+    handsFree: !!handsFree,
+    at: Date.now()
+  };
+}
+var settleTimer=null;
+function cloudSettings(){
+  if(!cloud) return;
+  /* dragging a slider fires on every pixel; write once it stops */
+  clearTimeout(settleTimer);
+  settleTimer=setTimeout(function(){
+    try{
+      cloud.doc('settings/main').set(settingsBody()).then(function(){
+        rlog('設定の控えを保存');
+      },function(e){ rlog('設定の控えに失敗: '+((e&&e.code)||e)); });
+    }catch(e){}
+  },900);
+}
 function store(){
   try{ localStorage.setItem('mio.mouth',JSON.stringify(mouth)); }catch(e){}
+  cloudSettings();
 }
 
 /* The measurements that go with the built-in sheets, so she talks on the
@@ -796,6 +828,59 @@ function cloudRestore(){
     }catch(e){ fin(); }
   });
 }
+/* Only when this device came up without them: the copy is a safety net, not
+   an authority. Someone who has just adjusted the mouth here should not have
+   it pulled back to what an older session left behind. */
+function restoreSettings(){
+  if(!cloud || hadLocalSettings){
+    if(cloud && hadLocalSettings) cloudSettings();   /* keep the copy current */
+    return;
+  }
+  try{
+    cloud.doc('settings/main').get().then(function(d){
+      var v = (d && d.exists) ? d.data() : null;
+      if(!v) return;
+      var did=[];
+      if(v.mouth && typeof v.mouth.x==='number'){
+        mouth.x=v.mouth.x; mouth.y=v.mouth.y;
+        if(v.mouth.w) mouth.w=v.mouth.w;
+        if(v.mouth.cover) mouth.cover=v.mouth.cover;
+        document.getElementById('mwidth').value=mouth.w;
+        document.getElementById('mcover').value=mouth.cover;
+        try{ localStorage.setItem('mio.mouth',JSON.stringify(mouth)); }catch(e){}
+        did.push('口の位置と大きさ');
+      }
+      if(v.eyes && typeof v.eyes.lx==='number'){
+        eyes={lx:v.eyes.lx, ly:v.eyes.ly, rx:v.eyes.rx, ry:v.eyes.ry};
+        eyesSet=!!v.eyesSet; eyesSrc = eyesSet ? 'hand' : 'auto'; eyeFail='';
+        try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes));
+             if(eyesSet) localStorage.setItem('mio.eyesSet','1'); }catch(e){}
+        did.push('目の位置');
+      }
+      if(v.aligns){
+        Object.keys(v.aligns).forEach(function(k){
+          if(!aligns[k]) aligns[k]=v.aligns[k];
+          try{ localStorage.setItem('mio.align.'+k,JSON.stringify(v.aligns[k])); }catch(e){}
+        });
+      }
+      if(typeof v.handsFree==='boolean' && v.handsFree!==handsFree){
+        handsFree=v.handsFree;
+        var cb=document.getElementById('handsfree');
+        if(cb) cb.checked=handsFree;
+        try{ localStorage.setItem('mio.handsfree',handsFree?'1':'0'); }catch(e){}
+        paintDictateLine();
+      }
+      if(did.length){
+        hadLocalSettings=true;
+        if(images.base){ sampleSkin(); rebuildLayers(); rejudgeAll(); }
+        draw(true);
+        setupLine('前回の設定（'+did.join('と')+'）を控えから戻しました。合わせ直す必要はありません。');
+        rlog('設定を控えから復元');
+      }
+    },function(){});
+  }catch(e){}
+}
+
 function ownSheet(k){
   try{ return !!localStorage.getItem('mio.img.'+k); }catch(e){ return false; }
 }
@@ -877,6 +962,7 @@ function alignSheet(k){
   });
   aligns[k]={dx:best.dx,dy:best.dy,s:best.s};
   try{ localStorage.setItem('mio.align.'+k,JSON.stringify(aligns[k])); }catch(e){}
+  cloudSettings();
   rlog('位置合わせ '+k+' '+(performance.now()-t0).toFixed(0)+'ms / 倍率'+best.s.toFixed(2)+' 残差'+best.c.toFixed(1));
   return best.c;
 }
@@ -964,6 +1050,7 @@ function autoEyes(force){
   eyesSet=false;                       /* measured, not chosen: measure again if it is off */
   try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes));
        localStorage.removeItem('mio.eyesSet'); }catch(e){}
+  cloudSettings();
   rlog('目の位置を自動検出: 間隔'+((rx-lx)*100).toFixed(1)+'%');
   return true;
 }
@@ -2103,6 +2190,7 @@ function keepFocus(){
   cb.addEventListener('change',function(){
     handsFree=cb.checked;
     try{ localStorage.setItem('mio.handsfree',handsFree?'1':'0'); }catch(e){}
+    cloudSettings();
     paintDictateLine();
     if(handsFree){
       document.getElementById('autosend').checked=true;
@@ -2184,6 +2272,7 @@ canvas.addEventListener('click',function(e){
       try{ localStorage.setItem('mio.eyes',JSON.stringify(eyes));
            localStorage.setItem('mio.eyesSet','1'); }catch(e2){}
       rebuildLayers();
+      cloudSettings();
       /* Every verdict was measured against the old bands, so all of them are
          now stale. Leaving them on screen tells the viewer their sheets
          failed when what failed was the band they were judged against. */
@@ -2223,6 +2312,8 @@ document.getElementById('reset').addEventListener('click',function(){
   });
   try{ localStorage.removeItem('mio.eyes'); localStorage.removeItem('mio.eyesSet'); }catch(e){}
   SLOTS.forEach(function(sl){ cloudForget(sl.k); });
+  try{ if(cloud) cloud.doc('settings/main')['delete'](); }catch(e){}
+  hadLocalSettings=false;
   eyesSet=false; eyesSrc='default'; eyeFail=''; eyeRetried=false; layerCache={}; wantBrow=wantEye=showBrow=showEye=null; browAmt=eyeAmt=0;
   useBuiltIn(true); setupLine('最初の顔に戻しました。');
 });
@@ -2327,6 +2418,7 @@ loadStored();
     if(!cloud){ rlog('控えは使えません'); return; }
     rlog('控えに接続');
     setDiag('絵の控え','使えます','ok');
+    restoreSettings();
     setTimeout(cloudRestore,600);          /* after the stored sheets have had their turn */
     /* and push up anything that is only on this device, so the next open has it */
     setTimeout(function(){
