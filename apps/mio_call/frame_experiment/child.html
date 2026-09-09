@@ -1,0 +1,13 @@
+<!doctype html><meta charset=utf8><body><script>
+(async function(){
+  const out=(o)=>{ try{ parent.postMessage(JSON.stringify(o),'*'); }catch(e){} document.title=JSON.stringify(o); window.__r=o; };
+  const r={ framed: window.self!==window.top, policy:null, perm:null, gum:null, gumErr:null };
+  try{ r.policy = document.featurePolicy ? document.featurePolicy.allowsFeature('microphone') : 'no-api'; }catch(e){ r.policy='threw'; }
+  try{ const s=await navigator.permissions.query({name:'microphone'}); r.perm=s.state; }catch(e){ r.perm='threw'; }
+  try{
+    const st=await navigator.mediaDevices.getUserMedia({audio:true});
+    r.gum='OK'; st.getTracks().forEach(t=>t.stop());
+  }catch(e){ r.gum='FAIL'; r.gumErr=e.name+': '+(e.message||'').slice(0,90); }
+  out(r);
+})();
+</script></body>
