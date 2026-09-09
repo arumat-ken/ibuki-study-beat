@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>マイク単独テスト — 澪</title>
+<style>
+:root{color-scheme:light dark}
+body{
+  margin:0;padding:20px;font:16px/1.7 -apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;
+  background:#F1EDE4;color:#221F19;max-width:640px;margin:0 auto;
+}
+@media (prefers-color-scheme:dark){body{background:#15130E;color:#F0E9DA}}
+h1{font-size:19px;margin:0 0 4px}
+p.sub{margin:0 0 18px;font-size:13.5px;opacity:.7}
+button{
+  font:inherit;font-weight:600;padding:16px 22px;border-radius:12px;border:1px solid #BCB09A;
+  background:#221F19;color:#F1EDE4;width:100%;cursor:pointer;
+}
+button[data-live="1"]{background:#9C3F35;border-color:#9C3F35;color:#fff}
+.box{
+  border:1px solid #D8D0C0;border-radius:12px;padding:14px;margin:16px 0;background:#FBF9F4;
+}
+@media (prefers-color-scheme:dark){.box{background:#1E1B15;border-color:#35301F}}
+.heard{min-height:96px;font-size:18px}
+.heard i{opacity:.45;font-style:normal}
+dl{margin:0;display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13.5px}
+dt{opacity:.65}
+dd{margin:0;font-family:ui-monospace,monospace;font-size:12.5px;word-break:break-all}
+.ok{color:#456E4E;font-weight:600}
+.bad{color:#9C3F35;font-weight:600}
+pre{
+  font-family:ui-monospace,monospace;font-size:11.5px;line-height:1.65;white-space:pre-wrap;
+  max-height:220px;overflow:auto;margin:0;opacity:.8;
+}
+</style>
+</head>
+<body>
+
+<h1>マイク単独テスト</h1>
+<p class="sub">澪の本体とは関係なく、<b>この端末のブラウザが連続で音声を聞き取れるか</b>だけを調べます。
+鍵も課金も要りません。何も送信しません。</p>
+
+<button id="go">押して、話しかけてください</button>
+
+<div class="box heard" id="heard"><i>ここに聞き取った言葉が出ます</i></div>
+
+<div class="box">
+  <dl id="diag"></dl>
+</div>
+
+<div class="box"><pre id="log"></pre></div>
+
+<script>
+(function(){
+"use strict";
+var goBtn=document.getElementById('go'), heard=document.getElementById('heard'),
+    diagEl=document.getElementById('diag'), logEl=document.getElementById('log');
+var lines=[], rows={};
+
+function log(m){
+  lines.push(new Date().toTimeString().slice(0,8)+'  '+m);
+  if(lines.length>60) lines.shift();
+  logEl.textContent=lines.join('\n');
+  logEl.scrollTop=logEl.scrollHeight;
+}
+function diag(k,v,cls){
+  var r=rows[k];
+  if(!r){
+    var dt=document.createElement('dt'); dt.textContent=k;
+    var dd=document.createElement('dd');
+    diagEl.appendChild(dt); diagEl.appendChild(dd); rows[k]=r=dd;
+  }
+  r.textContent=v; r.className=cls||'';
+}
+
+/* What this page can see about itself before anything is tried. The point of
+   the test is the difference between here and inside the viewer frame, so
+   report the frame first. */
+diag('この画面の位置', (window.self!==window.top)?'枠の中（iframe）':'枠の外（トップレベル）',
+     (window.self!==window.top)?'bad':'ok');
+diag('接続', location.protocol, location.protocol==='https:'?'ok':'bad');
+var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+diag('音声認識の有無', SR?'ある':'ない', SR?'ok':'bad');
+try{
+  if(document.featurePolicy&&document.featurePolicy.allowsFeature)
+    diag('枠へのマイク許可', document.featurePolicy.allowsFeature('microphone')?'渡っている':'渡っていない',
+         document.featurePolicy.allowsFeature('microphone')?'ok':'bad');
+}catch(e){}
+if(navigator.permissions&&navigator.permissions.query){
+  navigator.permissions.query({name:'microphone'}).then(function(st){
+    diag('ブラウザの設定', st.state, st.state==='granted'?'ok':(st.state==='denied'?'bad':''));
+  },function(){});
+}
+
+var rec=null, live=false, finals='', restarts=0, heardAnything=false;
+
+function paint(interim){
+  var t=(finals+(interim||'')).trim();
+  heard.innerHTML='';
+  if(t){ heard.textContent=t; }
+  else{ var i=document.createElement('i'); i.textContent=live?'聞いています…':'ここに聞き取った言葉が出ます'; heard.appendChild(i); }
+}
+
+function start(){
+  if(!SR){ diag('結果','この端末では音声認識が使えません','bad'); return; }
+  try{ rec=new SR(); }
+  catch(e){ diag('結果','音声認識を開けません: '+e.message,'bad'); log('new SR() 失敗: '+e.message); return; }
+  rec.lang='ja-JP'; rec.interimResults=true; rec.continuous=true; rec.maxAlternatives=1;
+
+  rec.onstart=function(){
+    live=true; goBtn.dataset.live='1'; goBtn.textContent='聞いています（押すと停止）';
+    diag('結果','マイクが開きました','ok'); log('開始'); paint('');
+  };
+  rec.onaudiostart=function(){ log('音声の取り込み開始'); };
+  rec.onspeechstart=function(){ heardAnything=true; log('声を検出'); };
+  rec.onresult=function(e){
+    heardAnything=true;
+    var interim='';
+    for(var i=e.resultIndex;i<e.results.length;i++){
+      var r=e.results[i];
+      if(r.isFinal) finals+=r[0].transcript; else interim+=r[0].transcript;
+    }
+    paint(interim);
+    diag('結果','聞き取れています','ok');
+    log('認識: '+((finals+interim).slice(-40)));
+  };
+  rec.onerror=function(e){
+    var code=e.error||'unknown';
+    log('エラー: '+code);
+    if(code==='not-allowed'||code==='service-not-allowed'){
+      diag('結果','マイクを使わせてもらえません（'+code+'）','bad');
+      stop(true);
+    }else if(code==='no-speech'){
+      log('無音のまま止まりました（異常ではありません）');
+    }else{
+      diag('結果','エラー: '+code,'bad');
+    }
+  };
+  /* Recognition stops itself on silence. For a continuous test it has to be
+     started again, which is the part a real app has to get right too — and
+     restarting forever after a refusal would just spin, so a refusal stops. */
+  rec.onend=function(){
+    log('停止');
+    if(!live) return;
+    restarts++;
+    diag('再開した回数', String(restarts));
+    if(restarts>200){ diag('結果','再開を繰り返しすぎたので止めました','bad'); stop(true); return; }
+    setTimeout(function(){ if(live){ try{ rec.start(); }catch(e){ log('再開できず: '+e.message); } } },250);
+  };
+
+  try{ rec.start(); }
+  catch(e){ diag('結果','開始できません: '+e.message,'bad'); log('start() 失敗: '+e.message); }
+}
+
+function stop(fromError){
+  live=false;
+  goBtn.dataset.live='0';
+  goBtn.textContent='押して、話しかけてください';
+  try{ if(rec) rec.stop(); }catch(e){}
+  paint('');
+  if(!fromError) log('こちらから停止');
+}
+
+goBtn.addEventListener('click',function(){
+  if(live){ stop(); return; }
+  finals=''; restarts=0; heardAnything=false;
+  diag('再開した回数','0');
+  start();
+  /* If nothing has happened by now, say so rather than leaving a button that
+     looks busy. */
+  setTimeout(function(){
+    if(live && !heardAnything) diag('注意','まだ声が届いていません。話しかけてみてください。');
+  },7000);
+});
+
+log('準備完了');
+})();
+</script>
+</body>
+</html>
