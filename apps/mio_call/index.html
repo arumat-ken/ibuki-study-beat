@@ -84,6 +84,13 @@ h1{margin:0;font-size:25px;font-weight:600;letter-spacing:-.01em}
    is taller than the space it leaves and sits over the panel beneath it —
    including over the control that opens the settings, so the one thing it was
    meant to help with became the one thing that could not be reached. */
+/* Pinned whenever the page has moved at all, not only while the settings are
+   open: scrolling to read the transcript took her face off the top, which is
+   the thing worth keeping on screen. It is pinned in its full size at rest
+   and shrinks once it is actually holding position, so it never grows into
+   the space the panel underneath needs — the mistake that once covered the
+   control for opening the settings. */
+body.pinned .stage,
 body.tuning .stage{
   position:sticky;top:0;align-self:start;z-index:2;background:var(--ground);
   /* The panel scrolling underneath has to be covered, not merely overlapped:
@@ -94,8 +101,15 @@ body.tuning .stage{
 }
 /* While the settings are open the column has to fit beside them, so the tile
    gives up height and the explanatory lines stand down. */
+body.pinned .tile,
 body.tuning .tile{max-height:34vh}
-@media (min-width:880px){body.tuning .tile{max-height:52vh}}
+@media (min-width:880px){
+  body.pinned .tile,
+  body.tuning .tile{max-height:52vh}
+}
+body.pinned .stage .chips,
+body.pinned .stage .hint,
+body.pinned .stage .check,
 body.tuning .stage .chips,
 body.tuning .stage .hint,
 body.tuning .stage .check{display:none}
@@ -105,6 +119,7 @@ body.tuning .stage .check{display:none}
      Measured at 907px against a 900px viewport on a laptop. The switches stay
      — they are worth reaching while tuning — but the paragraphs and the
      example chips stand down so the column fits inside the screen. */
+  body.pinned .stage .check,
   body.tuning .stage .check{display:revert}
 }
 /* The on-screen keyboard does not resize the page, it covers it, and the
@@ -306,6 +321,7 @@ code{font-family:"IBM Plex Mono",monospace;font-size:.92em;background:var(--pane
       <p class="hint">はじめて話しかけたとき「Use Claude」の確認が出ます。これは claude.ai の画面で、澪の返事を作るために Claude を呼ぶ許可です。マイクや外部サービスとは関係ありません。</p>
       <label class="check"><input type="checkbox" id="autosend" checked> 入力が止まったら自動で送る</label>
       <label class="check"><input type="checkbox" id="micmode"> アプリのマイクで連続して聞く（キーボードのマイクを毎回押さなくて済みます）</label>
+      <p class="hint" id="micstate" hidden></p>
       <label class="check"><input type="checkbox" id="handsfree"> ずっと聞いてもらう（端末の音声コントロールを使う・画面に触れない）</label>
     </div>
 
@@ -2053,7 +2069,10 @@ function goDictation(reason){
   /* If the viewer asked for continuous listening, turning it back off has to
      be visible: a switch left on while the thing it switches on is refused is
      the same silence they complained about. */
-  if(window.micModeOff && window.micModeOn && micModeOn()) micModeOff('この画面の枠では使えない');
+  if(window.micModeOff && window.micModeOn && micModeOn())
+    micModeOff('この画面の枠では使えない',
+      'この画面の枠にはマイクが渡されていないため、アプリからは音を拾えません。'
+      +'ブラウザの設定を変えても直りません。下の「ずっと聞いてもらう」（端末の音声コントロール）が代わりになります。');
   setDiag('聞き取りの方法','端末の音声入力を使う');
   sysLine(reason+'かわりに、端末そのものの音声入力が使えます。'+dictateHow()
     +'画面に触れずに続けたい場合は、下の「ずっと聞いてもらう」をお試しください。');
@@ -2393,9 +2412,20 @@ function keepFocus(){
   var want=false;
   try{ want=localStorage.getItem('mio.micmode')==='1'; }catch(e){}
   cb.checked=want;
+  /* This reported into the diagnostics list and the transcript. The list
+     lives inside a folded panel and the transcript is below the fold on a
+     phone, so ticking the box answered into two places the person ticking it
+     cannot see — which is the same "nothing happens" this switch exists to
+     end. Say it next to the switch. */
+  var line=document.getElementById('micstate');
   function report(kind,msg,ok){
     setDiag('連続して聞く',kind,ok?'ok':'bad');
-    sysLine(msg);
+    if(line){
+      line.hidden=false;
+      line.textContent=msg;
+      line.style.color = ok ? 'var(--ok)' : 'var(--live)';
+    }
+    rlog('連続して聞く: '+kind);
   }
   function attempt(){
     if(!SR){
@@ -2405,8 +2435,16 @@ function keepFocus(){
     micBlocked=false;
     var al=document.getElementById('autolisten');
     al.disabled=false; al.checked=true;
-    report('試しています…','マイクを開いています。許可を求められたら「許可」を選んでください。',true);
+    report('試しています…','マイクを開いています…（許可を求められたら「許可」を選んでください）',true);
     beginListen();
+    /* If nothing has happened by now, nothing is going to: say so rather than
+       leaving the encouraging message up forever. */
+    setTimeout(function(){
+      if(cb.checked && !listening && !everHeard){
+        report('反応なし','マイクが開きませんでした。この画面の枠にマイクが渡されていない可能性が高いです。'
+          +'下の「ずっと聞いてもらう」（端末の音声コントロール）をお試しください。');
+      }
+    },6000);
   }
   cb.addEventListener('change',function(){
     var on=cb.checked;
@@ -2423,14 +2461,15 @@ function keepFocus(){
     }else{
       try{ if(rec) rec.abort(); }catch(e){}
       setDiag('連続して聞く','切');
-      sysLine('連続して聞くのをやめました。');
+      if(line) line.hidden=true;
     }
   });
   window.micModeOn=function(){ return cb.checked; };
-  window.micModeOff=function(reason){
+  window.micModeOff=function(reason,detail){
     cb.checked=false;
     try{ localStorage.setItem('mio.micmode','0'); }catch(e){}
-    setDiag('連続して聞く',reason,'bad');
+    report(reason, detail||('使えませんでした（'+reason+'）。'
+      +'下の「ずっと聞いてもらう」（端末の音声コントロール）をお試しください。'));
   };
   if(want) setTimeout(attempt,1500);
 })();
@@ -2720,6 +2759,22 @@ document.getElementById('reset').addEventListener('click',function(){
   vv.addEventListener('scroll',schedule);
   typed.addEventListener('focus',function(){ setTimeout(schedule,60); setTimeout(schedule,260); });
   typed.addEventListener('blur',function(){ setTimeout(schedule,60); setTimeout(schedule,260); });
+})();
+
+/* Hold her in place from the first scroll. The compact form only comes on
+   once the page has actually moved, so at rest she is full size. */
+(function(){
+  var on=false, raf=0;
+  function apply(){
+    raf=0;
+    var want=(window.scrollY||window.pageYOffset||0)>36;
+    if(want===on) return;
+    on=want;
+    document.body.classList.toggle('pinned',on);
+    fitCanvas(); draw(true);
+  }
+  window.addEventListener('scroll',function(){ if(!raf) raf=requestAnimationFrame(apply); },{passive:true});
+  apply();
 })();
 
 (function(){
