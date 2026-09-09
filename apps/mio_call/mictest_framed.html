@@ -1,0 +1,292 @@
+<title>澪 マイク確認</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+JP:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#F1EDE4; --panel:#FBF9F4; --panel-2:#E8E1D3;
+  --line:#D8D0C0; --line-strong:#BCB09A;
+  --ink:#221F19; --ink-2:#68614F; --ink-3:#8F8776;
+  --accent:#96702E; --ok:#456E4E; --bad:#9C3F35; --wait:#8A7A3F;
+  --radius:12px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#15130E; --panel:#1E1B15; --panel-2:#2A251B;
+    --line:#35301F; --line-strong:#524931;
+    --ink:#F0E9DA; --ink-2:#A69B84; --ink-3:#7C735F;
+    --accent:#D8B676; --ok:#83AC8B; --bad:#D07D6F; --wait:#C7B06B;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#15130E; --panel:#1E1B15; --panel-2:#2A251B;
+  --line:#35301F; --line-strong:#524931;
+  --ink:#F0E9DA; --ink-2:#A69B84; --ink-3:#7C735F;
+  --accent:#D8B676; --ok:#83AC8B; --bad:#D07D6F; --wait:#C7B06B;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans JP",-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;
+  font-size:15px; line-height:1.7; -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:600px;margin:0 auto;padding:22px 16px 56px;display:flex;flex-direction:column;gap:18px}
+.eyebrow{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:10.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--accent);font-weight:600;margin:0;
+}
+h1{margin:3px 0 0;font-size:23px;font-weight:600;letter-spacing:-.01em;text-wrap:balance}
+.lede{margin:6px 0 0;color:var(--ink-2);font-size:13.5px;max-width:60ch}
+
+/* the answer, before the evidence for it */
+.verdict{
+  border:1px solid var(--line-strong);border-left:4px solid var(--ink-3);
+  border-radius:var(--radius);background:var(--panel);padding:15px 17px;
+}
+.verdict[data-s="ok"]{border-left-color:var(--ok)}
+.verdict[data-s="bad"]{border-left-color:var(--bad)}
+.verdict[data-s="wait"]{border-left-color:var(--wait)}
+.verdict h2{
+  margin:0;font-size:17px;font-weight:600;
+}
+.verdict[data-s="ok"] h2{color:var(--ok)}
+.verdict[data-s="bad"] h2{color:var(--bad)}
+.verdict[data-s="wait"] h2{color:var(--wait)}
+.verdict p{margin:6px 0 0;font-size:13.5px;color:var(--ink-2)}
+
+button{
+  font:inherit;font-weight:600;font-size:15.5px;padding:16px 20px;border-radius:var(--radius);
+  border:1px solid var(--ink);background:var(--ink);color:var(--ground);width:100%;cursor:pointer;
+}
+button[data-live="1"]{background:var(--bad);border-color:var(--bad);color:#fff}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.heard{
+  border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);
+  padding:15px 17px;min-height:104px;font-size:18px;line-height:1.6;
+}
+.heard i{color:var(--ink-3);font-style:normal;font-size:14.5px}
+
+.facts{
+  border:1px solid var(--line);border-radius:var(--radius);background:var(--panel);
+  padding:4px 17px;margin:0;
+}
+.fact{
+  display:flex;justify-content:space-between;align-items:baseline;gap:14px;
+  padding:9px 0;border-bottom:1px solid var(--line);
+}
+.fact:last-child{border-bottom:0}
+.fact dt{font-size:13px;color:var(--ink-2);margin:0}
+.fact dd{
+  margin:0;font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12px;
+  text-align:right;font-variant-numeric:tabular-nums;
+}
+.pill{
+  display:inline-block;padding:2px 9px;border-radius:999px;font-weight:600;
+  border:1px solid currentColor;
+}
+.pill.ok{color:var(--ok)} .pill.bad{color:var(--bad)} .pill.neutral{color:var(--ink-3)}
+
+details.log{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
+details.log>summary{
+  list-style:none;cursor:pointer;padding:12px 17px;font-size:12.5px;font-weight:600;color:var(--ink-2);
+  display:flex;align-items:center;gap:8px;
+}
+details.log>summary::-webkit-details-marker{display:none}
+details.log>summary::before{content:"▸";color:var(--ink-3)}
+details.log[open]>summary::before{content:"▾"}
+pre{
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:11px;line-height:1.75;
+  white-space:pre-wrap;word-break:break-word;margin:0;padding:0 17px 14px;
+  max-height:230px;overflow:auto;color:var(--ink-2);
+}
+footer{border-top:1px solid var(--line);padding-top:14px;color:var(--ink-3);font-size:12.5px}
+footer p{margin:0 0 5px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">澪 / 切り分け</p>
+    <h1>マイク確認</h1>
+    <p class="lede">澪の本体とは切り離して、<b>この画面で連続して声を聞き取れるか</b>だけを調べます。
+    鍵も課金も要らず、どこにも送信しません。</p>
+  </header>
+
+  <div class="verdict" id="verdict" data-s="wait">
+    <h2 id="vtitle">まだ試していません</h2>
+    <p id="vnote">下のボタンを押して、なにか話しかけてください。</p>
+  </div>
+
+  <button id="go">押して、話しかけてください</button>
+
+  <div class="heard" id="heard"><i>聞き取った言葉がここに出ます</i></div>
+
+  <dl class="facts" id="facts"></dl>
+
+  <details class="log">
+    <summary>詳しい記録</summary>
+    <pre id="log"></pre>
+  </details>
+
+  <footer>
+    <p>この画面が「枠の中」と出て、同じページを枠の外で開いたときに聞き取れるなら、原因は枠です。</p>
+    <p>どちらでも聞き取れないなら、原因は別のところにあります。</p>
+  </footer>
+</div>
+
+<script>
+(function(){
+"use strict";
+var goBtn=document.getElementById('go'), heard=document.getElementById('heard'),
+    factsEl=document.getElementById('facts'), logEl=document.getElementById('log'),
+    verdict=document.getElementById('verdict'), vtitle=document.getElementById('vtitle'),
+    vnote=document.getElementById('vnote');
+var lines=[], rows={};
+
+function log(m){
+  lines.push(new Date().toTimeString().slice(0,8)+'  '+m);
+  if(lines.length>80) lines.shift();
+  logEl.textContent=lines.join('\n');
+  logEl.scrollTop=logEl.scrollHeight;
+}
+function fact(k,v,cls){
+  var r=rows[k];
+  if(!r){
+    var d=document.createElement('div'); d.className='fact';
+    var dt=document.createElement('dt'); dt.textContent=k;
+    var dd=document.createElement('dd');
+    d.appendChild(dt); d.appendChild(dd); factsEl.appendChild(d); rows[k]=r=dd;
+  }
+  r.innerHTML='';
+  var s=document.createElement('span');
+  s.className='pill '+(cls||'neutral'); s.textContent=v;
+  r.appendChild(s);
+}
+function say(state,title,note){
+  verdict.dataset.s=state; vtitle.textContent=title; vnote.textContent=note;
+}
+
+/* What the page can see about itself before anything is attempted. The whole
+   question is the difference between here and outside the viewer frame, so
+   where this page is running is the first fact, not a footnote. */
+var framed = (window.self!==window.top);
+fact('この画面の位置', framed?'枠の中':'枠の外', framed?'bad':'ok');
+var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+fact('音声認識', SR?'ある':'ない', SR?'ok':'bad');
+try{
+  if(document.featurePolicy&&document.featurePolicy.allowsFeature){
+    var allowed=document.featurePolicy.allowsFeature('microphone');
+    fact('この枠へのマイク許可', allowed?'渡っている':'渡っていない', allowed?'ok':'bad');
+  }
+}catch(e){}
+if(navigator.permissions&&navigator.permissions.query){
+  navigator.permissions.query({name:'microphone'}).then(function(st){
+    fact('ブラウザの許可', st.state, st.state==='granted'?'ok':(st.state==='denied'?'bad':'neutral'));
+  },function(){});
+}
+if(!SR){
+  say('bad','この端末では音声認識が使えません','ブラウザに音声認識そのものがありません。枠の問題ではありません。');
+  goBtn.disabled=true;
+}
+
+var rec=null, live=false, finals='', restarts=0, heardAnything=false;
+
+function paint(interim){
+  var t=(finals+(interim||'')).trim();
+  heard.innerHTML='';
+  if(t) heard.textContent=t;
+  else{
+    var i=document.createElement('i');
+    i.textContent = live?'聞いています…':'聞き取った言葉がここに出ます';
+    heard.appendChild(i);
+  }
+}
+
+function start(){
+  try{ rec=new SR(); }
+  catch(e){
+    say('bad','音声認識を開けません', e.message);
+    log('new SR() 失敗: '+e.message); return;
+  }
+  rec.lang='ja-JP'; rec.interimResults=true; rec.continuous=true; rec.maxAlternatives=1;
+
+  rec.onstart=function(){
+    live=true; goBtn.dataset.live='1'; goBtn.textContent='聞いています（押すと停止）';
+    say('wait','マイクが開きました','話しかけてください。言葉が上の枠に出れば成功です。');
+    log('開始'); paint('');
+  };
+  rec.onaudiostart=function(){ log('音声の取り込み開始'); };
+  rec.onspeechstart=function(){ heardAnything=true; log('声を検出'); };
+  rec.onresult=function(e){
+    heardAnything=true;
+    var interim='';
+    for(var i=e.resultIndex;i<e.results.length;i++){
+      var r=e.results[i];
+      if(r.isFinal) finals+=r[0].transcript; else interim+=r[0].transcript;
+    }
+    paint(interim);
+    say('ok','聞き取れています', framed
+      ? 'この枠の中で連続して聞き取れています。枠は原因ではありませんでした。'
+      : '枠の外で連続して聞き取れています。澪の画面で聞き取れないなら、原因は枠です。');
+    log('認識: '+(finals+interim).slice(-40));
+  };
+  rec.onerror=function(e){
+    var code=e.error||'unknown';
+    log('エラー: '+code);
+    if(code==='not-allowed'||code==='service-not-allowed'){
+      say('bad','マイクを使わせてもらえません（'+code+'）', framed
+        ? 'この画面は枠の中にあり、その枠にマイクが渡されていません。ブラウザの設定では直りません。'
+        : '枠の外なのに拒否されました。ブラウザのサイト設定でマイクを許可してください。');
+      stop(true);
+    }else if(code==='no-speech'){
+      log('無音のまま止まりました（異常ではありません）');
+    }else if(code!=='aborted'){
+      say('bad','エラー: '+code, 'この符号を伝えてください。');
+    }
+  };
+  /* Recognition stops itself on silence, so continuous listening means
+     restarting it — the part a real app has to get right too. After a refusal
+     it must not restart, or it spins forever asking for what it cannot have. */
+  rec.onend=function(){
+    log('停止');
+    if(!live) return;
+    restarts++;
+    fact('聞き直した回数', String(restarts), 'neutral');
+    if(restarts>200){ say('bad','聞き直しを繰り返しすぎました','止めました。'); stop(true); return; }
+    setTimeout(function(){
+      if(live){ try{ rec.start(); }catch(e){ log('再開できず: '+e.message); } }
+    },250);
+  };
+
+  try{ rec.start(); }
+  catch(e){ say('bad','開始できません', e.message); log('start() 失敗: '+e.message); }
+}
+
+function stop(fromError){
+  live=false;
+  goBtn.dataset.live='0';
+  goBtn.textContent='押して、話しかけてください';
+  try{ if(rec) rec.stop(); }catch(e){}
+  paint('');
+  if(!fromError){ log('こちらから停止'); }
+}
+
+goBtn.addEventListener('click',function(){
+  if(live){ stop(); return; }
+  finals=''; restarts=0; heardAnything=false;
+  fact('聞き直した回数','0','neutral');
+  say('wait','マイクを開いています…','許可を求められたら「許可」を選んでください。');
+  start();
+  /* Say when nothing has happened, rather than leaving an encouraging
+     message up indefinitely. */
+  setTimeout(function(){
+    if(live && !heardAnything) say('wait','まだ声が届いていません','マイクは開いています。もう少し話しかけてみてください。');
+    else if(!live && !heardAnything && verdict.dataset.s==='wait')
+      say('bad','反応がありません','マイクが開きませんでした。詳しい記録をご覧ください。');
+  },8000);
+});
+
+log('準備完了');
+})();
+</script>
