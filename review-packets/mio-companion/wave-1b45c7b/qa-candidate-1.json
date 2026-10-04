@@ -56,6 +56,28 @@
       "The identity comparison establishes that the candidate was not flipped relative to the supplied reference, not that the reference itself is globally non-mirrored."
     ]
   },
+  "rightArmExtraction": {
+    "status": "pass-visible-pixels-only",
+    "method": "native 687x1024 candidate coordinates, local skin-colour seed, screen-left region mask, connected component, and feathered alpha",
+    "remoteServiceUsed": false,
+    "sourceCanvas": [687, 1024],
+    "file": "right-arm.png",
+    "sha256": "0633a12432db54e5051bcf3243e58b587e5fa6b132c3d86e57d53ce3e5acd1c1",
+    "alphaBoundingBox": [35, 293, 226, 866],
+    "nonTransparentPixels": 56926,
+    "fullyOpaquePixels": 49412,
+    "visualInspection": "pass-no-face-torso-or-background-contamination",
+    "shoulderJointIncluded": false,
+    "rigReady": false,
+    "allowedUse": [
+      "pose-specific transparent overlay",
+      "visual comparison and masking reference"
+    ],
+    "notAllowedUse": [
+      "free shoulder rotation",
+      "continuous skeletal deformation without a newly authored shoulder and upper arm"
+    ]
+  },
   "overall": "accept",
   "allowedUse": [
     "approved wave medium-shot asset",
@@ -63,5 +85,5 @@
     "source image for locally measured arm extraction"
   ],
   "notAllowedUse": [],
-  "nextAction": "Measure a new extraction mask in the 687x1024 candidate image. Do not reuse pose.json guide coordinates for extraction."
+  "nextAction": "Register the accepted full pose and transparent visible-arm overlay. For continuous shoulder motion, author a new shoulder-visible source rather than inventing hidden pixels."
 }

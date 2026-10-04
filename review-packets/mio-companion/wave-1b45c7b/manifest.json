@@ -28,11 +28,27 @@
     },
     "candidate1Qa": {
       "path": "qa-candidate-1.json",
-      "sha256": "c9a2f661bae7be194c888c97ec8f75206a2973674861b41f2297eeebd601c255"
+      "sha256": "3d37cc1cf06fb79414a042e4ae7402046293bb269c8dc41a31873f835d9d0818"
     },
     "claudeReview": {
       "path": "CLAUDE_REVIEW.md",
       "sha256": "168ca301dccdfc0f4b838d92858c92deb822b7126c99bda4902809ab903de33e"
+    },
+    "rightArmExtractionScript": {
+      "path": "extract_right_arm.py",
+      "sha256": "4c0ff45cf948d8446c58adea209dfdf6cdc04cb8b4274db15e037aa3bef3aec2"
+    },
+    "characterRightArm": {
+      "path": "right-arm.png",
+      "sha256": "0633a12432db54e5051bcf3243e58b587e5fa6b132c3d86e57d53ce3e5acd1c1"
+    },
+    "rightArmPreview": {
+      "path": "right-arm-preview.png",
+      "sha256": "2b266591cefadcee042abbdf03ef47daf81b87344e05f084adabbe9711ed7efe"
+    },
+    "rightArmMaskOverlay": {
+      "path": "right-arm-mask-overlay.png",
+      "sha256": "b1764e3f4925477754b1ade1ae1846a5f2bf733cce10d1725f8012df5f1bdf8f"
     }
   },
   "verification": {
@@ -43,6 +59,7 @@
     "characterLeftRelaxed": "screen-right-blue",
     "geminiGeneration": "candidate-1-accepted",
     "handednessCorrection": "The raised character-right palm has its thumb toward the face on screen-right and its little finger on screen-left. The guide was corrected; the generated image was not changed.",
-    "independentReview": "Claude Code accepted both the corrected guide and generated image at public review commit f7016d482673bd016d602a21b7a16956c4bf9910."
+    "independentReview": "Claude Code accepted both the corrected guide and generated image at public review commit f7016d482673bd016d602a21b7a16956c4bf9910.",
+    "localRightArmExtraction": "passed-visible-pixels-only-not-rig-ready"
   }
 }
