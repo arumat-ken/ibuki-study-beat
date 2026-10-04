@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "gestureId": "wave",
+  "labelJa": "本人の右手を振る",
+  "source": "deterministic hand-authored guide",
+  "canvas": { "width": 842, "height": 1264 },
+  "framing": "medium",
+  "coordinateSystem": "character",
+  "inputMirrored": false,
+  "projection": {
+    "characterRight": "screen-left",
+    "characterLeft": "screen-right"
+  },
+  "characterRight": {
+    "role": "wave",
+    "color": "#d83a3a",
+    "pose": {
+      "shoulder": [135, 550],
+      "elbow": [105, 760],
+      "wrist": [170, 610]
+    },
+    "hand": [
+      [170,610], [190,580], [210,560], [224,545], [235,530],
+      [170,550], [175,500], [175,450], [175,405],
+      [150,545], [150,490], [150,435], [150,385],
+      [130,550], [125,500], [120,455], [115,415],
+      [112,565], [100,530], [92,500], [85,475]
+    ],
+    "fingersDirection": "screen-up",
+    "palmFacing": "camera",
+    "thumbScreenSide": "screen-right/toward-face",
+    "littleFingerScreenSide": "screen-left/away-from-face"
+  },
+  "characterLeft": {
+    "role": "relaxed-down",
+    "color": "#2674d9",
+    "pose": {
+      "shoulder": [707, 550],
+      "elbow": [725, 770],
+      "wrist": [700, 930]
+    },
+    "hand": [
+      [700,930], [720,945], [742,950], [762,945], [780,935],
+      [720,970], [722,1010], [724,1050], [725,1085],
+      [700,970], [700,1015], [700,1060], [700,1100],
+      [680,968], [678,1010], [676,1050], [675,1085],
+      [660,960], [655,995], [652,1025], [650,1052]
+    ],
+    "palmFacing": "viewer-soft",
+    "thumbSide": "screen-right/lateral",
+    "littleFingerSide": "screen-center/medial"
+  },
+  "motion": {
+    "movingSide": "characterRight",
+    "path": "small side-to-side arc at the wrist",
+    "wristAmplitudeDegrees": 12,
+    "cycles": 2,
+    "elbowStaysNear": [105, 760]
+  },
+  "checks": [
+    "Character-right waving hand is on screen-left.",
+    "Character-right palm faces the camera with its fingers pointing up.",
+    "Character-right thumb is on screen-right toward the face; the little finger is on screen-left.",
+    "Character-left arm stays relaxed and does not mirror the wave.",
+    "Each hand has 21 landmarks and five fingers.",
+    "Neither arm crosses the torso centreline."
+  ]
+}

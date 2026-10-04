@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "gestureId": "wave",
+  "candidate": 1,
+  "reviewedAt": "2026-10-04",
+  "reviewedBy": "GPT (Codex), corrected after Claude coordinate review",
+  "method": "visual anatomy and non-mirrored camera-coordinate comparison",
+  "input": {
+    "file": "generated-upper-candidate-1.png",
+    "sha256": "4c8098d8c15ee6bbdf5dd294b200c6e89f9d91200c6a39a2bfbd2231addbfc6c",
+    "width": 687,
+    "height": 1024
+  },
+  "passed": {
+    "sameCharacterReadability": true,
+    "mediumShotFraming": true,
+    "characterRightArmOnScreenLeft": true,
+    "characterLeftArmOnScreenRight": true,
+    "rightShoulderToHandContinuity": true,
+    "rightFingerCount": 5,
+    "rightPalmFacesCamera": true,
+    "rightFingersPointUp": true,
+    "rightThumbTowardFaceScreenRight": true,
+    "rightLittleFingerOuterScreenLeft": true,
+    "rightHandedness": true,
+    "leftArmRelaxed": true
+  },
+  "failed": {},
+  "manualApproximation": {
+    "rightThumbTip": [0.31, 0.39],
+    "rightLittleFingerTip": [0.07, 0.34],
+    "expectedThumbSide": "screen-right/toward-face",
+    "expectedLittleFingerSide": "screen-left/away-from-face"
+  },
+  "correction": {
+    "previousConclusion": "reject-handedness-swapped",
+    "reason": "The prior review incorrectly transferred the thumb position from anatomical position (arm and fingers down) to a raised, fingers-up waving hand. With a non-mirrored frontal camera view, the character-right raised palm has its thumb toward the face on screen-right and its little finger on screen-left.",
+    "imageRegenerated": false
+  },
+  "overall": "accept",
+  "allowedUse": [
+    "approved wave medium-shot asset",
+    "identity and framing reference",
+    "source for local arm extraction"
+  ],
+  "notAllowedUse": [],
+  "nextAction": "Use candidate 1 as the accepted wave image. If an independent arm layer is required, extract it locally without regenerating the character."
+}

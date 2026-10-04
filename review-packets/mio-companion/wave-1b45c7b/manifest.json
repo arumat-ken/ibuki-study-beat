@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "gestureId": "wave",
+  "status": "accepted",
+  "createdAt": "2026-10-04",
+  "createdBy": "GPT (Codex)",
+  "model": "未記録",
+  "license": "project-original",
+  "canvas": { "width": 842, "height": 1264 },
+  "framing": "medium",
+  "canonicalFiles": {
+    "coordinates": {
+      "path": "pose.json",
+      "sha256": "7ed6414874c5b3c80248fec0a093876942fce5694328ae4f098d7b7da88d7db0"
+    },
+    "geminiGuide": {
+      "path": "pose-guide.png",
+      "sha256": "839d7c42232f6a17e251ad3a19bdc0c0a749af8fae6f4154f43473810cd8c519"
+    },
+    "renderScript": {
+      "path": "render_guide.py"
+    },
+    "candidate1": {
+      "path": "generated-upper-candidate-1.png",
+      "sha256": "4c8098d8c15ee6bbdf5dd294b200c6e89f9d91200c6a39a2bfbd2231addbfc6c"
+    },
+    "candidate1Qa": {
+      "path": "qa-candidate-1.json"
+    }
+  },
+  "verification": {
+    "jsonSyntax": "passed",
+    "pngDimensions": "842x1264",
+    "visualInspection": "passed",
+    "characterRightWave": "screen-left-red",
+    "characterLeftRelaxed": "screen-right-blue",
+    "geminiGeneration": "candidate-1-accepted",
+    "handednessCorrection": "The raised character-right palm has its thumb toward the face on screen-right and its little finger on screen-left. The guide was corrected; the generated image was not changed."
+  }
+}
