@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "gestureId": "wave",
+  "candidate": 1,
+  "reviewedAt": "2026-10-04",
+  "reviewedBy": "GPT (Codex), independently verified by Claude Code",
+  "method": "visual anatomy, non-mirrored camera coordinates, file hash verification, and pixel comparison against identity reference",
+  "input": {
+    "file": "generated-upper-candidate-1.png",
+    "sha256": "4c8098d8c15ee6bbdf5dd294b200c6e89f9d91200c6a39a2bfbd2231addbfc6c",
+    "width": 687,
+    "height": 1024
+  },
+  "passed": {
+    "sameCharacterReadability": true,
+    "mediumShotFraming": true,
+    "characterRightArmOnScreenLeft": true,
+    "characterLeftArmOnScreenRight": true,
+    "rightForearmToHandContinuity": true,
+    "rightFingerCount": 5,
+    "rightPalmFacesCamera": true,
+    "rightFingersPointUp": true,
+    "rightThumbTowardFaceScreenRight": true,
+    "rightLittleFingerOuterScreenLeft": true,
+    "rightHandedness": true,
+    "leftArmRelaxed": true
+  },
+  "failed": {},
+  "notDirectlyVerified": {
+    "rightShoulderToUpperArmContinuity": "The upper arm and shoulder connection are occluded by the forearm, wrist, and hair. Continuity is plausible but inferred.",
+    "leftHandHandednessAndFingerCount": "The character-left hand is outside the bottom edge of the generated image."
+  },
+  "manualApproximation": {
+    "rightThumbTip": [0.31, 0.39],
+    "rightLittleFingerTip": [0.07, 0.34],
+    "expectedThumbSide": "screen-right/toward-face",
+    "expectedLittleFingerSide": "screen-left/away-from-face"
+  },
+  "correction": {
+    "previousConclusion": "reject-handedness-swapped",
+    "reason": "The prior review incorrectly transferred the thumb position from anatomical position (arm and fingers down) to a raised, fingers-up waving hand. With a non-mirrored frontal camera view, the character-right raised palm has its thumb toward the face on screen-right and its little finger on screen-left.",
+    "imageRegenerated": false
+  },
+  "independentReview": {
+    "reviewer": "Claude Code",
+    "reviewedAt": "2026-10-04T14:33:28+09:00",
+    "publicReviewCommit": "f7016d482673bd016d602a21b7a16956c4bf9910",
+    "poseGuideVerdict": "accept",
+    "generatedImageVerdict": "accept",
+    "mirrorEvidence": "none against the supplied identity reference",
+    "identityReferenceMeanPixelDifference": 2.95,
+    "horizontallyFlippedReferenceMeanPixelDifference": 37.25,
+    "limitations": [
+      "The pose guide forearm is shorter than the hand and does not match the generated elbow location.",
+      "The guide canvas is 842x1264 while the generated image is 687x1024; guide coordinates must not be used for extraction.",
+      "The identity comparison establishes that the candidate was not flipped relative to the supplied reference, not that the reference itself is globally non-mirrored."
+    ]
+  },
+  "rightArmExtraction": {
+    "status": "pass-visible-pixels-only",
+    "method": "native 687x1024 candidate coordinates, local skin-colour seed, screen-left region mask, connected component, and feathered alpha",
+    "remoteServiceUsed": false,
+    "sourceCanvas": [687, 1024],
+    "file": "right-arm.png",
+    "sha256": "0633a12432db54e5051bcf3243e58b587e5fa6b132c3d86e57d53ce3e5acd1c1",
+    "alphaBoundingBox": [35, 293, 226, 866],
+    "nonTransparentPixels": 56926,
+    "fullyOpaquePixels": 49412,
+    "visualInspection": "pass-no-face-torso-or-background-contamination",
+    "shoulderJointIncluded": false,
+    "rigReady": false,
+    "allowedUse": [
+      "pose-specific transparent overlay",
+      "visual comparison and masking reference"
+    ],
+    "notAllowedUse": [
+      "free shoulder rotation",
+      "continuous skeletal deformation without a newly authored shoulder and upper arm"
+    ]
+  },
+  "overall": "accept",
+  "allowedUse": [
+    "approved wave medium-shot asset",
+    "identity and framing reference",
+    "source image for locally measured arm extraction"
+  ],
+  "notAllowedUse": [],
+  "nextAction": "Register the accepted full pose and transparent visible-arm overlay. For continuous shoulder motion, author a new shoulder-visible source rather than inventing hidden pixels."
+}

@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "gestureId": "wave",
+  "status": "accepted",
+  "createdAt": "2026-10-04",
+  "createdBy": "GPT (Codex)",
+  "model": "未記録",
+  "modelEvidence": "The Gemini model identifier was not captured in verifiable output, so it is intentionally not inferred.",
+  "license": "project-original",
+  "canvas": { "width": 842, "height": 1264 },
+  "framing": "medium",
+  "canonicalFiles": {
+    "coordinates": {
+      "path": "pose.json",
+      "sha256": "b20e0b242bdd7dea551edf45f074c9035c65d60849c47bfbc1972f18cd877380"
+    },
+    "geminiGuide": {
+      "path": "pose-guide.png",
+      "sha256": "839d7c42232f6a17e251ad3a19bdc0c0a749af8fae6f4154f43473810cd8c519"
+    },
+    "renderScript": {
+      "path": "render_guide.py",
+      "sha256": "72bc36504d0241103c019ab043cdc681741e30c71339e13ae1e76cd08fdfbdd3"
+    },
+    "candidate1": {
+      "path": "generated-upper-candidate-1.png",
+      "sha256": "4c8098d8c15ee6bbdf5dd294b200c6e89f9d91200c6a39a2bfbd2231addbfc6c"
+    },
+    "candidate1Qa": {
+      "path": "qa-candidate-1.json",
+      "sha256": "3d37cc1cf06fb79414a042e4ae7402046293bb269c8dc41a31873f835d9d0818"
+    },
+    "claudeReview": {
+      "path": "CLAUDE_REVIEW.md",
+      "sha256": "168ca301dccdfc0f4b838d92858c92deb822b7126c99bda4902809ab903de33e"
+    },
+    "rightArmExtractionScript": {
+      "path": "extract_right_arm.py",
+      "sha256": "4c0ff45cf948d8446c58adea209dfdf6cdc04cb8b4274db15e037aa3bef3aec2"
+    },
+    "characterRightArm": {
+      "path": "right-arm.png",
+      "sha256": "0633a12432db54e5051bcf3243e58b587e5fa6b132c3d86e57d53ce3e5acd1c1"
+    },
+    "rightArmPreview": {
+      "path": "right-arm-preview.png",
+      "sha256": "2b266591cefadcee042abbdf03ef47daf81b87344e05f084adabbe9711ed7efe"
+    },
+    "rightArmMaskOverlay": {
+      "path": "right-arm-mask-overlay.png",
+      "sha256": "b1764e3f4925477754b1ade1ae1846a5f2bf733cce10d1725f8012df5f1bdf8f"
+    }
+  },
+  "verification": {
+    "jsonSyntax": "passed",
+    "pngDimensions": "842x1264",
+    "visualInspection": "passed",
+    "characterRightWave": "screen-left-red",
+    "characterLeftRelaxed": "screen-right-blue",
+    "geminiGeneration": "candidate-1-accepted",
+    "handednessCorrection": "The raised character-right palm has its thumb toward the face on screen-right and its little finger on screen-left. The guide was corrected; the generated image was not changed.",
+    "independentReview": "Claude Code accepted both the corrected guide and generated image at public review commit f7016d482673bd016d602a21b7a16956c4bf9910.",
+    "localRightArmExtraction": "passed-visible-pixels-only-not-rig-ready"
+  }
+}
