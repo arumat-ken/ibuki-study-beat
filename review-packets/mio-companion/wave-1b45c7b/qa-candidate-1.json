@@ -3,8 +3,8 @@
   "gestureId": "wave",
   "candidate": 1,
   "reviewedAt": "2026-10-04",
-  "reviewedBy": "GPT (Codex), corrected after Claude coordinate review",
-  "method": "visual anatomy and non-mirrored camera-coordinate comparison",
+  "reviewedBy": "GPT (Codex), independently verified by Claude Code",
+  "method": "visual anatomy, non-mirrored camera coordinates, file hash verification, and pixel comparison against identity reference",
   "input": {
     "file": "generated-upper-candidate-1.png",
     "sha256": "4c8098d8c15ee6bbdf5dd294b200c6e89f9d91200c6a39a2bfbd2231addbfc6c",
@@ -16,7 +16,7 @@
     "mediumShotFraming": true,
     "characterRightArmOnScreenLeft": true,
     "characterLeftArmOnScreenRight": true,
-    "rightShoulderToHandContinuity": true,
+    "rightForearmToHandContinuity": true,
     "rightFingerCount": 5,
     "rightPalmFacesCamera": true,
     "rightFingersPointUp": true,
@@ -26,6 +26,10 @@
     "leftArmRelaxed": true
   },
   "failed": {},
+  "notDirectlyVerified": {
+    "rightShoulderToUpperArmContinuity": "The upper arm and shoulder connection are occluded by the forearm, wrist, and hair. Continuity is plausible but inferred.",
+    "leftHandHandednessAndFingerCount": "The character-left hand is outside the bottom edge of the generated image."
+  },
   "manualApproximation": {
     "rightThumbTip": [0.31, 0.39],
     "rightLittleFingerTip": [0.07, 0.34],
@@ -37,12 +41,27 @@
     "reason": "The prior review incorrectly transferred the thumb position from anatomical position (arm and fingers down) to a raised, fingers-up waving hand. With a non-mirrored frontal camera view, the character-right raised palm has its thumb toward the face on screen-right and its little finger on screen-left.",
     "imageRegenerated": false
   },
+  "independentReview": {
+    "reviewer": "Claude Code",
+    "reviewedAt": "2026-10-04T14:33:28+09:00",
+    "publicReviewCommit": "f7016d482673bd016d602a21b7a16956c4bf9910",
+    "poseGuideVerdict": "accept",
+    "generatedImageVerdict": "accept",
+    "mirrorEvidence": "none against the supplied identity reference",
+    "identityReferenceMeanPixelDifference": 2.95,
+    "horizontallyFlippedReferenceMeanPixelDifference": 37.25,
+    "limitations": [
+      "The pose guide forearm is shorter than the hand and does not match the generated elbow location.",
+      "The guide canvas is 842x1264 while the generated image is 687x1024; guide coordinates must not be used for extraction.",
+      "The identity comparison establishes that the candidate was not flipped relative to the supplied reference, not that the reference itself is globally non-mirrored."
+    ]
+  },
   "overall": "accept",
   "allowedUse": [
     "approved wave medium-shot asset",
     "identity and framing reference",
-    "source for local arm extraction"
+    "source image for locally measured arm extraction"
   ],
   "notAllowedUse": [],
-  "nextAction": "Use candidate 1 as the accepted wave image. If an independent arm layer is required, extract it locally without regenerating the character."
+  "nextAction": "Measure a new extraction mask in the 687x1024 candidate image. Do not reuse pose.json guide coordinates for extraction."
 }

@@ -7,7 +7,8 @@ Claude が認証なしで画像と座標を確認するための公開レビュ�
 
 - private repository: `arumat-ken/mio-companion`
 - branch: `codex/mio-hand-gestures`
-- source commit: `1b45c7b32346f300d6b7d811adefbe89510a6d7f`
+- original reviewed source commit: `1b45c7b32346f300d6b7d811adefbe89510a6d7f`
+- review-record source commit: `530cb1c`
 - copied at: 2026-10-04 JST
 
 この公開コピーはレビュー専用です。実装と正本管理は `mio-companion` で行います。
@@ -42,6 +43,10 @@ Claude が認証なしで画像と座標を確認するための公開レビュ�
 - `pose.json`: 本人基準の左右と21点座標
 - `qa-candidate-1.json`: 訂正履歴を含む合否記録
 - `manifest.json`: 出所、hash、状態
+- `render_guide.py`: `pose-guide.png` の再生成スクリプト
+- `CLAUDE_REVIEW.md`: Claude Codeの合格判定と、切り出し前に直すべき記録
+
+生成モデル名は検証可能な記録がないため、推測せず `未記録` のままです。
 
 ## Claudeへの依頼
 

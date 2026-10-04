@@ -4,6 +4,11 @@
   "labelJa": "本人の右手を振る",
   "source": "deterministic hand-authored guide",
   "canvas": { "width": 842, "height": 1264 },
+  "coordinateUsage": {
+    "purpose": "generation and handedness guide",
+    "notFor": "pixel-accurate extraction from generated-upper-candidate-1.png",
+    "reason": "The guide and generated image use different canvas sizes and different arm geometry. Extraction coordinates must be measured from the generated image itself."
+  },
   "framing": "medium",
   "coordinateSystem": "character",
   "inputMirrored": false,

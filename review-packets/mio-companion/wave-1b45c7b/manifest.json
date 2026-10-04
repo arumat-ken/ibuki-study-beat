@@ -5,27 +5,34 @@
   "createdAt": "2026-10-04",
   "createdBy": "GPT (Codex)",
   "model": "未記録",
+  "modelEvidence": "The Gemini model identifier was not captured in verifiable output, so it is intentionally not inferred.",
   "license": "project-original",
   "canvas": { "width": 842, "height": 1264 },
   "framing": "medium",
   "canonicalFiles": {
     "coordinates": {
       "path": "pose.json",
-      "sha256": "7ed6414874c5b3c80248fec0a093876942fce5694328ae4f098d7b7da88d7db0"
+      "sha256": "b20e0b242bdd7dea551edf45f074c9035c65d60849c47bfbc1972f18cd877380"
     },
     "geminiGuide": {
       "path": "pose-guide.png",
       "sha256": "839d7c42232f6a17e251ad3a19bdc0c0a749af8fae6f4154f43473810cd8c519"
     },
     "renderScript": {
-      "path": "render_guide.py"
+      "path": "render_guide.py",
+      "sha256": "72bc36504d0241103c019ab043cdc681741e30c71339e13ae1e76cd08fdfbdd3"
     },
     "candidate1": {
       "path": "generated-upper-candidate-1.png",
       "sha256": "4c8098d8c15ee6bbdf5dd294b200c6e89f9d91200c6a39a2bfbd2231addbfc6c"
     },
     "candidate1Qa": {
-      "path": "qa-candidate-1.json"
+      "path": "qa-candidate-1.json",
+      "sha256": "c9a2f661bae7be194c888c97ec8f75206a2973674861b41f2297eeebd601c255"
+    },
+    "claudeReview": {
+      "path": "CLAUDE_REVIEW.md",
+      "sha256": "168ca301dccdfc0f4b838d92858c92deb822b7126c99bda4902809ab903de33e"
     }
   },
   "verification": {
@@ -35,6 +42,7 @@
     "characterRightWave": "screen-left-red",
     "characterLeftRelaxed": "screen-right-blue",
     "geminiGeneration": "candidate-1-accepted",
-    "handednessCorrection": "The raised character-right palm has its thumb toward the face on screen-right and its little finger on screen-left. The guide was corrected; the generated image was not changed."
+    "handednessCorrection": "The raised character-right palm has its thumb toward the face on screen-right and its little finger on screen-left. The guide was corrected; the generated image was not changed.",
+    "independentReview": "Claude Code accepted both the corrected guide and generated image at public review commit f7016d482673bd016d602a21b7a16956c4bf9910."
   }
 }
