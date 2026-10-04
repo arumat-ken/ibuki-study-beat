@@ -1,0 +1,64 @@
+{
+  "_about": "第2段階の5ポーズの骨格ガイド定義。座標は『肩幅(SW)=1』の単位で、原点=両肩の中点、x=画面の右、y=下。ピクセルではない。実際の pose-guide.png に合わせるときは SW をそのガイドの肩幅(px)に置き換える。数値は標準的な人体比から置いた初期値で、確定済みの palm_up のガイド画像とは未照合。",
+  "units": "SW (shoulder width = 1.0). origin = midpoint of shoulders. +x = screen right, +y = down.",
+  "limits": { "upper_arm": 0.72, "forearm": 0.56, "hand": 0.42, "index": 0.38 },
+  "side_names": { "R": "本人の右手 = 画面の左 (shoulder x = -0.5)", "L": "本人の左手 = 画面の右 (shoulder x = +0.5)" },
+  "poses": {
+    "wave": {
+      "label": "手を振る",
+      "R": {
+        "wrist": [-0.80, 0.10], "bend": "down", "hand_deg": -85,
+        "fingers": "5本とも軽く開く", "palm": "viewer",
+        "thumb": "inward", "pinky": "outward",
+        "note": "右手を手のひら正面で上げると親指は体の中心側。palm_up(親指=外側)とは逆になる。"
+      },
+      "L": { "mode": "base" }
+    },
+    "point_self": {
+      "label": "自分を指す",
+      "R": {
+        "wrist": [-0.35, 0.62], "bend": "out", "hand_deg": -30,
+        "fingers": "人差し指だけ伸ばして胸の中央を指す。中・薬・小は軽く握る。親指は握った指に添える",
+        "palm": "body", "tip": "index",
+        "thumb": "up", "pinky": "down",
+        "note": "手のひらが胸側、手の甲が画面側。人差し指の先が胴の中心線(x≈0)に届く。"
+      },
+      "L": { "mode": "base" }
+    },
+    "index_up": {
+      "label": "要点を示す",
+      "R": {
+        "wrist": [-0.66, 0.22], "bend": "down", "hand_deg": -88,
+        "fingers": "人差し指を1本まっすぐ上へ。他の3本は握り、親指は中指に添える",
+        "palm": "viewer", "tip": "index",
+        "thumb": "inward", "pinky": "outward",
+        "note": "手のひら正面。指先は首〜あごの横あたりの高さ（顔・口を隠さない）。"
+      },
+      "L": { "mode": "base" }
+    },
+    "think_finger": {
+      "label": "考える",
+      "R": {
+        "wrist": [-0.361, 0.124], "bend": "down", "hand_deg": -65,
+        "fingers": "人差し指を頬の横に添える。他の指は軽く曲げる",
+        "palm": "face", "tip": "index", "tip_target": [-0.20, -0.22],
+        "thumb": "hidden", "pinky": "down",
+        "note": "手のひらは顔側。親指は手の陰（後ろ）で見えない。指先は口を隠さない位置（頬）。手は顔・口の層より前に描く。骨格図では肘が深く折れ前腕が上腕に沿うが、実際は肘が手前に出て上腕が短く見える（奥行き）。固定長の2D骨格では表せないので、この1ポーズは絵で判断する。"
+      },
+      "L": { "mode": "base" }
+    },
+    "gassho": {
+      "label": "両手を合わせる",
+      "R": {
+        "wrist": [-0.07, 0.78], "bend": "out", "hand_deg": -80,
+        "fingers": "5本そろえて上へ。手のひら同士を合わせる",
+        "palm": "mutual", "thumb": "hidden", "pinky": "front",
+        "note": "正面から見ると親指側は胸に近い奥、小指側が手前。palm_up の「親指=外・小指=中央」は適用外。"
+      },
+      "L": {
+        "mirror_of": "R",
+        "note": "左右対称。指先が x≈0 で合う。左右の手は重なるので、切り出しは x=0 の線で左右に分ける（1枚の合わせ手として生成する案もある）。"
+      }
+    }
+  }
+}
