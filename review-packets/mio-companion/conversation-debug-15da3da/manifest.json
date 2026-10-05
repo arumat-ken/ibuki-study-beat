@@ -9,7 +9,9 @@
     "repository": "arumat-ken/mio-companion",
     "visibility": "private",
     "branch": "antigravity/mio-gemini-tts",
-    "commit": "15da3da",
+    "originalCommit": "15da3da",
+    "codeFixCommit": "544793f",
+    "handoffUpdateCommit": "a98ad98",
     "sourceFile": "app/index.html"
   },
   "redaction": {
@@ -20,15 +22,15 @@
     "images": "excluded"
   },
   "files": {
-    "CLAUDE_HANDOFF.md": "f92eb1851c436e0534c985d6b6c5635e82a839e62648306c8447f38d05aa1c08",
-    "conversation-loop-excerpt.js": "d56e0c02831cb1b266ec3b19f4387f017c6f4f83b2735111e181be7b80ffb876",
-    "README.md": "39239d1ce88b1386b459481c5e9f7fdd45ffa7617ce3b77761390d5e6efd008c",
-    "TEST_RESULTS.md": "0768f92f765fadac42a119590ad139765194f4a920af010627c2bb6f02aa07f5",
-    "DEVICE_TEST.md": "8ff7485ae7604146ced5fb032b7524c40a4c9105ae42c0b855e0f832fd2a1a54",
-    "STATIC_REVIEW.md": "ea7a4d12c0c3b5ad6d56720db4389b949eea6b00f7216fd8990aef8e4c814a3f"
+    "CLAUDE_HANDOFF.md": "2a6e90c078e9527ba501389a8e9b769c4cb8c4a0124c3799ca8864e3280389c6",
+    "conversation-loop-excerpt.js": "7ece62ec851fa4f25d9caf335eeb7dab8e0da86bffe2927b9a6beb5c890865ee",
+    "README.md": "23011762922120686efca23af0d3b7209e0c10d5905f2c55db89d8b96099ddd2",
+    "TEST_RESULTS.md": "a6e49f3b5e3f7658064b29b53c3c18b4b44c8ba41f1bf4e581a204dc4c55d8e1",
+    "DEVICE_TEST.md": "d278eff205c271031b3c212ce5550d4222931b9e94ef19385c4960f3e8a11edb",
+    "STATIC_REVIEW.md": "a8395991e87787fa7b5c4b8de042895dbb8b775bcef01dfe812e57ef68dab884"
   },
   "verification": {
-    "sourceTests": "9 files, 48 tests passed",
+    "sourceTests": "9 files, 52 tests passed",
     "sourceBuild": "passed",
     "iphoneSafariThreeTurns": "not verified",
     "reviewPacketStandalone": false

@@ -1,34 +1,34 @@
 /*
- * Public review excerpt from mio-companion commit 15da3da.
+ * Public review excerpt from mio-companion code commit 544793f.
  * Mechanical line extraction only; no API keys, localStorage values, images or personal data.
  * This is not a standalone program. Line numbers refer to app/index.html at the source commit.
  */
 
-/* ===== UI state: idle / listen / think / speak (source lines 545-565) ===== */
-  rlog(text.slice(0,60));
-}
-
-var lastSys='';
-function sysLine(text){
-  if(text===lastSys) return;   /* the same advice four times is noise */
-  lastSys=text;
-  if(seeded){ logEl.innerHTML=''; seeded=false; }
-  var li=document.createElement('li'); li.className='turn sys';
-  var p=document.createElement('p'); p.className='said'; p.textContent=text;
-  li.appendChild(p); logEl.appendChild(li); logEl.scrollTop=logEl.scrollHeight;
-}
-
+/* ===== UI state, transition logging and 25-second recovery watchdog (source lines 558-577) ===== */
 /* ================= status pill ================= */
 var pill=document.getElementById('pill'), pillText=document.getElementById('pilltext');
 var STATE={idle:'待機中',listen:'聞いています',think:'考えています',speak:'話しています',off:'使えません'};
-function setState(s){ pill.dataset.s=s; pillText.textContent=STATE[s]||s; }
+var stateChangedAt=performance.now(), conversationSeq=0;
+function setState(s){
+  pill.dataset.s=s; pillText.textContent=STATE[s]||s; stateChangedAt=performance.now();
+  rlog('state='+s+' ctx='+(ttsAudioCtx?ttsAudioCtx.state:'-')+' listening='+!!listening+' speaking='+!!speaking+' busy='+!!busy);
+}
+/* A browser audio event can disappear when iOS interrupts an audio session.
+   Never leave the call wedged in think/speak forever; invalidate a late model
+   result before returning to listening. */
+setInterval(function(){
+  var s=pill.dataset.s;
+  if((s!=='think'&&s!=='speak')||performance.now()-stateChangedAt<=25000) return;
+  rlog('state='+s+' が25秒続いたため復旧');
+  conversationSeq++;
+  stopSpeaking(); busy=false; setState('idle');
+  if(started&&autoListen()&&!micBlocked) beginListen();
+},5000);
 
-/* ================= face ================= */
-var canvas=document.getElementById('face'), fx=canvas.getContext('2d');
 
-
-/* ===== Gemini TTS, PCM decoding, Web Audio playback, speechSynthesis fallback (source lines 2453-2820) ===== */
-var jaVoice=null, moraPerSec=7.4, speaking=false, curEmotion='neutral';
+/* ===== Gemini TTS, PCM decoding, AudioContext recovery, playback watchdogs and device fallback (source lines 2467-2873) ===== */
+/* ================= speech out (Gemini TTS & Device SpeechSynthesis) ================= */
+var jaVoice=null, moraPerSec=7.4, speaking=false, curEmotion='neutral', lastSpeechEndAt=0;
 var VOICE={
   neutral  :[1.00,1.06], relaxed:[0.96,1.03], happy:[1.07,1.13],
   sad      :[0.92,0.98], angry  :[1.09,1.00], surprised:[1.12,1.17]
@@ -116,10 +116,21 @@ function getAudioContext(){
     var AC=window.AudioContext||window.webkitAudioContext;
     if(AC) ttsAudioCtx=new AC();
   }
-  if(ttsAudioCtx && ttsAudioCtx.state==='suspended'){
+  if(ttsAudioCtx && ttsAudioCtx.state!=='running'){
     ttsAudioCtx.resume().catch(function(){});
   }
   return ttsAudioCtx;
+}
+
+function resumeAudioContext(){
+  var ctx=getAudioContext();
+  if(!ctx||ctx.state==='running') return Promise.resolve(ctx);
+  var p;
+  try{ p=ctx.resume(); }catch(e){ return Promise.resolve(ctx); }
+  return Promise.race([
+    Promise.resolve(p).catch(function(){}),
+    waitMs(800)
+  ]).then(function(){ return ctx; });
 }
 
 function decodeBase64ToAudioBuffer(ctx, base64Data, mimeType){
@@ -267,13 +278,15 @@ function playGeminiAudio(buffer, text, kana, gestures, modelUsed, myId, done){
   setDiag('TTS最終成功', lastTtsSuccessAt, 'ok');
   setDiag('TTSエラー', 'なし');
 
-  var settled = false;
+  var settled = false, wd=0;
   function settle(){
     if(settled) return;
     settled = true;
+    clearTimeout(wd);
     if(currentAudioSource === source) currentAudioSource = null;
     if(myId !== utterSeq) return;
     speaking = false;
+    lastSpeechEndAt=performance.now();
     visTarget = 'x';
     setState('idle');
     dismissHands(myId);
@@ -284,7 +297,16 @@ function playGeminiAudio(buffer, text, kana, gestures, modelUsed, myId, done){
 
   source.onended = settle;
   currentAudioSource = source;
-  source.start(0);
+  wd=setTimeout(function(){
+    rlog('再生終了が来ないので強制終了');
+    try{ source.stop(); }catch(e){}
+    settle();
+  },durationSec*1000+2500);
+  try{ source.start(0); }
+  catch(e){
+    clearTimeout(wd); currentAudioSource=null; speaking=false; setState('idle');
+    throw e;
+  }
 }
 
 function pickVoice(){
@@ -318,9 +340,9 @@ function stopSpeaking(){
 
 function speakDevice(text,kana,gestures,myId,done){
   if(!window.speechSynthesis){
-    speaking=false; visTarget='x'; setState('idle'); done&&done(); return;
+    speaking=false; lastSpeechEndAt=performance.now(); visTarget='x'; setState('idle'); done&&done(); return;
   }
-  var settled=false, t0=0;
+  var settled=false, t0=0, startWd=0, maxWd=0;
   var u=new SpeechSynthesisUtterance(text);
   u.lang='ja-JP'; if(jaVoice) u.voice=jaVoice;
   var V=VOICE[curEmotion]||VOICE.neutral;
@@ -329,13 +351,15 @@ function speakDevice(text,kana,gestures,myId,done){
   u.pitch=V[1];
   visSeq=toVisemes(kana||text);
   u.onstart=function(){
+    if(settled){ try{ speechSynthesis.cancel(); }catch(e){} return; }
     speaking=true; t0=performance.now(); visStart=t0; setState('speak');
     scheduleHandGestures(gestures,visSeq.length,myId);
   };
   function settle(){
     if(settled) return; settled=true;
+    clearTimeout(startWd); clearTimeout(maxWd);
     if(myId!==utterSeq) return;
-    speaking=false; visTarget='x'; setState('idle'); dismissHands(myId);
+    speaking=false; lastSpeechEndAt=performance.now(); visTarget='x'; setState('idle'); dismissHands(myId);
     closeEchoWindow();
     if(handsFree) keepFocus();
     if(t0){
@@ -349,7 +373,15 @@ function speakDevice(text,kana,gestures,myId,done){
     done&&done();
   }
   u.onend=settle; u.onerror=settle;
-  speechSynthesis.speak(u);
+  startWd=setTimeout(function(){
+    if(t0) return;
+    rlog('端末音声が始まらない'); try{ speechSynthesis.cancel(); }catch(e){} settle();
+  },3000);
+  maxWd=setTimeout(function(){
+    rlog('端末音声の最大時間を超えたため終了'); try{ speechSynthesis.cancel(); }catch(e){} settle();
+  },text.length*400+3000);
+  try{ speechSynthesis.speak(u); }
+  catch(e){ rlog('端末音声を開始できない: '+(e&&e.name||'error')); settle(); }
 }
 
 function speak(text,kana,gestures,done){
@@ -364,7 +396,11 @@ function speak(text,kana,gestures,done){
     synthesizeGeminiAudio(text, curEmotion)
     .then(function(res){
       if(myId!==utterSeq) return;
-      playGeminiAudio(res.buffer, text, kana, gestures, res.model, myId, done);
+      return resumeAudioContext().then(function(ctx){
+        rlog('AudioContext='+(ctx?ctx.state:'unavailable'));
+        if(!ctx||ctx.state!=='running') throw {code:'audio_context_not_running'};
+        playGeminiAudio(res.buffer, text, kana, gestures, res.model, myId, done);
+      });
     })
     .catch(function(err){
       if(myId!==utterSeq) return;
@@ -376,6 +412,7 @@ function speak(text,kana,gestures,done){
       else if(code==='timeout') reason='タイムアウト';
       else if(code==='cors') reason='CORSエラー';
       else if(code==='model_unavailable') reason='TTSモデル利用不可';
+      else if(code==='audio_context_not_running') reason='AudioContextを再開できない';
 
       lastTtsError=reason;
       setDiag('音声方式', '端末読み上げ（Gemini TTS ' + reason + ' のため自動切替）', 'bad');
@@ -396,8 +433,9 @@ function speak(text,kana,gestures,done){
   }
 }
 
+/* ================= speech in ================= */
 
-/* ===== SpeechRecognition lifecycle and automatic restart (source lines 2822-3025) ===== */
+/* ===== SpeechRecognition lifecycle and delayed automatic restart (source lines 2874-3091) ===== */
 var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 var rec=null, listening=false, noSpeechRetries=0, everHeard=false;
 var selftile=document.getElementById('selftile');
@@ -501,11 +539,14 @@ function beginListen(){
   }
   /* iOS keeps the audio session in playback while it is speaking; starting
      recognition on top of that fails silently, so stop and let it settle. */
-  var wasSpeaking=false;
-  try{ wasSpeaking=!!(window.speechSynthesis&&speechSynthesis.speaking); }catch(e){}
+  var wasSpeaking=!!speaking;
+  try{ wasSpeaking=wasSpeaking||!!(window.speechSynthesis&&speechSynthesis.speaking); }catch(e){}
   stopSpeaking();
   pendingListen=true;
-  setTimeout(function(){ pendingListen=false; startListening(); }, wasSpeaking?350:0);
+  var sinceEnd=performance.now()-lastSpeechEndAt;
+  var gap=Math.max(wasSpeaking?350:0,350-sinceEnd,0);
+  rlog('聞き取り再開まで '+Math.round(gap)+'ms');
+  setTimeout(function(){ pendingListen=false; startListening(); },gap);
 }
 
 var micBlocked=false;
@@ -602,8 +643,47 @@ function startListening(){
     sysLine('音声認識を起動できませんでした（'+err.name+'）。下の入力欄から文字で送れます。');
   }
 }
+function autoListen(){ return document.getElementById('autolisten').checked; }
+(function(){
+  var cb=document.getElementById('autolisten'), state=document.getElementById('autolistenstate');
+  cb.addEventListener('change',function(){
+    state.textContent=cb.checked
+      ? 'オン：澪の返事が終わると、次の言葉を待ちます。'
+      : 'オフ：次に話すときは「話す」を押してください。';
+    state.style.color=cb.checked?'var(--ok)':'var(--live)';
+  });
+})();
 
-/* ===== Gemini model selection, structured JSON request and parser (source lines 3065-3295) ===== */
+
+/* ===== Gemini model selection, structured JSON request and parser (source lines 3092-3526) ===== */
+/* ================= the brain: Gemini API ================= */
+var turns=[], busy=false;
+var GEMINI_MODEL_DEFAULT='gemini-3.5-flash';
+var GEMINI_KEY_NAME='mio.geminiApiKey';
+var GEMINI_MODEL_NAME='mio.geminiModel';
+var GEMINI_POLICY_NAME='mio.geminiPolicyVersion';
+var GEMINI_POLICY_VERSION='quality-reliability-v1';
+var availableGeminiModels=[], modelListPromise=null;
+var RULES=[
+ 'あなたは「澪（みお）」という名前の音声アシスタントです。日本語で話します。',
+ '・親しみやすく落ち着いた口調。硬い敬語は使いすぎない。',
+ '・声で読み上げられるので、1〜3文、120文字以内で答える。',
+ '・箇条書き、記号、絵文字、URLは使わない。',
+ '・相手は「ケンさん」。',
+ '',
+ '必ず次の形のJSONだけを返してください。前後に説明を付けないこと。',
+ '{"reply":"話す文","kana":"replyの読みを全てひらがなで。漢字・数字・英字を残さない","emotion":"neutral|happy|sad|angry|surprised|relaxed","strength":0.0〜1.0でその感情の強さ,"tears":涙ぐむなら true そうでなければ false,"gesture":"nod|tilt|shake|none のどれか。うなずく・首をかしげる・首を振る","gestures":[{"pose":"wave|palm_up|point_self|index_up|think_finger|gassho|open_heart|hug_invite","at":0.0〜1.0}]}',
+ '・手ぶり gestures は返事1つにつき0〜2個。基本は意思を最もよく伝える1個だけ。異なる意味へ話が移る場合だけ2個にする。',
+ '・atは、その手ぶりに対応する語句を話し始める位置を返事全体の0.0〜1.0で示す。文の先頭へ機械的に固定しない。',
+ '・あいさつと別れは wave、説明・提案・歓迎は palm_up、自分のことは point_self、要点・強調・驚きは index_up、迷い・検討は think_finger、お願い・感謝・謝罪は gassho。',
+ '・愛情や心が通じた喜び、深い共感を明示するときは open_heart。抱きしめたい・抱きしめてほしい、身体的な安心や慰めを明示するときは hug_invite。一般的な親切や軽い共感では使わない。',
+ '・emotionとstrengthに合う自然な所作を選ぶ。強い感情でも手ぶりを増やしすぎず、表情・声・手を同じ意図に揃える。',
+ '・使える手ぶり名は上記8個だけ。使わない場合は gestures を空配列にする。'
+].join('\n');
+
+function askImageLimits(){
+  imgCaps={maxCount:4,mediaTypes:['image/jpeg','image/png','image/webp','image/heic','image/heif']};
+  setDiag('写真を見せる','できる（1回4枚まで）','ok');
 }
 
 var ERR={
@@ -835,12 +915,184 @@ async function geminiJson(pictures){
       }
       return result;
     }catch(e){
+      lastError=e;
+      var detail=(e.status?('HTTP '+e.status+' '):'')+(e.message||e.code||'失敗');
+      setDiag('Gemini会話エラー',candidateModel+' / '+detail,'bad');
+      rlog('Gemini会話失敗 ['+candidateModel+'] '+detail);
+      if(e.code==='auth'||e.code==='missing_key'||e.code==='refused') break;
+      if(i<candidates.length-1) await waitMs(650+Math.round(Math.random()*350));
+    }
+  }
+  throw lastError||{code:'upstream_error'};
+}
 
-/* ===== Conversation orchestration and call controls (source lines 3468-3560) ===== */
+function paintApiState(message,bad){
+  var el=document.getElementById('apistate');
+  if(el){ el.textContent=message; el.style.color=bad?'var(--live)':'var(--ok)'; }
+}
+
+function paintTtsState(msg,bad){
+  var el=document.getElementById('ttsstate');
+  if(el){ el.textContent=msg; el.style.color=bad?'var(--live)':'var(--ok)'; }
+}
+
+function updateTtsDiagnostics(models){
+  var q = savedTtsQuality();
+  var engine = savedVoiceEngine();
+  var isGemini = engine === 'gemini';
+  var ttsModel = resolveTtsModel(models, q);
+  if(isGemini){
+    setDiag('音声方式', 'Gemini自然音声 (' + (q==='high'?'高品質':'高速') + ' / ' + savedTtsVoice() + ')', 'ok');
+  }else{
+    setDiag('音声方式', '端末の音声 (speechSynthesis)', '');
+  }
+  if(ttsModel){
+    setDiag('実際に使ったTTSモデル', lastTtsModelUsed !== '未実行' ? lastTtsModelUsed : ('待機中 (' + ttsModel + ')'), 'ok');
+  }
+}
+
+function setupTtsControls(){
+  var engineSel = document.getElementById('voiceengine');
+  var qSel = document.getElementById('ttsq');
+  var voiceSel = document.getElementById('ttsvoice');
+  var rateInput = document.getElementById('ttsrate');
+  var testBtn = document.getElementById('testtts');
+  var refreshBtn = document.getElementById('refreshtts');
+
+  if(engineSel) engineSel.value = savedVoiceEngine();
+  if(qSel) qSel.value = savedTtsQuality();
+  if(voiceSel) voiceSel.value = savedTtsVoice();
+  if(rateInput) rateInput.value = String(Math.round(savedTtsRate() * 100));
+
+  var hasKey = !!savedGeminiKey();
+  if(savedVoiceEngine() === 'gemini'){
+    paintTtsState(hasKey ? 'Gemini自然音声が有効です（高速・高品質を切替可能）' : 'APIキーを設定するとGemini自然音声を利用できます', !hasKey);
+  }else{
+    paintTtsState('端末の読み上げ（追加API費用なし）に設定されています', false);
+  }
+
+  if(engineSel){
+    engineSel.addEventListener('change', function(){
+      saveVoiceEngine(engineSel.value);
+      var isGemini = engineSel.value === 'gemini';
+      updateTtsDiagnostics(availableGeminiModels);
+      paintTtsState(isGemini ? 'Gemini自然音声を優先します' : '端末の内蔵読み上げを使用します', false);
+    });
+  }
+  if(qSel){
+    qSel.addEventListener('change', function(){
+      saveTtsQuality(qSel.value);
+      updateTtsDiagnostics(availableGeminiModels);
+      paintTtsState('TTS品質を「' + (qSel.value==='high'?'高品質':'高速') + '」に設定しました', false);
+    });
+  }
+  if(voiceSel){
+    voiceSel.addEventListener('change', function(){
+      saveTtsVoice(voiceSel.value);
+      updateTtsDiagnostics(availableGeminiModels);
+      paintTtsState('声を「' + voiceSel.value + '」に設定しました', false);
+    });
+  }
+  if(rateInput){
+    rateInput.addEventListener('input', function(){
+      var r = parseFloat(rateInput.value) / 100;
+      saveTtsRate(r);
+      setDiag('話す速さ', (r * moraPerSec).toFixed(1) + ' 拍/秒 (倍率: ' + r.toFixed(2) + '×)');
+    });
+  }
+  if(testBtn){
+    testBtn.addEventListener('click', function(){
+      getAudioContext();
+      paintTtsState('音声をテスト再生中…', false);
+      speak('こんにちは、澪です。声の聞こえ方はいかがですか。', 'こんにちは、みおです。こえのきこえかたはいかがですか。', [{pose:'wave', at:0}], function(){
+        paintTtsState('テスト再生が完了しました', false);
+      });
+    });
+  }
+  if(refreshBtn){
+    refreshBtn.addEventListener('click', async function(){
+      paintTtsState('TTSモデル実在確認中…', false);
+      try{
+        var model = await refreshGeminiModels();
+        var ttsModel = resolveTtsModel(availableGeminiModels, savedTtsQuality());
+        ttsFreshness = 'モデル確認済 (' + new Date().toTimeString().slice(0,8) + ')';
+        setDiag('TTSデータ鮮度', ttsFreshness, 'ok');
+        updateTtsDiagnostics(availableGeminiModels);
+        paintTtsState('確認完了: TTS対象「' + ttsModel + '」実在確認OK', false);
+      }catch(e){
+        paintTtsState(ERR[e && e.code] || 'モデル一覧取得失敗', true);
+      }
+    });
+  }
+}
+
+function setupGeminiControls(){
+  var keyInput=document.getElementById('geminikey');
+  var modelInput=document.getElementById('geminimodel');
+  var hasKey=!!savedGeminiKey();
+  paintGeminiModels([],savedGeminiModel());
+  keyInput.placeholder=hasKey?'保存済み（変更するときだけ入力）':'ここにAPIキーを入力';
+  paintApiState(hasKey?'APIキーはこの端末に保存されています':'APIキーは未設定です',!hasKey);
+  setDiag('頭脳',hasKey?'Gemini / モデル確認中':'APIキー未設定',hasKey?'':'bad');
+  updateTtsDiagnostics(availableGeminiModels);
+
+  modelInput.addEventListener('change',function(){
+    if(availableGeminiModels.indexOf(modelInput.value)<0) return;
+    try{ localStorage.setItem(GEMINI_MODEL_NAME,modelInput.value); }catch(e){}
+    setDiag('頭脳','Gemini / '+modelInput.value,'ok');
+  });
+  if(hasKey){
+    paintApiState('モデル一覧とCORSを確認しています…',false);
+    refreshGeminiModels().then(function(model){
+      paintApiState('CORS通過・モデル一覧取得済み（'+availableGeminiModels.length+'件）',false);
+      setDiag('頭脳','Gemini / '+model,'ok');
+      ttsFreshness = '最新 (モデル取得済 ' + new Date().toTimeString().slice(0,8) + ')';
+      setDiag('TTSデータ鮮度', ttsFreshness, 'ok');
+      updateTtsDiagnostics(availableGeminiModels);
+    }).catch(function(e){
+      paintApiState(ERR[e&&e.code]||ERR.upstream_error,true);
+      setDiag('頭脳','接続できない','bad');
+    });
+  }
+  document.getElementById('saveapi').addEventListener('click',async function(){
+    var entered=keyInput.value.trim();
+    if(!entered&&!savedGeminiKey()){ paintApiState('先にAPIキーを入力してください',true); return; }
+    try{
+      if(entered) localStorage.setItem(GEMINI_KEY_NAME,entered);
+    }catch(e){ paintApiState('この端末へ保存できませんでした',true); return; }
+    keyInput.value=''; keyInput.placeholder='保存済み（変更するときだけ入力）';
+    availableGeminiModels=[];
+    paintApiState('最初にCORSとモデル一覧を確認しています…',false);
+    var old=turns; turns=[{role:'user',content:'短く「確認できました」とだけ返してください。'}];
+    try{
+      var model=await refreshGeminiModels();
+      paintApiState('CORS通過。選んだモデルで返事を確認しています…',false);
+      await geminiJson([]);
+      paintApiState('CORS通過・モデル一覧'+availableGeminiModels.length+'件・会話応答OK',false);
+      setDiag('頭脳','Gemini / '+model,'ok');
+      ttsFreshness = '最新 (モデル取得済 ' + new Date().toTimeString().slice(0,8) + ')';
+      setDiag('TTSデータ鮮度', ttsFreshness, 'ok');
+      updateTtsDiagnostics(availableGeminiModels);
+    }catch(e){
+      paintApiState(ERR[e&&e.code]||ERR.upstream_error,true);
+      setDiag('頭脳','接続できない','bad');
+    }finally{ turns=old; }
+  });
+  document.getElementById('forgetapi').addEventListener('click',function(){
+    if(!window.confirm('この端末に保存したGemini APIキーを消します。よろしいですか？')) return;
+    try{ localStorage.removeItem(GEMINI_KEY_NAME); }catch(e){}
+    try{ localStorage.removeItem(GEMINI_MODEL_NAME); }catch(e){}
+    try{ localStorage.removeItem(TTS_MODEL_NAME); }catch(e){}
+    availableGeminiModels=[]; paintGeminiModels([],'');
+    keyInput.value=''; keyInput.placeholder='ここにAPIキーを入力';
+    paintApiState('APIキーを削除しました',true); setDiag('頭脳','APIキー未設定','bad');
+    setDiag('音声方式','端末の読み上げ (APIキー削除)','bad');
     setDiag('TTSデータ鮮度','未取得');
   });
 }
 
+
+/* ===== Conversation orchestration, stale-result rejection and call controls (source lines 3527-3619) ===== */
 function ask(said){
   if(busy) return;
   addTurn('ケン',said);
@@ -848,7 +1100,7 @@ function ask(said){
     sysLine(ERR.missing_key);
     setState('idle'); return;
   }
-  busy=true; setState('think');
+  busy=true; var myConversation=++conversationSeq; setState('think');
 
   /* Pictures ride with this turn only — earlier ones are not re-sent — so say
      in the words what she is being shown, or the next turn refers to
@@ -865,6 +1117,7 @@ function ask(said){
   if(window.clearAttached) clearAttached();
   geminiJson(pics)
   .then(function(d){
+    if(myConversation!==conversationSeq) return;
     var reply=(d&&d.reply)||'', kana=(d&&d.kana)||reply, emo=(d&&d.emotion)||'neutral';
     if(!EMO[emo]) emo='neutral';
     var strength=(d&&typeof d.strength==='number')?d.strength:undefined;
@@ -884,6 +1137,7 @@ function ask(said){
     });
   })
   .catch(function(e){
+    if(myConversation!==conversationSeq) return;
     busy=false; setState('idle');
     var code=(e&&e.code)||'upstream_error';
     sysLine(ERR[code]||('うまくいきませんでした（'+code+'）'));
@@ -930,8 +1184,10 @@ hangBtn.addEventListener('click',function(){
       if(!started){ started=true; hangBtn.disabled=false; talkBtn.textContent='話す'; }
       ask(t);
     });
+    wrap.appendChild(b);
+  });
 
-/* ===== Echo suppression window and hands-free refocus (source lines 3621-3678) ===== */
+/* ===== Echo suppression window and hands-free refocus (source lines 3678-3750) ===== */
 /* Hands-free dictation (macOS / iOS Voice Control) never stops listening, so
    it hears her reply through the speaker and types it into the same box —
    which then auto-sends, and she answers herself, forever. Nothing typed
@@ -990,3 +1246,18 @@ function keepFocus(){
    back — "not-allowed from a frame" is a different problem from "no
    microphone" and from "you declined", and they were all showing up as
    nothing happening. */
+(function(){
+  var cb=document.getElementById('micmode');
+  var want=false;
+  cb.checked=want;
+  /* This reported into the diagnostics list and the transcript. The list
+     lives inside a folded panel and the transcript is below the fold on a
+     phone, so ticking the box answered into two places the person ticking it
+     cannot see — which is the same "nothing happens" this switch exists to
+     end. Say it next to the switch. */
+  var line=document.getElementById('micstate');
+  function report(kind,msg,ok){
+    setDiag('連続して聞く',kind,ok?'ok':'bad');
+    if(line){
+      line.hidden=false;
+      line.textContent=msg;
