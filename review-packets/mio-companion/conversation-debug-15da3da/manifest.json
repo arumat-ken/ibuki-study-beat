@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "packet": "mio-conversation-debug-15da3da",
+  "createdAt": "2026-10-05",
+  "createdBy": "Codex",
+  "model": "未記録",
+  "purpose": "Public, secret-free review packet for Claude Code to diagnose Mio Call bidirectional conversation",
+  "source": {
+    "repository": "arumat-ken/mio-companion",
+    "visibility": "private",
+    "branch": "antigravity/mio-gemini-tts",
+    "commit": "15da3da",
+    "sourceFile": "app/index.html"
+  },
+  "redaction": {
+    "apiKeys": "excluded",
+    "tokens": "excluded",
+    "localStorageValues": "excluded",
+    "personalInformation": "excluded",
+    "images": "excluded"
+  },
+  "files": {
+    "CLAUDE_HANDOFF.md": "f92eb1851c436e0534c985d6b6c5635e82a839e62648306c8447f38d05aa1c08",
+    "conversation-loop-excerpt.js": "d56e0c02831cb1b266ec3b19f4387f017c6f4f83b2735111e181be7b80ffb876",
+    "README.md": "39239d1ce88b1386b459481c5e9f7fdd45ffa7617ce3b77761390d5e6efd008c",
+    "TEST_RESULTS.md": "0768f92f765fadac42a119590ad139765194f4a920af010627c2bb6f02aa07f5",
+    "DEVICE_TEST.md": "8ff7485ae7604146ced5fb032b7524c40a4c9105ae42c0b855e0f832fd2a1a54",
+    "STATIC_REVIEW.md": "ea7a4d12c0c3b5ad6d56720db4389b949eea6b00f7216fd8990aef8e4c814a3f"
+  },
+  "verification": {
+    "sourceTests": "9 files, 48 tests passed",
+    "sourceBuild": "passed",
+    "iphoneSafariThreeTurns": "not verified",
+    "reviewPacketStandalone": false
+  }
+}
