@@ -2,7 +2,7 @@
 
 ## 結論
 
-2026-10-05に正本commit `544793f` で `npm test` と `npm run build` を実行し、9ファイル・52件が
+2026-10-06に正本commit `40998de` で `npm test` と `npm run build` を実行し、9ファイル・55件が
 合格した。ただし、これらはコードと静的UIの検査であり、iPhoneのマイク、Safariの音声セッション、
 実ネットワーク、実API音声再生の3往復を検査していない。
 
@@ -11,7 +11,7 @@
 | テスト | 件数 | 主な検査 |
 |---|---:|---|
 | `handGestures.test.ts` | 17 | 8ポーズ資産、発話同期、検証、較正、フォールバック |
-| `selfHostedVoice.test.ts` | 11 | SpeechRecognition構造、Gemini JSON、状態ログ、25秒復旧、再開待機 |
+| `selfHostedVoice.test.ts` | 14 | SpeechRecognition構造、公式JSON項目、安全なエラー表示、状態復旧、iPhone音声解錠 |
 | `geminiTts.test.ts` | 9 | PCM/Web Audio、終了監視、AudioContext再開、失敗時フォールバック |
 | `cameraRig.test.ts` | 4 | 旧3D比較実装のカメラ制約 |
 | `lipSync.test.ts` | 4 | 音量・口形の数値処理 |
@@ -19,7 +19,7 @@
 | `providers.test.ts` | 2 | プロバイダー定義 |
 | `tailscaleAccess.test.ts` | 1 | Tailnetホスト制限 |
 | `vectorAvatar.test.ts` | 1 | 旧ベクター比較実装の部品 |
-| **合計** | **52** | |
+| **合計** | **55** | |
 
 ## ビルド
 

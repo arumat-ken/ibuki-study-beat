@@ -1,5 +1,5 @@
 /*
- * Public review excerpt from mio-companion code commit 544793f.
+ * Public review excerpt from mio-companion code commit 40998de.
  * Mechanical line extraction only; no API keys, localStorage values, images or personal data.
  * This is not a standalone program. Line numbers refer to app/index.html at the source commit.
  */
@@ -26,7 +26,7 @@ setInterval(function(){
 },5000);
 
 
-/* ===== Gemini TTS, PCM decoding, AudioContext recovery, playback watchdogs and device fallback (source lines 2467-2873) ===== */
+/* ===== Gemini TTS, PCM decoding, AudioContext unlock and recovery, playback watchdogs and device fallback (source lines 2467-2887) ===== */
 /* ================= speech out (Gemini TTS & Device SpeechSynthesis) ================= */
 var jaVoice=null, moraPerSec=7.4, speaking=false, curEmotion='neutral', lastSpeechEndAt=0;
 var VOICE={
@@ -133,6 +133,19 @@ function resumeAudioContext(){
   ]).then(function(){ return ctx; });
 }
 
+function unlockAudioPlayback(){
+  var ctx=getAudioContext();
+  if(!ctx) return;
+  try{
+    var buffer=ctx.createBuffer(1,1,22050);
+    var source=ctx.createBufferSource();
+    source.buffer=buffer; source.connect(ctx.destination); source.start(0);
+    rlog('音声再生をユーザー操作で準備 ctx='+ctx.state);
+  }catch(e){
+    rlog('音声再生の準備に失敗: '+(e&&e.name||'error'));
+  }
+}
+
 function decodeBase64ToAudioBuffer(ctx, base64Data, mimeType){
   var binary = atob(base64Data);
   var len = binary.length;
@@ -220,9 +233,9 @@ async function synthesizeGeminiAudio(text, emotion){
   }
   clearTimeout(timer);
 
-  if(response.status===401||response.status===403) throw {code:'auth', status:response.status};
-  if(response.status===429) throw {code:'rate_limited', status:429};
-  if(!response.ok) throw {code:'upstream_error', status:response.status};
+  if(response.status===401||response.status===403) throw {code:'auth', status:response.status, message:await readGeminiError(response)};
+  if(response.status===429) throw {code:'rate_limited', status:429, message:await readGeminiError(response)};
+  if(!response.ok) throw {code:'upstream_error', status:response.status, message:await readGeminiError(response)};
 
   var data = await response.json();
   var candidate = data && data.candidates && data.candidates[0];
@@ -413,6 +426,7 @@ function speak(text,kana,gestures,done){
       else if(code==='cors') reason='CORSエラー';
       else if(code==='model_unavailable') reason='TTSモデル利用不可';
       else if(code==='audio_context_not_running') reason='AudioContextを再開できない';
+      if(err && err.message) reason += '：' + safeGeminiMessage(err.message);
 
       lastTtsError=reason;
       setDiag('音声方式', '端末読み上げ（Gemini TTS ' + reason + ' のため自動切替）', 'bad');
@@ -435,7 +449,7 @@ function speak(text,kana,gestures,done){
 
 /* ================= speech in ================= */
 
-/* ===== SpeechRecognition lifecycle and delayed automatic restart (source lines 2874-3091) ===== */
+/* ===== SpeechRecognition lifecycle and delayed automatic restart (source lines 2888-3113) ===== */
 var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 var rec=null, listening=false, noSpeechRetries=0, everHeard=false;
 var selftile=document.getElementById('selftile');
@@ -654,8 +668,6 @@ function autoListen(){ return document.getElementById('autolisten').checked; }
   });
 })();
 
-
-/* ===== Gemini model selection, structured JSON request and parser (source lines 3092-3526) ===== */
 /* ================= the brain: Gemini API ================= */
 var turns=[], busy=false;
 var GEMINI_MODEL_DEFAULT='gemini-3.5-flash';
@@ -664,6 +676,8 @@ var GEMINI_MODEL_NAME='mio.geminiModel';
 var GEMINI_POLICY_NAME='mio.geminiPolicyVersion';
 var GEMINI_POLICY_VERSION='quality-reliability-v1';
 var availableGeminiModels=[], modelListPromise=null;
+
+/* ===== Gemini model selection, structured JSON request, safe errors and parser (source lines 3114-3551) ===== */
 var RULES=[
  'あなたは「澪（みお）」という名前の音声アシスタントです。日本語で話します。',
  '・親しみやすく落ち着いた口調。硬い敬語は使いすぎない。',
@@ -761,9 +775,9 @@ async function listGeminiModels(){
   /* Reaching a readable Response proves that the browser passed CORS,
      even when the status later says the key itself is invalid. */
   setDiag('Gemini CORS','通過','ok');
-  if(response.status===401||response.status===403) throw {code:'auth'};
-  if(response.status===429) throw {code:'rate_limited'};
-  if(!response.ok) throw {code:'upstream_error'};
+  if(response.status===401||response.status===403) throw {code:'auth',status:response.status,message:await readGeminiError(response)};
+  if(response.status===429) throw {code:'rate_limited',status:response.status,message:await readGeminiError(response)};
+  if(!response.ok) throw {code:'upstream_error',status:response.status,message:await readGeminiError(response)};
   var data=await response.json();
   var models=(data.models||[]).filter(function(model){
     return Array.isArray(model.supportedGenerationMethods)
@@ -837,6 +851,16 @@ var GEMINI_RESPONSE_SCHEMA={
   required:['reply','kana','emotion','strength','tears','gesture','gestures']
 };
 function waitMs(ms){ return new Promise(function(resolve){ setTimeout(resolve,ms); }); }
+function safeGeminiMessage(message){
+  return String(message||'').replace(/AIza[0-9A-Za-z_-]+/g,'[APIキー非表示]').replace(/\s+/g,' ').trim().slice(0,120);
+}
+function geminiErrorText(error, fallback){
+  var base=ERR[error&&error.code]||fallback||ERR.upstream_error;
+  var detail=safeGeminiMessage(error&&error.message);
+  var status=error&&error.status;
+  if(!status&&!detail) return base;
+  return base.replace(/。?$/,'')+'（'+(status?'HTTP '+status+(detail?'：':''):'')+detail+'）';
+}
 function conversationCandidates(primary){
   var ordered=[primary,'gemini-3.5-flash','gemini-3.5-flash-lite','gemini-3.6-flash','gemini-2.5-flash'];
   var out=[];
@@ -851,7 +875,7 @@ async function readGeminiError(response){
   try{
     var data=await response.clone().json();
     var message=data&&data.error&&(data.error.message||data.error.status);
-    return String(message||'').slice(0,180);
+    return safeGeminiMessage(message);
   }catch(e){ return ''; }
 }
 async function requestGeminiJson(model,key,contents){
@@ -864,7 +888,7 @@ async function requestGeminiJson(model,key,contents){
       body:JSON.stringify({
         systemInstruction:{parts:[{text:RULES}]},contents:contents,
         generationConfig:{
-          responseFormat:{text:{mimeType:'application/json',schema:GEMINI_RESPONSE_SCHEMA}},
+          responseMimeType:'application/json',responseSchema:GEMINI_RESPONSE_SCHEMA,
           temperature:0.45,maxOutputTokens:520
         }
       })
@@ -876,7 +900,7 @@ async function requestGeminiJson(model,key,contents){
   }
   clearTimeout(timer);
   var elapsed=((performance.now()-startedAt)/1000).toFixed(1);
-  if(response.status===401||response.status===403) throw {code:'auth',status:response.status,model:model};
+  if(response.status===401||response.status===403) throw {code:'auth',status:response.status,model:model,message:await readGeminiError(response)};
   if(response.status===429) throw {code:'rate_limited',status:429,model:model,message:await readGeminiError(response)};
   if(!response.ok) throw {code:'upstream_error',status:response.status,model:model,message:await readGeminiError(response)};
   var data=await response.json();
@@ -1050,7 +1074,7 @@ function setupGeminiControls(){
       setDiag('TTSデータ鮮度', ttsFreshness, 'ok');
       updateTtsDiagnostics(availableGeminiModels);
     }).catch(function(e){
-      paintApiState(ERR[e&&e.code]||ERR.upstream_error,true);
+      paintApiState(geminiErrorText(e),true);
       setDiag('頭脳','接続できない','bad');
     });
   }
@@ -1074,7 +1098,8 @@ function setupGeminiControls(){
       setDiag('TTSデータ鮮度', ttsFreshness, 'ok');
       updateTtsDiagnostics(availableGeminiModels);
     }catch(e){
-      paintApiState(ERR[e&&e.code]||ERR.upstream_error,true);
+      paintApiState(geminiErrorText(e),true);
+      setDiag('Gemini会話エラー',geminiErrorText(e),'bad');
       setDiag('頭脳','接続できない','bad');
     }finally{ turns=old; }
   });
@@ -1092,7 +1117,7 @@ function setupGeminiControls(){
 }
 
 
-/* ===== Conversation orchestration, stale-result rejection and call controls (source lines 3527-3619) ===== */
+/* ===== Conversation orchestration, stale-result rejection, audio unlock and call controls (source lines 3552-3650) ===== */
 function ask(said){
   if(busy) return;
   addTurn('ケン',said);
@@ -1140,7 +1165,7 @@ function ask(said){
     if(myConversation!==conversationSeq) return;
     busy=false; setState('idle');
     var code=(e&&e.code)||'upstream_error';
-    sysLine(ERR[code]||('うまくいきませんでした（'+code+'）'));
+    sysLine(geminiErrorText(e,'うまくいきませんでした（'+code+'）'));
     if(code==='auth'||code==='missing_key') setDiag('頭脳','APIキーを確認','bad');
   });
 }
@@ -1152,12 +1177,15 @@ talkBtn.addEventListener('click',function(){
   if(!started){
     started=true; hangBtn.disabled=false; talkBtn.textContent='話す';
     setState('idle');
-    /* iOS only speaks later if synthesis is first used inside a gesture. A real
-       greeting does that AND opens the call, where an empty utterance could
-       leave the queue wedged. */
+    /* iOS requires media playback and speech synthesis to be activated inside
+       a direct user gesture. Unlock Web Audio now and speak the real greeting
+       with the device voice; later replies may use Gemini natural TTS. */
+    unlockAudioPlayback();
     var hello='はい、澪です。ケンさん、聞こえますか。';
     addTurn('澪',hello,'mio');
-    speak(hello,'はい、みおです。けんさん、きこえますか。',[{pose:'wave',at:0}],function(){
+    var helloId=++utterSeq;
+    setDiag('初回音声','ユーザー操作内で端末音声を再生','ok');
+    speakDevice(hello,'はい、みおです。けんさん、きこえますか。',[{pose:'wave',at:0}],helloId,function(){
       if(autoListen()) beginListen();
       else sysLine('「話す」を押してから話しかけてください。');
     });
@@ -1186,16 +1214,11 @@ hangBtn.addEventListener('click',function(){
     });
     wrap.appendChild(b);
   });
+})();
 
-/* ===== Echo suppression window and hands-free refocus (source lines 3678-3750) ===== */
-/* Hands-free dictation (macOS / iOS Voice Control) never stops listening, so
-   it hears her reply through the speaker and types it into the same box —
-   which then auto-sends, and she answers herself, forever. Nothing typed
-   while she is speaking is the viewer, so throw it away. The window stays
-   open a moment after she stops, for the tail the recogniser is still
-   transcribing. Headphones remove the problem at the source; this keeps the
-   loop from starting for anyone using the speaker. */
-var echoUntil=0;
+var typed=document.getElementById('typed');
+
+/* ===== Echo suppression window and hands-free refocus (source lines 3714-3775) ===== */
 function echoWindow(){ return speaking || performance.now() < echoUntil; }
 function closeEchoWindow(){ echoUntil = performance.now() + 900; }
 
@@ -1258,6 +1281,3 @@ function keepFocus(){
   var line=document.getElementById('micstate');
   function report(kind,msg,ok){
     setDiag('連続して聞く',kind,ok?'ok':'bad');
-    if(line){
-      line.hidden=false;
-      line.textContent=msg;
