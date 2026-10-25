@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-25",
+  "source": {
+    "repository": "arumat-ken/mio-companion",
+    "branch": "codex/mio-dispatch-stage0",
+    "commit": "33505ed87ec3efb2f1098b4a33a9d1954edefdf6",
+    "baseBranch": "antigravity/mio-gemini-tts",
+    "baseCommit": "f6e6da6124d0589a3bf82b193583bfb7056c83a8"
+  },
+  "files": [
+    {
+      "path": "DISPATCH_MIO_STAGE0_DESIGN.md",
+      "sha256": "6be309d492403f2c3949acbce24b01d6f4c95d27ee1e6820cabf9efe8d7ef952"
+    }
+  ],
+  "containsSecrets": false,
+  "containsDispatchRawContent": false,
+  "implementationCodeIncluded": false,
+  "updatedBy": "Codex",
+  "exactModel": "未記録"
+}
